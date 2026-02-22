@@ -464,11 +464,6 @@ if __name__ == "__main__":
     print("树莓派语音接收器 v1.0")
     print("=" * 50)
 
-    # 记录到日志
-    console_info("=" * 50)
-    console_info("树莓派语音接收器 v1.0")
-    console_info("=" * 50)
-
     # 尝试获取或创建事件循环
     try:
         loop = asyncio.get_running_loop()
