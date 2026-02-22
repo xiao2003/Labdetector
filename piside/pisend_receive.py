@@ -14,6 +14,8 @@ import sys
 import shutil
 import subprocess
 import socket
+import json
+import signal
 from typing import Optional, Callable
 
 # 简洁线程安全的控制台输出管理
@@ -115,6 +117,7 @@ def console_error(text: str):
 _TTS_ENGINE = None
 tts_queue = None
 tts_task = None
+running = True
 
 
 def get_local_ip() -> str:
@@ -136,7 +139,7 @@ def get_local_ip() -> str:
         # 备用方法
         try:
             return socket.gethostbyname(socket.gethostname())
-        except Exception:
+        except:
             return "127.0.0.1"
 
 
@@ -161,13 +164,13 @@ def init_tts() -> bool:
             _TTS_ENGINE = engine
             console_info("TTS: 使用 pyttsx3（回退）")
             return True
-        except Exception:
-            pass
+        except Exception as e:
+            console_error(f"pyttsx3初始化失败: {str(e)}")
 
-        # 最后一次尝试检测espeak
-        if shutil.which("espeak") is not None:
+        # 再次尝试检测espeak（确保路径正确）
+        if shutil.which("espeak", path='/usr/bin:/usr/local/bin') is not None:
             _TTS_ENGINE = "espeak"
-            console_info("TTS: 使用 espeak 回退")
+            console_info("TTS: 使用 espeak 回退路径")
             return True
     except Exception as e:
         console_error(f"TTS初始化异常: {str(e)}")
@@ -186,10 +189,11 @@ def speak_async(text: str):
             return
         try:
             if _TTS_ENGINE == "espeak":
-                # 使用系统命令播报（Linux）
-                subprocess.run(["espeak", "-v", "zh", t],
+                # 使用系统命令播报（Linux），确保指定中文语音
+                subprocess.run(["espeak", "-v", "zh", "-s", "150", t],
                                stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL)
+                               stderr=subprocess.DEVNULL,
+                               check=True)
             elif hasattr(_TTS_ENGINE, 'say'):
                 # pyttsx3 engine
                 try:
@@ -227,8 +231,8 @@ def speak_enqueue(text: str):
 
 async def tts_worker():
     """串行的TTS消费者，确保语音按顺序播放且不重叠"""
-    global tts_queue
-    while True:
+    global tts_queue, running
+    while running:
         try:
             text = await tts_queue.get()
             if text is None:
@@ -240,6 +244,102 @@ async def tts_worker():
         except Exception as e:
             console_error(f"TTS工作异常: {str(e)}")
             continue
+
+
+# ====================== 网络发现响应服务 ======================
+class NetworkDiscoveryResponder:
+    """
+    网络发现响应服务，用于响应PC的发现请求
+    """
+
+    def __init__(self, discovery_port=50000, service_name="video_analysis"):
+        self.discovery_port = discovery_port
+        self.service_name = service_name
+        self.local_ip = get_local_ip()
+        self.discovery_socket = None
+        self.running = False
+
+    def start(self):
+        """启动发现响应服务"""
+        if self.running:
+            return
+
+        self.running = True
+        self.discovery_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.discovery_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        self.discovery_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+        try:
+            self.discovery_socket.bind(("", self.discovery_port))
+        except Exception as e:
+            console_error(f"绑定发现端口失败: {e}")
+            self.running = False
+            return
+
+        self.discovery_socket.settimeout(1)
+
+        # 启动发现响应线程
+        threading.Thread(target=self._discovery_response_loop, daemon=True).start()
+        console_info(f"网络发现响应服务已启动 (端口: {self.discovery_port})")
+
+    def stop(self):
+        """停止发现响应服务"""
+        self.running = False
+        if self.discovery_socket:
+            self.discovery_socket.close()
+        console_info("网络发现响应服务已停止")
+
+    def _discovery_response_loop(self):
+        """发现响应循环"""
+        while self.running:
+            try:
+                # 接收发现消息
+                data, addr = self.discovery_socket.recvfrom(1024)
+                message = data.decode('utf-8')
+
+                try:
+                    info = json.loads(message)
+                    device_type = info.get('type')
+                    service = info.get('service')
+
+                    # 如果是PC的发现请求，响应
+                    if service == self.service_name and device_type == 'pc_discovery':
+                        self._respond_to_pc(addr)
+                except json.JSONDecodeError:
+                    pass
+            except socket.timeout:
+                pass
+            except Exception as e:
+                console_error(f"发现响应服务异常: {e}")
+
+    def _respond_to_pc(self, addr):
+        """响应PC的发现请求"""
+        response = json.dumps({
+            'type': 'raspberry_pi_response',
+            'ip': self.local_ip,
+            'service': self.service_name
+        })
+        try:
+            self.discovery_socket.sendto(response.encode('utf-8'), addr)
+        except Exception as e:
+            console_error(f"响应PC发现请求失败: {str(e)}")
+
+
+# 单例实例
+_discovery_responder = None
+
+
+def get_discovery_responder() -> NetworkDiscoveryResponder:
+    """
+    获取网络发现响应服务单例
+    Returns:
+        NetworkDiscoveryResponder: 网络发现响应服务实例
+    """
+    global _discovery_responder
+    if _discovery_responder is None:
+        _discovery_responder = NetworkDiscoveryResponder()
+        _discovery_responder.start()
+    return _discovery_responder
 
 
 # ====================== WebSocket服务 ======================
@@ -256,14 +356,22 @@ async def handle_client(websocket, path):
             if isinstance(msg, str):
                 text = msg.strip()
                 if text:
-                    # 检查是否是语音消息（以[voice]开头）
+                    # 处理两种可能的格式
+                    if text.startswith("VOICE_RESULT:"):
+                        # 移除VOICE_RESULT:前缀
+                        text = text[len("VOICE_RESULT:"):]
+
+                    # 处理[voice]前缀（如果存在）
                     if text.startswith("[voice]"):
-                        text = text[7:]  # 移除[voice]前缀
-                        console_info(f"📨 接收到语音播报请求: {text}")
-                        # 将文本加入TTS队列
+                        text = text[len("[voice]"):]
+
+                    # 接收到有效文本，准备播报
+                    console_info(f"📨 接收到语音播报请求: {text}")
+                    # 将文本加入 TTS 队列，保证串行播放，避免叠加
+                    try:
                         speak_enqueue(text)
-                    else:
-                        console_info(f"📨 接收到消息: {text}")
+                    except Exception:
+                        speak_async(text)
     except websockets.exceptions.ConnectionClosed:
         console_info(f"🔌 PC客户端断开连接: {websocket.remote_address}")
     except Exception as e:
@@ -294,7 +402,19 @@ async def start_server():
 
 async def safe_start():
     """安全启动服务器"""
-    global tts_queue, tts_task
+    global tts_queue, tts_task, running
+
+    # 尝试导入并应用nest_asyncio
+    try:
+        import nest_asyncio
+        nest_asyncio.apply()
+        console_info("✅ nest_asyncio已启用，支持嵌套事件循环")
+    except ImportError:
+        console_info("⚠️ nest_asyncio未安装，可能无法在Jupyter中正常运行")
+        console_info("请运行: pip install nest_asyncio")
+
+    # 启动网络发现响应服务
+    get_discovery_responder()
 
     # 初始化TTS
     if init_tts():
@@ -311,33 +431,88 @@ async def safe_start():
         console_error(f"❌ 服务器启动异常: {str(e)}")
 
 
+# ====================== 信号处理 ======================
+def signal_handler(sig, frame):
+    """处理Ctrl+C等信号"""
+    global running
+    console_info("⏹️  服务已手动停止")
+    running = False
+    # 尝试清理资源
+    try:
+        if tts_queue is not None:
+            try:
+                tts_queue.put_nowait(None)
+            except asyncio.QueueFull:
+                pass
+        if tts_task is not None and not tts_task.done():
+            tts_task.cancel()
+    except Exception as e:
+        console_error(f"资源清理异常: {str(e)}")
+    console_info("🧹 资源清理完成")
+    console_info("🔚 程序已退出")
+    # 退出程序
+    sys.exit(0)
+
+
 # ====================== 主程序 ======================
 if __name__ == "__main__":
+    # 设置信号处理
+    signal.signal(signal.SIGINT, signal_handler)
+
+    # 打印标题
+    print("=" * 50)
+    print("树莓派语音接收器 v1.0")
+    print("=" * 50)
+
+    # 记录到日志
     console_info("=" * 50)
     console_info("树莓派语音接收器 v1.0")
     console_info("=" * 50)
 
+    # 尝试获取或创建事件循环
     try:
-        # 启动事件循环
+        loop = asyncio.get_running_loop()
+        console_info("⚠️ 检测到事件循环已在运行，使用现有循环")
+
+        # 在现有循环中运行任务
+        try:
+            loop.create_task(safe_start())
+            console_info("✅ 已成功将任务添加到现有事件循环")
+            console_info("✅ 服务已启动，按 Ctrl+C 退出")
+
+            # 不要创建自己的循环，让程序继续运行
+            console_info("💡 提示：在Jupyter环境中，服务已在后台运行")
+        except Exception as e:
+            console_error(f"❌ 无法将任务添加到事件循环: {str(e)}")
+    except RuntimeError:
+        # 如果没有设置事件循环，创建一个新的
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(safe_start())
-    except KeyboardInterrupt:
-        console_info("⏹️  服务已手动停止")
-    except Exception as e:
-        console_error(f"❌ 主程序异常: {str(e)}")
-    finally:
-        # 清理资源
+        console_info("✅ 创建新的事件循环")
+
         try:
-            if tts_queue is not None:
-                tts_queue.put_nowait(None)
-            if tts_task is not None:
-                tts_task.cancel()
-                try:
-                    loop.run_until_complete(tts_task)
-                except asyncio.CancelledError:
-                    pass
+            # 运行主程序
+            loop.run_until_complete(safe_start())
+        except KeyboardInterrupt:
+            signal_handler(signal.SIGINT, None)
         except Exception as e:
-            console_error(f"资源清理异常: {str(e)}")
-        console_info("🧹 资源清理完成")
-        console_info("🔚 程序已退出")
+            console_error(f"❌ 主程序异常: {str(e)}")
+        finally:
+            # 清理资源
+            try:
+                if tts_queue is not None:
+                    try:
+                        tts_queue.put_nowait(None)
+                    except asyncio.QueueFull:
+                        pass
+                if tts_task is not None and not tts_task.done():
+                    tts_task.cancel()
+                    try:
+                        # 尝试清理TTS任务
+                        loop.run_until_complete(asyncio.wait([tts_task], timeout=1.0))
+                    except (asyncio.CancelledError, RuntimeError, asyncio.TimeoutError):
+                        pass
+            except Exception as e:
+                console_error(f"资源清理异常: {str(e)}")
+            console_info("🧹 资源清理完成")
+            console_info("🔚 程序已退出")

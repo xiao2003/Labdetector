@@ -1,5 +1,5 @@
-import sys
 import platform
+import sys
 
 # 查看Python版本（含详细信息）
 print(f"Python解释器版本: {sys.version}")

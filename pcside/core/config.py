@@ -7,6 +7,7 @@ core/config.py - 全局配置管理模块
 import os
 import configparser
 from typing import Union, Tuple, List
+import socket
 
 
 class Config:
@@ -89,6 +90,13 @@ class Config:
             'interval': '3'
         }
 
+        # network 部分
+        config['network'] = {
+            'local_ip': '',
+            'pi_ip': '192.168.31.31',
+            'discovery_port': '50000'
+        }
+
         # 创建配置文件目录（如果不存在）
         config_dir = os.path.dirname(cls._config_path)
         if not os.path.exists(config_dir):
@@ -105,7 +113,7 @@ class Config:
         """确保所有必要的配置部分都存在"""
         required_sections = [
             'voice_interaction', 'camera', 'ollama', 'inference',
-            'gpu', 'websocket', 'display', 'ws_retry'
+            'gpu', 'websocket', 'display', 'ws_retry', 'network'
         ]
 
         for section in required_sections:
@@ -121,6 +129,7 @@ class Config:
         cls._ensure_websocket_keys()
         cls._ensure_display_keys()
         cls._ensure_ws_retry_keys()
+        cls._ensure_network_keys()
 
     @classmethod
     def _ensure_voice_interaction_keys(cls):
@@ -224,6 +233,20 @@ class Config:
         defaults = {
             'max_attempts': '5',
             'interval': '3'
+        }
+
+        for key, value in defaults.items():
+            if key not in cls._config[section]:
+                cls._config[section][key] = value
+
+    @classmethod
+    def _ensure_network_keys(cls):
+        """确保 network 部分的所有键都存在"""
+        section = 'network'
+        defaults = {
+            'local_ip': '',
+            'pi_ip': '192.168.31.31',
+            'discovery_port': '50000'
         }
 
         for key, value in defaults.items():
@@ -335,19 +358,23 @@ class Config:
             print(f"[ERROR] 保存配置文件失败: {str(e)}")
 
     @classmethod
-    def get_voice_interaction_config(cls) -> dict:
-        """获取语音交互配置"""
+    def get_network_config(cls) -> dict:
+        """获取网络配置"""
         cls.init()
-        section = 'voice_interaction'
+        section = 'network'
         return {
-            'wake_word': cls.get('voice_interaction.wake_word', '小爱同学'),
-            'wake_timeout': cls.get('voice_interaction.wake_timeout', 10),
-            'wake_threshold': cls.get('voice_interaction.wake_threshold', 0.01),
-            'energy_threshold': cls.get('voice_interaction.energy_threshold', 300),
-            'pause_threshold': cls.get('voice_interaction.pause_threshold', 0.8),
-            'auto_start': cls.get('voice_interaction.auto_start', True),
-            'online_recognition': cls.get('voice_interaction.online_recognition', True)
+            'local_ip': cls.get('network.local_ip', ''),
+            'pi_ip': cls.get('network.pi_ip', '192.168.31.31'),
+            'discovery_port': cls.get('network.discovery_port', 50000)
         }
+
+    @classmethod
+    def set_network_config(cls, local_ip: str = None, pi_ip: str = None):
+        """设置网络配置"""
+        if local_ip is not None:
+            cls.set('network.local_ip', local_ip)
+        if pi_ip is not None:
+            cls.set('network.pi_ip', pi_ip)
 
 
 # 初始化配置
@@ -361,3 +388,13 @@ def get_config(key_path: str, default=None):
 
 def set_config(key_path: str, value):
     Config.set(key_path, value)
+
+
+def get_network_config():
+    """获取网络配置"""
+    return Config.get_network_config()
+
+
+def set_network_config(local_ip: str = None, pi_ip: str = None):
+    """设置网络配置"""
+    Config.set_network_config(local_ip, pi_ip)
