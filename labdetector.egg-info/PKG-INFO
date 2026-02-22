@@ -1,0 +1,32 @@
+Metadata-Version: 2.4
+Name: labdetector
+Version: 1.0.0
+Summary: 面向微纳流体实验室的多模态智能视觉管理系统
+Author: LabDetector Team
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Science/Research
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.20.0
+Requires-Dist: requests>=2.25.0
+Requires-Dist: websockets>=10.0
+Requires-Dist: Pillow>=9.0.0
+Requires-Dist: opencv-python>=4.5.0
+Requires-Dist: pyttsx3>=2.90
+Provides-Extra: voice
+Requires-Dist: SpeechRecognition>=3.8.1; extra == "voice"
+Requires-Dist: pyaudio>=0.2.11; extra == "voice"
+Dynamic: author
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: provides-extra
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
+
+面向微纳流体实验室的多模态智能视觉管理系统

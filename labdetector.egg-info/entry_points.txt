@@ -1,0 +1,2 @@
+[console_scripts]
+labdetector-pc = pcside.main:main
