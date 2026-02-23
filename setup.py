@@ -19,52 +19,34 @@ install_requires = [
     'numpy>=1.20.0',
     'requests>=2.25.0',
     'websockets>=10.0',
-    'Pillow>=9.0.0',  # 用于 OpenCV 中文渲染
+    'Pillow>=9.0.0',
+    'opencv-python>=4.5.0',
 ]
 
-# 跨平台依赖智能分发
-if sys.platform.startswith('linux'):
-    # 树莓派等 Linux 环境：使用 headless 版本避免 x11 依赖缺失报错
-    install_requires.append('opencv-python-headless>=4.5.0')
-else:
-    # Windows 环境 (PC计算中枢)
-    install_requires.append('opencv-python>=4.5.0')
-    install_requires.append('pyttsx3>=2.90')  # Windows 默认 TTS 引擎
+# 针对 Windows 端特有的依赖
+if not sys.platform.startswith('linux'):
+    install_requires.append('pyttsx3>=2.90')
 
 # ==========================================
-# ★ 自定义安装引导向导 (像 Linux 一样优雅) ★
+# ★ 自动化安装引导逻辑 ★
 # ==========================================
-# 如果用户直接运行 `python setup.py` (不带任何参数)
-if len(sys.argv) == 1:
+# 当用户直接运行 python setup.py 时，自动执行开发者模式安装
+if len(sys.argv) <= 1 or sys.argv[1] == 'install':
     print("=" * 60)
-    print("🚀 欢迎使用 LabDetector 环境自动配置向导")
-    print("=" * 60)
-
-    current_os = "Linux / 树莓派 (无头环境)" if sys.platform.startswith('linux') else "Windows / PC (桌面环境)"
-    print(f"\n🔍 检测到当前系统平台: {current_os}")
-    print("\n📋 即将为您安装或更新以下核心依赖包:")
-
-    for req in install_requires:
-        print(f"  📦 {req}")
-
-    print("\n⏳ 正在调用底层包管理器，请稍候...\n")
-    print("-" * 60)
-
+    print("🚀 正在为您初始化实验室 AI 助手开发环境...")
+    print("正在执行: pip install -e .")
     try:
-        # 在后台以开发者模式 (-e) 自动调用 pip 进行安装
+        # 使用开发者模式 (-e) 安装，这样修改代码后无需重新安装即可生效
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-e", "."])
+        print("\n✅ 环境依赖与项目模块已成功注册！")
+        print("💡 现在您可以使用 'from pcside.core.config import ...' 进行跨文件夹调用了。")
         print("-" * 60)
-        print("\n✅ 所有环境依赖均已成功安装且处于最新状态！")
-        print("💡 提示: 您现在可以直接运行 python launcher.py 启动系统。")
     except subprocess.CalledProcessError:
-        print("-" * 60)
-        print("\n❌ 安装过程中出现错误。请检查网络，或尝试以管理员身份运行。")
-
-    # 拦截完毕，安全退出，不抛出 no commands supplied 错误
+        print("\n❌ 安装失败，请检查网络或尝试使用管理员/sudo权限运行。")
     sys.exit(0)
 
 # ==========================================
-# 标准的打包清单 (供 pip 底层读取使用)
+# 标准打包配置
 # ==========================================
 setup(
     name='labdetector',
@@ -73,27 +55,13 @@ setup(
     long_description=long_description,
     long_description_content_type='text/markdown',
     author='LabDetector Team',
-    packages=find_packages(include=['pcside*', 'piside*', 'core*']),
+    # ★ 核心修正：自动发现所有以 pcside 或 piside 开头的包 ★
+    # 这会确保 pcside.core 和 pcside.communication 都能被正确识别
+    packages=find_packages(include=['pcside', 'pcside.*', 'piside', 'piside.*']),
     install_requires=install_requires,
-    extras_require={
-        # 语音交互扩展包
-        'voice': [
-            'SpeechRecognition>=3.8.1',
-            'pyaudio>=0.2.11'
-        ],
-    },
-    entry_points={
-        'console_scripts': [
-            'labdetector-pc=pcside.main:main',
-        ],
-    },
-    classifiers=[
-        'Development Status :: 4 - Beta',
-        'Intended Audience :: Science/Research',
-        'Programming Language :: Python :: 3.8',
-        'Programming Language :: Python :: 3.9',
-        'Programming Language :: Python :: 3.10',
-        'Programming Language :: Python :: 3.11',
-    ],
     python_requires='>=3.8',
+    classifiers=[
+        'Programming Language :: Python :: 3',
+        'Topic :: Scientific/Engineering :: Artificial Intelligence',
+    ],
 )

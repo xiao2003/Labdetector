@@ -41,6 +41,8 @@ try:
     from core.voice_interaction import get_voice_interaction, is_voice_interaction_available, VoiceInteractionConfig
     from core.ai_backend import list_ollama_models, analyze_image
     from core.network import get_local_ip, get_network_prefix
+    from communication.network_scanner import get_lab_topology
+    from communication.multi_ws_manager import MultiPiManager
 except ImportError as init_err:
     print(f"\n\033[91m[致命错误] 无法导入核心模块，请检查代码结构！\033[0m")
 
@@ -148,11 +150,13 @@ def safe_console_prompt(text: str) -> None:
 
 
 def export_log() -> None:
-    # ★ 需求2修复：指定项目根目录下的 log 文件夹
-    log_dir = os.path.join(project_root, "log")
+    # 修改：将日志目录指向 pcside 下的 log 文件夹
+    # current_dir 即为 pcside 目录
+    log_dir = os.path.join(current_dir, "log")
     try:
         if not os.path.exists(log_dir):
             os.makedirs(log_dir, exist_ok=True)
+            print(f"\n[INFO] 已新建日志目录: {log_dir}")
     except Exception as e:
         print(f"创建 log 文件夹失败，将使用当前目录。原因: {e}")
         log_dir = os.getcwd()
@@ -162,9 +166,9 @@ def export_log() -> None:
     try:
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write("\n".join(_LOG_RECORDS))
-        print(f"\n✅ 程序结束，运行日志已导出至: {filepath}")
+        print(f"\n程序结束，运行日志已导出至: {filepath}")
     except Exception as e:
-        print(f"\n❌ 日志导出失败: {e}")
+        print(f"\n日志导出失败: {e}")
 
 
 # ==================== UI 渲染助手 (中文支持) ====================
@@ -570,55 +574,49 @@ def main() -> None:
         global_inf_thread.backend = _STATE["ai_backend"]
         global_inf_thread.model = _STATE["selected_model"]
 
-        if _STATE["mode"] == "camera":
-            threading.Thread(target=camera_worker, daemon=True).start()
-        else:
-            def ws_worker() -> None:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(websocket_client())
-                try:
-                    loop.close()
-                except:
-                    pass
+        if _STATE["mode"] == "websocket":
+            # 1. 扫描与编号
+            pi_topology = get_lab_topology()
+            if not pi_topology: continue
 
-            threading.Thread(target=ws_worker, daemon=True).start()
+            # 2. 启动异步管理器
+            manager = MultiPiManager(pi_topology)
 
-        cv2.namedWindow("Video Analysis", cv2.WINDOW_NORMAL)
-        cv2.resizeWindow("Video Analysis", 1280, 720)
+            def run_manager():
+                asyncio.run(manager.start())
 
-        try:
-            while _STATE["video_running"] and _STATE["running"]:
-                if _STATE["connection_lost"]: break
+            threading.Thread(target=run_manager, daemon=True).start()
 
-                current_frame = _STATE["frame_buffer"]
-                if isinstance(current_frame, np.ndarray):
-                    img = current_frame.copy()
+            _STATE["video_running"] = True
 
-                    res = str(latest_inference_result["text"])
-                    res_time = float(latest_inference_result["timestamp"])
+            try:
+                # 创建对应编号的显示窗口
+                for pid in pi_topology.keys():
+                    cv2.namedWindow(f"Node_{pid}", cv2.WINDOW_NORMAL)
 
-                    if res and (time.time() - res_time < 10):
-                        img = draw_chinese_text(img, f"AI: {res}", (20, 30))
+                while _STATE["video_running"] and _STATE["running"]:
+                    # 【核心：按ID顺序轮询处理】
+                    for pi_id in sorted(pi_topology.keys()):
+                        frame = manager.frame_buffers.get(pi_id)
+                        if frame is not None:
+                            # 顺序送入大模型分析
+                            result = analyze_image(frame, _STATE["selected_model"])
 
-                    cv2.imshow("Video Analysis", img)
+                            if result and result != "识别失败":
+                                # 定向发送回对应编号的树莓派
+                                manager.send_to_node(pi_id, f"ID-{pi_id} 结果: {result}")
 
-                    try:
-                        inference_queue.put_nowait(img)
-                    except queue.Full:
-                        try:
-                            inference_queue.get_nowait()
-                            inference_queue.put_nowait(img)
-                        except queue.Empty:
-                            pass
+                                # 在画面上标记
+                                frame = draw_chinese_text(frame, f"Node {pi_id}: {result}", (20, 30))
 
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'):
-                    _STATE["video_running"] = False
-                    break
-        finally:
-            _STATE["video_running"] = False
-            cv2.destroyAllWindows()
+                            cv2.imshow(f"Node_{pi_id}", frame)
+
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        _STATE["video_running"] = False
+                        manager.stop()
+                        break
+            finally:
+                cv2.destroyAllWindows()
 
         if _STATE["connection_lost"] and _STATE["running"]:
             safe_console_prompt("\n" + "-" * 50)
