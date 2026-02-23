@@ -14,7 +14,10 @@ import subprocess
 import socket
 import json
 import cv2
-import numpy as np
+
+from pcside.core.voice_interaction import pyaudio
+from voice.recognizer import PiVoiceRecognizer
+from voice.interaction import PiVoiceInteraction
 
 try:
     from picamera2 import Picamera2
@@ -232,6 +235,42 @@ def main():
         except KeyboardInterrupt:
             running = False
 
+
+async def voice_thread(websocket):
+    """独立的语音采集与识别协程"""
+    # 初始化
+    model_dir = os.path.join(os.path.dirname(__file__), "voice", "model")
+    recognizer = PiVoiceRecognizer(model_dir)
+    interaction = PiVoiceInteraction(recognizer)
+
+    # 开启麦克风
+    p = pyaudio.PyAudio()
+    stream = p.open(format=pyaudio.paInt16, channels=1, rate=16000,
+                    input=True, frames_per_buffer=4000)
+    stream.start_stream()
+
+    console_info("🎤 Pi端本地语音引擎已就绪")
+
+    while running:
+        # 读取音频数据
+        data = await asyncio.to_thread(stream.read, 4000, exception_on_overflow=False)
+
+        # 交给交互模块处理
+        event = interaction.process_audio(data)
+
+        if event == "EVENT:WOKEN":
+            speak_async("我在。")  # 本地先响应
+            await websocket.send("PI_EVENT:WOKEN")  # 通知 PC 联动
+        elif event and event.startswith("CMD_TEXT:"):
+            cmd_text = event.replace("CMD_TEXT:", "")
+            console_info(f"🗣️ 识别到指令: {cmd_text}")
+
+            # ★ 核心：回传给 PC ★
+            await websocket.send(f"PI_VOICE_COMMAND:{cmd_text}")
+            interaction.is_active = False  # 完成一次指令后回到待机
+
+    stream.stop_stream()
+    stream.close()
 
 if __name__ == "__main__":
     main()

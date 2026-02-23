@@ -3,7 +3,10 @@ import asyncio
 import websockets
 import numpy as np
 import cv2
+import json
 from pcside.core.logger import console_info, console_error
+# 引入配置获取接口
+from pcside.core.config import get_config
 
 
 class MultiPiManager:
@@ -14,10 +17,9 @@ class MultiPiManager:
         self.running = True
 
         # ==========================================
-        # ★ 核心升级：动态带宽均衡策略
+        # ★ 动态带宽均衡策略
         # ==========================================
         num_nodes = len(pi_dict)
-        # 总带宽限制在 30FPS，由所有节点平分
         self.target_fps = max(1.0, 30.0 / num_nodes) if num_nodes > 0 else 30.0
 
     async def _node_handler(self, pi_id, ip):
@@ -27,14 +29,25 @@ class MultiPiManager:
                 async with websockets.connect(uri, ping_interval=None) as ws:
                     console_info(f"🔗 节点 [{pi_id}] ({ip}) 握手成功")
 
-                    # 握手后的第一件事：强制树莓派修改摄像头发送频率！
-                    control_cmd = f"CMD:SET_FPS:{self.target_fps}"
-                    await ws.send(control_cmd)
-                    console_info(f"🎛️ 已向节点 [{pi_id}] 下发动态帧率调度: {self.target_fps:.1f} FPS")
+                    # 1. 强制树莓派修改摄像头发送频率
+                    await ws.send(f"CMD:SET_FPS:{self.target_fps}")
+
+                    # 2. ★ 新增：同步全局配置（如唤醒词、识别开关） ★
+                    sync_data = {
+                        "wake_word": get_config("voice_interaction.wake_word", "小爱同学"),
+                        "online_recognition": get_config("voice_interaction.online_recognition", True)
+                    }
+                    await ws.send(f"CMD:SYNC_CONFIG:{json.dumps(sync_data)}")
+                    console_info(f"⚙️ 已同步配置至节点 [{pi_id}]: {sync_data}")
 
                     async def recv_stream_task():
                         async for data in ws:
                             if not self.running: break
+                            if isinstance(data, str) and data.startswith("PI_VOICE_COMMAND:"):
+                                # 之前讨论的回传指令处理逻辑
+                                self._handle_remote_voice(pi_id, data)
+                                continue
+
                             arr = np.frombuffer(data, np.uint8)
                             frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
                             if frame is not None:
@@ -48,8 +61,18 @@ class MultiPiManager:
                     await asyncio.gather(recv_stream_task(), send_command_task())
             except Exception as e:
                 if self.running:
-                    console_error(f"❌ 节点 [{pi_id}] 通信异常，3秒后重连")
+                    console_error(f"❌ 节点 [{pi_id}] 通信异常，3秒后重连: {e}")
                     await asyncio.sleep(3)
+
+    def _handle_remote_voice(self, pi_id, data):
+        """处理来自 Pi 的语音回传文本"""
+        cmd_text = data.replace("PI_VOICE_COMMAND:", "")
+        console_info(f"📩 收到节点 {pi_id} 语音指令: {cmd_text}")
+        from pcside.voice.voice_interaction import get_voice_interaction
+        agent = get_voice_interaction()
+        if agent:
+            import threading
+            threading.Thread(target=agent._route_command, args=(cmd_text,), daemon=True).start()
 
     async def start(self):
         tasks = [self._node_handler(pid, ip) for pid, ip in self.pi_dict.items()]
