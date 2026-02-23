@@ -1,8 +1,8 @@
 import socket
 import json
 import time
-from core.config import set_config
-from core.logger import console_info, console_error, console_prompt
+from pcside.core.config import set_config
+from pcside.core.logger import console_info, console_error, console_prompt
 
 
 def scan_multi_nodes(expected_count: int, timeout: float = 3.0) -> dict:

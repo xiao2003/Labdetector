@@ -13,7 +13,7 @@ def run_command(command: str) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
         encoding='utf-8',
-        errors='replace'  # 遇到无法解码的字符直接替换为 '?'，绝不引发程序崩溃
+        errors='replace'  # 遇到无法解码的字符直接替换为 '?'，不引发程序崩溃
     )
 
 

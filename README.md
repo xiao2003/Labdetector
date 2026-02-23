@@ -1,28 +1,170 @@
-# 面向微纳流体实验室的多模态智能视觉管理系统 (LabDetector)
+# LabDetector — 面向微纳流体实验室的多模态智能视觉管理系统 / LabDetector — Multimodal Visual Management for Microfluidics Labs
 
-本项目面向微纳流体实验室的复杂科研环境，构建了一套涵盖边缘视觉感知、中心多模态推理、结构化知识检索与自然语音交互的智能化管理系统。
+简短说明（中文） | Brief summary (English)
 
-## 🔬 项目背景与系统架构
+- 本项目实现边缘（Raspberry Pi 等）与中枢（PC/工作站）协同的多模态感知与交互平台，结合视觉、语音与知识增强检索（RAG），用于实验室操作监测与风险提示。
+- This project implements a distributed multimodal sensing and interaction platform (edge nodes such as Raspberry Pi + central PC), combining vision, speech, and retrieval-augmented generation (RAG) to monitor lab operations and provide risk alerts.
 
-在整体系统架构设计上，本项目采取了**物理层感知终端**与**逻辑层计算中枢**相分离的分布式协同架构：
+---
 
-- **边缘感知节点 (Edge Perception Node)**：在实验室操作台、精密仪器区及试剂存取区等关键物理空间，密集部署基于树莓派等嵌入式计算平台的边缘感知节点。节点集成了环境光自适应调节与多帧时序预处理算法，以应对反光液面及复杂的空间遮挡问题。系统利用异步输入输出机制，通过建立持久化的 WebSocket 双向通信通道，将端到端的采集、编码与网络传输总延迟严格控制在数十毫秒级别。
-- **中心推理中枢 (Central Computing Hub)**：在配备大容量显存（如 RTX 5090）的高性能计算工作站上，采用全栈本地化的方式部署数百亿参数规模的多模态视觉语言模型。充分利用 GPU 的并行计算资源，在保障模型理解精度的同时大幅压缩推理耗时，为实时图像分析提供高度稳定的算力支撑。
+快速目视导览 / Quick at-a-glance
 
-## 🧠 核心感知与交互决策体系
+- 主要目录：
+  - `pcside/` — PC/中枢端（推理、TTS、日志、网络）
+  - `piside/` — 边缘采集端（摄像头/麦克风采集与发送）
+  - `knowledge_base/` — RAG 示例/内容
+  - `test/` — 环境与依赖检测脚本
+- Key folders:
+  - `pcside/` — central/PC side (inference, TTS, networking, logs)
+  - `piside/` — edge side (capture & send)
+  - `knowledge_base/` — RAG samples
+  - `test/` — checks & diagnostics
 
-本研究方案摒弃了粗粒度的端到端图像分类模式，转而构建一套从宏观目标定位到微观姿态提取的层级化视觉解析管线：
+---
 
-1. **结构化视觉语义引擎**：系统引入高精度的手部关键点姿态估计算法，从连续视频帧中实时解算出操作人员双手空间关键点的精确坐标。视觉语义化转换引擎将提取到的物体包围框、空间坐标以及动作标签，按照特定的句法规则转换为结构化的自然语言描述（例如：“操作人员正在握持移液器吸取缓冲液”），彻底打破了非结构化像素数据与自然语言之间的壁垒。
-2. **知识增强推理 (RAG)**：为了消除大模型在专业场景下容易产生的“事实性幻觉”，系统深度整合了检索增强生成（RAG）技术。通过预先将实验室的安全操作规范（SOP）与危险化学品理化性质表构建为专业知识向量数据库，系统能够准确判断当前的实验操作是否违规，并生成具备科学依据的指导建议。
-3. **异步伴随式语音闭环**：在交互链路末端，系统集成了异步语音合成（TTS）与语音识别（ASR）技术。当系统判定存在操作风险时，能够立即中断当前流程并触发清晰的中文语音播报，确保实验人员在双手无法接触设备的无接触状态下，依然能够获得系统的实时伴随式指导。
+核心目标（给老师看的要点） / Core goals (for quick review)
 
-## ⚙️ 自动化部署与技术特性
+1. 实时感知：采集视频/音频，做手部/动作/物体的结构化判断。
+2. 风险检测与告警：检测到异常或违规操作时触发语音/界面提示。
+3. 可溯源的决策：利用 RAG 将模型建议与知识库证据链接，降低幻觉风险。
 
-本方案在实施层面具备高度的工程可行性，系统内置了跨平台的智能化环境管理脚本，彻底解决了底层依赖缺失与环境配置门槛高的问题。
+1. Real-time perception: capture video/audio and extract structured hand/action/object information.
+2. Risk detection & alerting: voice/UI alerts on anomalies.
+3. Traceable decisions: RAG links model outputs to knowledge evidence.
 
-### 1. 跨平台自适应环境向导
-项目重构了 `setup.py` 自动化构建脚本。在 PC 端（计算中枢）或树莓派（边缘节点）克隆本仓库后，只需于项目根目录直接执行：
+---
+
+部署（Deployment） — 目标：在 Windows/PC（中枢）与 Raspberry Pi（边缘）上可复现
+
+注意：以下步骤假设你已克隆仓库并在项目根目录下（`D:\Labdetector`）。
+
+1) 建议的 Python 版本
+
+- 推荐：Python 3.8 ~ 3.11（以项目中 `setup.py` 指示为准）
+- Recommended: Python 3.8 — 3.11 (see `setup.py`)
+
+2) Windows / PC（中枢）快速部署步骤
+
+- 创建并激活虚拟环境（PowerShell）：
+
+```powershell
+python -m venv .venv; .\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+```
+
+- （可选）运行项目自检脚本以获得安装建议：
+
+```powershell
+python setup.py
+```
+
+- 安装依赖（示例）：
+
+```powershell
+pip install -r requirements.txt
+```
+
+说明：如果仓库没有 `requirements.txt`，按需安装常见包，例如：numpy, opencv-python, torch（或依平台安装），requests, websocket-client, vosk (ASR 本地模型) 等。
+
+- 运行 PC 端服务（示例）：
+
+```powershell
+python launcher.py
+```
+
+3) Raspberry Pi / 边缘节点部署（树莓派）
+
+- 在树莓派上准备 Python3 环境并复制代码。
+- 激活虚拟环境并安装依赖：
 
 ```bash
-python setup.py
+python3 -m venv .venv; source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+- 启动采集发送脚本：
+
+```bash
+python3 piside/pisend.py
+# 或接收/测试脚本
+python3 piside/pisend_receive.py
+```
+
+4) PyTorch 与硬件加速提示
+
+- 如果需要 GPU 加速，请按 PyTorch 官方安装页选择适合的 CUDA 版本并安装。示例（CPU/无CUDA）：
+
+```powershell
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+```
+
+- On Pi, prefer CPU/mobile/lightweight models (或使用 ONNX/量化模型以节省资源）。
+
+5) 网络与配置
+
+- 编辑：`pcside/core/config.ini`（或 `pcside/config.txt`）设置：
+  - 中央服务监听 IP/端口
+  - 边缘节点 ID 与密钥（若启用认证）
+  - 模型路径与语音合成参数
+
+- 默认路径举例（配置文件片段）：
+
+```
+[network]
+host = 0.0.0.0
+port = 8765
+
+[tts]
+engine = local
+model_path = ./models/tts-model
+```
+
+---
+
+运行验证（Smoke test）
+
+1. 启动 PC 端：`python pcside\main.py`，查看 `pcside/log/` 中是否产生新日志。
+2. 在 Pi 端运行 `piside/pisend.py`，观察 PC 端是否接收到数据并在日志中记录。
+3. 可使用 `test/check_torch.py`、`test/check_version.py` 验证环境。
+
+---
+
+常见问题 & 排查要点 / Troubleshooting
+
+- 模块导入失败：确保虚拟环境已激活并安装依赖；运行 `python setup.py` 获取提示。
+- 摄像头/麦克风无数据：检查设备权限、驱动、设备名称；在 Pi 上确认摄像头接口启用（raspi-config）。
+- 语音/ASR 效果差：确认 ASR/TTS 模型路径和采样率，优先使用项目中的 `test/qwen/vosk-model-small-cn-0.22` 做离线 ASR 测试。
+
+---
+
+准备推送（你可以直接推送） / Ready to push
+
+如果你准备将修改提交并推送至远程仓库，常用命令（PowerShell）：
+
+```powershell
+git add README.md
+git commit -m "docs: bilingual README — deployment & overview"
+git push origin <branch-name>
+```
+
+将 `<branch-name>` 替换为你的分支名（如 `main` 或 `master`）。
+
+---
+
+附：建议的后续改进（可选） / Suggested next improvements (optional)
+
+- 在仓库根添加 `requirements.txt`（明确版本）并把常用依赖列出；
+- 添加 `examples/config.example.ini` 作为模板；
+- 添加 `Makefile` 或 `scripts/` 目录来统一启动命令；
+- 补充演示视频或截图，便于老师快速评估成果。
+
+---
+
+联系方式与许可 / Contact & License
+
+- 欢迎通过 Issue/PR 协作；合并到公共仓库前请补充 `LICENSE`（推荐 MIT/Apache-2.0）。
+
+
+
+(本 README 侧重部署与项目概览，若你希望我：1) 生成 `requirements.txt`；2) 添加 `config.example.ini`；3) 将 README 做成中英对照并列排格式，请回复我将继续执行并把文件推送到仓库。)

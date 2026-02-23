@@ -1,0 +1,21 @@
+# Base requirements (derived from labdetector.egg-info/requires.txt)
+numpy>=1.20.0
+requests>=2.25.0
+websockets>=10.0
+Pillow>=9.0.0
+opencv-python>=4.5.0
+pyttsx3>=2.90
+
+# Common / optional packages used by tests or for offline ASR/TTS
+torch>=1.13.0          # choose CPU or CUDA build per platform
+torchvision>=0.14.0
+vosk>=0.3.45
+SpeechRecognition>=3.8.1
+pyaudio>=0.2.11
+websocket-client>=1.5.1
+onnxruntime>=1.15.0    # optional: for ONNX models / quantized runtimes
+
+# Notes:
+# - On Windows, installing pyaudio may require prebuilt wheels or Visual C++ build tools.
+# - Install torch using the command from https://pytorch.org/ to select appropriate CUDA support.
+
