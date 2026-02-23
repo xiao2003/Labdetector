@@ -9,18 +9,34 @@ import numpy as np
 import threading
 import subprocess
 import ctypes
-import sys
 import os
 import time
 import socket
 import signal
 import queue
 import json
+import sys
+import codecs
 from typing import Optional, Dict, Any, List
+from pcside.tools.version_manager import get_app_version
+
+APP_VERSION = get_app_version();
+
+_builtin_input = input  # 保存 Python 原生的 input 函数
+
+def safe_input(prompt=""):
+    """安全包装器：遇到 PyCharm 发送的 0xff 等幽灵控制字符时，静默重试，绝不崩溃"""
+    while True:
+        try:
+            return _builtin_input(prompt)
+        except UnicodeDecodeError:
+            # 捕获 0xff 乱码，不中断程序，只是重新等待输入
+            pass
+# 将本文件的 input 强行替换为我们的安全版本
+input = safe_input
 
 try:
     from PIL import Image, ImageDraw, ImageFont
-
     HAS_PIL = True
 except ImportError:
     HAS_PIL = False
@@ -60,25 +76,20 @@ inference_queue: queue.Queue = queue.Queue(maxsize=1)
 latest_inference_result: Dict[str, Any] = {"text": "", "timestamp": 0}
 _LOG_RECORDS: List[str] = []
 
-
 def _add_log(level: str, text: str) -> None:
     _LOG_RECORDS.append(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [{level}] {text}")
-
 
 def safe_console_info(text: str) -> None:
     _add_log("INFO", text)
     if console_info: console_info(text)
 
-
 def safe_console_error(text: str) -> None:
     _add_log("ERROR", text)
     if console_error: console_error(text)
 
-
 def safe_console_prompt(text: str) -> None:
     _add_log("PROMPT", text)
     if console_prompt: console_prompt(text)
-
 
 def export_log() -> None:
     log_dir = os.path.join(current_dir, "log")
@@ -90,7 +101,6 @@ def export_log() -> None:
         print(f"\n[INFO] 日志已导出至: {filepath}")
     except Exception as e:
         print(f"\n[ERROR] 日志导出失败: {e}")
-
 
 def draw_chinese_text(img_np, text, position, text_color=(0, 255, 0), font_size=25):
     if not HAS_PIL:
@@ -114,7 +124,6 @@ def draw_chinese_text(img_np, text, position, text_color=(0, 255, 0), font_size=
     except:
         return img_np
 
-
 class ThreadSafePrintSuppressor:
     def __init__(self, original_stream):
         self.original_stream = original_stream
@@ -127,10 +136,8 @@ class ThreadSafePrintSuppressor:
     def flush(self):
         self.original_stream.flush()
 
-
 sys.stdout = ThreadSafePrintSuppressor(sys.stdout)
 sys.stderr = ThreadSafePrintSuppressor(sys.stderr)
-
 
 class InferenceThread(threading.Thread):
     def __init__(self, interval: int, backend: str, model: str):
@@ -159,13 +166,12 @@ class InferenceThread(threading.Thread):
                 if result and result != "识别失败":
                     latest_inference_result["text"] = result
                     latest_inference_result["timestamp"] = time.time()
-                    safe_console_info(f"📸 本机视觉分析完成: {result}")
+                    safe_console_info(f" 本机视觉分析完成: {result}")
                 last_infer_time = time.time()
             except queue.Empty:
                 continue
             except:
                 time.sleep(0.5)
-
 
 def is_admin() -> bool:
     try:
@@ -173,7 +179,6 @@ def is_admin() -> bool:
         return bool(ctypes.windll.shell32.IsUserAnAdmin())
     except:
         return False
-
 
 def run_as_admin() -> bool:
     if os.name != 'nt': return False
@@ -184,22 +189,40 @@ def run_as_admin() -> bool:
     except:
         return False
 
+def select_ai_backend():
+    from pcside.core.config import set_config
 
-def select_ai_backend() -> bool:
-    safe_console_prompt("\n===== AI后端选择 =====")
-    safe_console_prompt("1. Ollama (本地模型)")
-    safe_console_prompt("2. Qwen3.5-Plus (云端模型)")
     while True:
-        choice = input("\n请选择AI后端 (1 或 2): ").strip()
-        if choice == "1":
-            _STATE["ai_backend"] = "ollama"
-            safe_console_info("已选择: Ollama 本地引擎")
-            return True
-        elif choice == "2":
-            _STATE["ai_backend"] = "qwen"
-            safe_console_info("已选择: Qwen 云端引擎")
-            return True
+        try:
+            print("\n" + "=" * 60)
+            from pcside.tools.version_manager import get_app_version
+            print(f"LabDetector 智能多模态实验室管家 V{get_app_version()}")
+            print("=" * 60)
+            print("\n===== AI后端选择 =====")
+            print("[1]. Ollama (本地私有化大模型)")
+            print("[2]. Qwen3.5-Plus (阿里云端模型)")
 
+            choice = input("\n请选择大模型 (1 或 2，输入 exit 退出): ").strip().lower()
+
+            if choice in ['q', 'quit', 'exit', '0']:
+                # 只在这里打印一句最干净的，然后抛出异常给 launcher
+                print("\n[INFO] 接收到退出指令，正在中止启动流程...")
+                raise KeyboardInterrupt
+
+            if choice == '1':
+                print("\n[INFO] 切换至 Ollama 本地后端...")
+                set_config('ai_backend.type', 'ollama')
+                return True
+            elif choice == '2':
+                print("\n[INFO] 切换至 Qwen 云端后端...")
+                set_config('ai_backend.type', 'qwen')
+                return True
+            else:
+                print("\n[WARN] 输入无效，请输入 1 或 2，或者输入 exit 退出。")
+
+        except (KeyboardInterrupt, EOFError):
+            # ★ 修复：接住异常后什么都不打印，直接继续向上抛给 launcher
+            raise
 
 def select_model() -> bool:
     if _STATE["ai_backend"] == "qwen":
@@ -225,20 +248,36 @@ def select_model() -> bool:
         safe_console_prompt(f"{idx}. {model} {status}")
     safe_console_prompt(f"{len(all_models) + 1}. 自定义模型")
 
+    # ★ 新增：完美带退出机制的循环
     while True:
-        choice = input("\n请输入模型序号: ").strip()
-        if choice.isdigit():
-            idx = int(choice)
-            if 1 <= idx <= len(all_models):
-                _STATE["selected_model"] = all_models[idx - 1]
-                break
-            elif idx == len(all_models) + 1:
-                _STATE["selected_model"] = input("请输入模型名称: ").strip()
-                break
+        try:
+            choice = input("\n请输入模型序号 (输入 exit 退出): ").strip().lower()
+
+            # 1. 拦截退出指令
+            if choice in ['q', 'quit', 'exit', '0']:
+                print("\n[INFO] 🛑 接收到退出指令，正在中止启动流程...", flush=True)
+                raise KeyboardInterrupt  # 伪装成中断异常，向上传递给 launcher 保存日志
+
+            # 2. 正常业务逻辑
+            if choice.isdigit():
+                idx = int(choice)
+                if 1 <= idx <= len(all_models):
+                    _STATE["selected_model"] = all_models[idx - 1]
+                    break
+                elif idx == len(all_models) + 1:
+                    _STATE["selected_model"] = input("请输入自定义模型名称: ").strip()
+                    break
+                else:
+                    print(f"\n[WARN] 序号超出范围，请输入 1 到 {len(all_models) + 1} 之间的数字。")
+            else:
+                print("\n[WARN] 输入无效，请输入有效数字序号，或输入 exit 退出。")
+
+        except (KeyboardInterrupt, EOFError):
+            # 将异常继续向外抛出给 launcher.py，触发兜底保存
+            raise
 
     safe_console_info(f"已锁定模型: {_STATE['selected_model']}")
     return True
-
 
 def select_run_mode() -> bool:
     safe_console_prompt("\n===== 运行模式选择 =====")
@@ -257,21 +296,14 @@ def select_run_mode() -> bool:
             _STATE["mode"] = "websocket"
             return True
 
-
 def signal_handler(sig_num: Any, frame_data: Any) -> None:
     _STATE["running"] = False
     _STATE["video_running"] = False
-
 
 # ==================== 主程序入口 ====================
 def main() -> None:
     signal.signal(signal.SIGINT, signal_handler)
     if not run_as_admin() and os.name == 'nt': pass
-
-    safe_console_prompt("=" * 60)
-    safe_console_prompt("LabDetector 智能多模态实验室管家 (V2.0)")
-    safe_console_prompt("=" * 60)
-
     if not select_ai_backend(): return
     if not select_model(): return
 
@@ -297,12 +329,12 @@ def main() -> None:
         voice_agent.get_latest_frame_callback = frame_provider
 
         if voice_agent.start():
-            safe_console_info("✅ 语音管家麦克风初始化成功！等待唤醒...")
+            safe_console_info("语音管家麦克风初始化成功！等待唤醒...")
         else:
-            safe_console_error("❌ 语音启动失败！(原因：未插入麦克风、或麦克风被占用)")
+            safe_console_error("语音启动失败！(原因：未插入麦克风、或麦克风被占用)")
     else:
-        safe_console_error("❌ 语音模块未能加载！")
-        safe_console_prompt("💡 修复提示：请在终端运行: pip install SpeechRecognition pyaudio")
+        safe_console_error("语音模块未能加载！")
+        safe_console_prompt("修复提示：请在终端运行: pip install SpeechRecognition pyaudio")
 
     # ==================== 启动推理与主循环 ====================
     inf_interval = get_config("inference.interval", 5) if get_config else 5
@@ -410,7 +442,6 @@ def main() -> None:
     sys.stdout = getattr(sys.stdout, 'original_stream', sys.stdout)
     sys.stderr = getattr(sys.stderr, 'original_stream', sys.stderr)
     export_log()
-
 
 if __name__ == "__main__":
     main()

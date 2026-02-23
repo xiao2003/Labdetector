@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-pcside/core/config.py - 全局配置管理 (根目录直达版)
+pcside/core/config.py - 全局配置管理
 """
 import configparser
 import os
@@ -12,52 +12,72 @@ from typing import Any, Dict
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(current_dir))
 
-# ★ 强制将配置文件定位在项目根目录 D:\Labdetector\config.ini ★
+# ★ 配置文件路径：D:\Labdetector\config.ini
 config_path = os.path.join(project_root, 'config.ini')
 
 _config: Dict[str, Any] = {}
 _config_lock = threading.Lock()
 
 
-def _create_default_config():
-    """如果在根目录没找到，则自动生成一份极简默认配置"""
+def _create_or_update_config():
+    """
+    核心逻辑：如果不存在则新建；如果存在则对比并覆盖/补全缺失项。
+    """
     parser = configparser.ConfigParser()
 
-    parser['System'] = {
-        'debug': 'False',
-        'asset_dir': 'assets',
-        'log_level': 'INFO'
+    # 1. 如果文件已存在，先读取它
+    if os.path.exists(config_path):
+        parser.read(config_path, encoding='utf-8')
+
+    # 2. 定义最新的默认配置结构 (包含你之前的 Ollama 模型列表)
+    new_defaults = {
+        'System': {
+            'debug': 'False',
+            'asset_dir': 'assets',
+            'log_level': 'INFO'
+        },
+        'Network': {
+            'broadcast_port': '50000',
+            'websocket_port': '8001',
+            'discovery_timeout': '3.0'
+        },
+        'Ollama': {
+            'host': 'http://localhost:11434',
+            # ★ 补回你之前的多模型列表 ★
+            'default_models': 'llava:7b-v1.5-q4_K_M, llava:13b-v1.5-q4_K_M, llava:latest,  qwen-vl,'
+        },
+        'VoiceInteraction': {
+            'wake_word': '小爱同学',
+            'wake_timeout': '10',
+            'energy_threshold': '300',
+            'pause_threshold': '0.8',
+            'online_recognition': 'True'
+        }
     }
 
-    parser['Network'] = {
-        'broadcast_port': '50000',
-        'websocket_port': '8001',
-        'discovery_timeout': '3.0'
-    }
+    # 3. 智能合并：如果 Section 或 Option 不存在，则添加；如果存在，保持原样（或根据需求强制覆盖）
+    modified = False
+    for section, options in new_defaults.items():
+        if section not in parser:
+            parser.add_section(section)
+            modified = True
+        for option, value in options.items():
+            if option not in parser[section]:
+                parser[section][option] = value
+                modified = True
 
-    parser['Ollama'] = {
-        'host': 'http://localhost:11434',
-        'default_models': 'llava:7b-v1.5-q4_K_M, qwen-vl'
-    }
-
-    parser['VoiceInteraction'] = {
-        'wake_word': '小爱同学',
-        'wake_timeout': '10',
-        'wake_threshold': '0.01',
-        'energy_threshold': '300',
-        'pause_threshold': '0.8',
-        'online_recognition': 'True'
-    }
-
-    with open(config_path, 'w', encoding='utf-8') as f:
-        parser.write(f)
+    # 4. 如果是新文件，或者内容有更新，则执行写入（'w' 模式会自动覆盖改写）
+    if modified or not os.path.exists(config_path):
+        with open(config_path, 'w', encoding='utf-8') as f:
+            parser.write(f)
+        # print(f"[INFO] 配置文件已更新: {config_path}")
 
 
 def load_config():
     global _config
     with _config_lock:
-        if not os.path.exists(config_path):
-            _create_default_config()
+        # ★ 每次启动都执行“检查并更新”逻辑，确保代码中的新默认值能进到 .ini 里 ★
+        _create_or_update_config()
 
         parser = configparser.ConfigParser()
         parser.read(config_path, encoding='utf-8')

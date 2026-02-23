@@ -1,0 +1,9 @@
+
+# 自动生成的安全屏蔽规则
+__pycache__/
+*.py[cod]
+*$py.class
+models/
+pcside/log/
+pcside/knowledge_base/faiss_index/
+pcside/knowledge_base/docs/*.txt
