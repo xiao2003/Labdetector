@@ -1,28 +1,63 @@
-# 面向微纳流体实验室的多模态智能视觉管理系统 (LabDetector)
+| 中文（简体） | English (Quick reference) |
+|---|---|
+| 项目名称：LabDetector — 面向微纳流体实验室的多模态智能视觉管理系统。简介：结合边缘节点（Raspberry Pi 等）与中枢（PC/工作站），融合视觉、语音与知识增强检索（RAG），用于实验室操作监测与风险提示。 | Project: LabDetector — Multimodal Visual Management for Microfluidics Labs. Summary: A distributed edge+central platform combining vision, speech, and retrieval-augmented generation (RAG) to monitor lab operations and provide risk alerts. |
+| 主要目录（要点） | Key folders (high level) |
+| - `pcside/`：PC/中枢端（推理、TTS、网络、日志）<br>- `piside/`：边缘采集端（摄像头/麦克风采集与发送）<br>- `knowledge_base/`：RAG 示例/知识内容<br>- `test/`：环境与依赖检测脚本 | - `pcside/`: central/PC side (inference, TTS, networking, logs)<br>- `piside/`: edge side (capture & send)<br>- `knowledge_base/`: RAG samples<br>- `test/`: checks & diagnostics |
+| 核心目标（给评审/导师） | Core goals (for reviewers) |
+| 1. 实时感知：视频/音频采集并提取手部/动作/物体等结构化信息。<br>2. 风险检测：异常或违规时触发语音/界面告警。<br>3. 可溯源决策：RAG 将模型输出与知识库证据关联，降低幻觉风险。 | 1. Real-time perception: capture video/audio and extract structured hand/action/object data.<br>2. Risk detection & alerting: voice/UI alarms on anomalies.<br>3. Traceable decisions: RAG links outputs to knowledge evidence to reduce hallucinations. |
+| 部署摘要（Deployment summary） | Deployment summary |
+| 先决条件：Python 3.8–3.11，虚拟环境。Windows（PowerShell）或 Raspberry Pi（Raspbian / Raspberry Pi OS）。 | Prereqs: Python 3.8–3.11, virtualenv. Deploy targets: Windows (PowerShell) or Raspberry Pi (Raspbian). |
+| Windows / PC（中枢）快速步骤 | Windows / PC quick steps |
+| ```powershell
+# 在项目根（例如 D:\Labdetector）
+python -m venv .venv; .\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+python launcher.py   # 或 python pcside\main.py
+``` | ```powershell
+# At project root (e.g. D:\Labdetector)
+python -m venv .venv; .\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+python launcher.py   # or python pcside\main.py
+``` |
+| Raspberry Pi（边缘）快速步骤 | Raspberry Pi (edge) quick steps |
+| ```bash
+python3 -m venv .venv; source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+python3 piside/pisend.py
+``` | ```bash
+python3 -m venv .venv; source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+python3 piside/pisend.py
+``` |
+| PyTorch / 硬件加速提示 | PyTorch / acceleration notes |
+| - 在有 NVIDIA GPU 的 PC 上，请参照 PyTorch 官网选择合适 CUDA 版本安装。<br>- 树莓派上应使用轻量/量化模型或 ONNX 运行时。 | - On GPU machines, install PyTorch with the appropriate CUDA wheel from pytorch.org.<br>- On Pi, prefer lightweight/quantized models or ONNX runtime. |
+| 配置说明（示例位置） | Configuration hints (example files) |
+| 推荐复制 `examples/config.example.ini` 到 `pcside/core/config.ini` 并按需修改。主要字段：网络监听（host/port）、边缘节点 ID / token、模型路径、TTS 设置、日志路径。 | Copy `examples/config.example.ini` to `pcside/core/config.ini` and edit. Key fields: network host/port, node ID/token, model paths, TTS settings, logging path. |
+| 运行验证（Smoke test） | Smoke tests |
+| 1. 启动 PC 端：`python launcher.py` 或 `python pcside\main.py`，检查 `pcside/log/` 是否产生日志。<br>2. 在 Pi 端运行 `python3 piside/pisend.py`，观察 PC 是否接收到数据。<br>3. 使用 `test/check_torch.py`、`test/check_version.py` 检查环境。 | 1. Start PC: `python launcher.py` or `python pcside\main.py`, check `pcside/log/` for entries.<br>2. On Pi run `python3 piside/pisend.py` and verify PC receives data.<br>3. Use `test/check_torch.py`, `test/check_version.py` to validate environment. |
+| 常见问题与排查要点 | Troubleshooting highlights |
+| - 模块导入失败：确认激活虚拟环境并安装依赖。<br>- 摄像头/麦克风无数据：检查设备权限/驱动；Pi 上启用摄像头接口。<br>- 语音/ASR 表现差：确认模型路径和采样率，优先使用 `test/qwen/vosk-model-small-cn-0.22` 做离线 ASR 测试。 | - Import errors: ensure venv activated and deps installed.<br>- No camera/mic data: check device permissions/drivers; enable camera interface on Pi.<br>- Poor ASR/TTS: verify model paths and sample rates; test with `test/qwen/vosk-model-small-cn-0.22`. |
+| 已添加的辅助文件 | Added helper files |
+| - `requirements.txt`（位于仓库根）: 包括基础依赖与常用可选项（torch, vosk, pyaudio 等）。<br>- `examples/config.example.ini`：最小配置示例，复制后修改。 | - `requirements.txt` at repository root: base deps + common optional packages (torch, vosk, pyaudio, etc.).<br>- `examples/config.example.ini`: example config file; copy and adapt to `pcside/core/config.ini`. |
+| 推送（你将手动推送） | Push (you will push manually) |
+| 请在本地检查修改后运行：<br>```powershell
+git add README.md requirements.txt examples/config.example.ini
+git commit -m "docs: bilingual side-by-side README; add requirements and config example"
+# 然后推送到你的分支：
+git push origin <branch-name>
+``` | Run locally to commit and push changes:<br>```powershell
+git add README.md requirements.txt examples/config.example.ini
+git commit -m "docs: bilingual side-by-side README; add requirements and config example"
+# then push to your branch:
+git push origin <branch-name>
+``` |
+| 进一步建议 | Next improvements |
+| - 添加 `LICENSE`（例如 MIT）并固定 `requirements.txt` 的版本；<br>- 提供 `config.example.ini` 的更多注释示例或常见部署脚本（PowerShell / bash）；<br>- 若需要，我可生成左右并排的 PDF 或演示截图方便提交评审。 | - Add a `LICENSE` (e.g., MIT) and pin versions in `requirements.txt`.<br>- Provide more commented `config.example.ini` or deployment scripts (PowerShell / bash).<br>- I can generate a side-by-side PDF or screenshots for your review if needed. |
 
-本项目面向微纳流体实验室的复杂科研环境，构建了一套涵盖边缘视觉感知、中心多模态推理、结构化知识检索与自然语音交互的智能化管理系统。
 
-## 🔬 项目背景与系统架构
 
-在整体系统架构设计上，本项目采取了**物理层感知终端**与**逻辑层计算中枢**相分离的分布式协同架构：
-
-- **边缘感知节点 (Edge Perception Node)**：在实验室操作台、精密仪器区及试剂存取区等关键物理空间，密集部署基于树莓派等嵌入式计算平台的边缘感知节点。节点集成了环境光自适应调节与多帧时序预处理算法，以应对反光液面及复杂的空间遮挡问题。系统利用异步输入输出机制，通过建立持久化的 WebSocket 双向通信通道，将端到端的采集、编码与网络传输总延迟严格控制在数十毫秒级别。
-- **中心推理中枢 (Central Computing Hub)**：在配备大容量显存（如 RTX 5090）的高性能计算工作站上，采用全栈本地化的方式部署数百亿参数规模的多模态视觉语言模型。充分利用 GPU 的并行计算资源，在保障模型理解精度的同时大幅压缩推理耗时，为实时图像分析提供高度稳定的算力支撑。
-
-## 🧠 核心感知与交互决策体系
-
-本研究方案摒弃了粗粒度的端到端图像分类模式，转而构建一套从宏观目标定位到微观姿态提取的层级化视觉解析管线：
-
-1. **结构化视觉语义引擎**：系统引入高精度的手部关键点姿态估计算法，从连续视频帧中实时解算出操作人员双手空间关键点的精确坐标。视觉语义化转换引擎将提取到的物体包围框、空间坐标以及动作标签，按照特定的句法规则转换为结构化的自然语言描述（例如：“操作人员正在握持移液器吸取缓冲液”），彻底打破了非结构化像素数据与自然语言之间的壁垒。
-2. **知识增强推理 (RAG)**：为了消除大模型在专业场景下容易产生的“事实性幻觉”，系统深度整合了检索增强生成（RAG）技术。通过预先将实验室的安全操作规范（SOP）与危险化学品理化性质表构建为专业知识向量数据库，系统能够准确判断当前的实验操作是否违规，并生成具备科学依据的指导建议。
-3. **异步伴随式语音闭环**：在交互链路末端，系统集成了异步语音合成（TTS）与语音识别（ASR）技术。当系统判定存在操作风险时，能够立即中断当前流程并触发清晰的中文语音播报，确保实验人员在双手无法接触设备的无接触状态下，依然能够获得系统的实时伴随式指导。
-
-## ⚙️ 自动化部署与技术特性
-
-本方案在实施层面具备高度的工程可行性，系统内置了跨平台的智能化环境管理脚本，彻底解决了底层依赖缺失与环境配置门槛高的问题。
-
-### 1. 跨平台自适应环境向导
-项目重构了 `setup.py` 自动化构建脚本。在 PC 端（计算中枢）或树莓派（边缘节点）克隆本仓库后，只需于项目根目录直接执行：
-
-```bash
-python setup.py
+*说明：我已在仓库中创建/更新 `requirements.txt` 与 `examples/config.example.ini`（如果你想我也可以按需把 `examples/config.example.ini` 覆盖到 `pcside/core/config.ini`）。你后续只需在本地运行上面的 git 命令把修改推送到远端。*
