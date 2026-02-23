@@ -4,20 +4,24 @@
 pisend_receive.py - 树莓派全双工收发器 (支持 QoS 动态帧率均衡版)
 """
 import asyncio
-import websockets
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
 import threading
 import time
-import os
-import sys
-import shutil
-import subprocess
-import socket
-import json
+
 import cv2
+import websockets
 
 from pcside.core.voice_interaction import pyaudio
-from voice.recognizer import PiVoiceRecognizer
+from tools.version_manager import get_app_version
 from voice.interaction import PiVoiceInteraction
+from voice.recognizer import PiVoiceRecognizer
+
+APP_VERSION = get_app_version()
 
 try:
     from picamera2 import Picamera2
@@ -25,6 +29,10 @@ try:
     PICAMERA_AVAILABLE = True
 except ImportError:
     PICAMERA_AVAILABLE = False
+
+from tools.model_downloader import check_and_download_vosk
+
+check_and_download_vosk()
 
 # 全局运行状态与日志
 LOG_FILE_PATH = os.path.join(os.getcwd(), f"{time.strftime('%Y%m%d_%H%M%S')}_运行日志.txt")
@@ -272,5 +280,66 @@ async def voice_thread(websocket):
     stream.stop_stream()
     stream.close()
 
-if __name__ == "__main__":
-    main()
+
+def run_pi_self_check():
+    """执行 Pi 边缘节点预检"""
+    print("\n" + "=" * 50)
+    print(f"[INFO] LabDetector V{APP_VERSION} (Pi 边缘端) - 节点自检")
+    print("=" * 50)
+
+    # ---------------------------------------------------------
+    # [1/3] 依赖与环境自检
+    # ---------------------------------------------------------
+    print("\n[INFO] [1/3] 检查边缘端依赖环境...")
+    try:
+        import websockets
+        import cv2
+        import pyaudio
+        import vosk
+        print("[INFO]   核心通信与语音依赖包已就绪.")
+    except ImportError as e:
+        print(f"[ERROR]   缺少依赖: {e}")
+        print("[INFO]   请先运行: pip install -e .")
+        sys.exit(1)
+
+    # ---------------------------------------------------------
+    # [2/3] 摄像头硬件自检
+    # ---------------------------------------------------------
+    print("\n[INFO] [2/3] 检查摄像头硬件...")
+    if PICAMERA_AVAILABLE:
+        print("[INFO]   Picamera2 模块加载成功，原生摄像头就绪.")
+    else:
+        print("[WARN]   Picamera2 不可用，将尝试使用 OpenCV 备用捕捉模块.")
+
+    # ---------------------------------------------------------
+    # [3/3] 离线语音唤醒模型自检
+    # ---------------------------------------------------------
+    print("\n[INFO] [3/3] 检查 Vosk 离线唤醒模型...")
+    try:
+        from tools.model_downloader import check_and_download_vosk
+        check_and_download_vosk()
+    except ImportError:
+        print("[WARN] 未找到 tools/model_downloader.py，跳过模型自检.")
+
+    print("\n" + "=" * 50)
+    print("[INFO] 边缘节点自检完成，正在尝试接入中枢集群...")
+    print("=" * 50 + "\n")
+    time.sleep(1)
+
+
+if __name__ == '__main__':
+    run_pi_self_check()
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        loop.create_task(main_async())
+    else:
+        try:
+            asyncio.run(main_async())
+        except KeyboardInterrupt:
+            running = False
+            print("\n[INFO] 正在关闭 Pi 边缘节点...")

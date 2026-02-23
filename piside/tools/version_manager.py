@@ -7,19 +7,16 @@ import os
 
 
 def get_app_version() -> str:
-    """
-    智能向上层目录寻找 VERSION 文件并返回版本号字符串。
-    即使被打包或单独拷贝到树莓派，也能自动定位。
-    """
-    # 当前文件所在目录: tools/
     current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    grandparent_dir = os.path.dirname(parent_dir)
 
-    # 定义可能存放 VERSION 文件的路径列表：
-    # 1. 父目录 (例如单机部署时的 piside/ 或 pcside/ 根目录)
-    # 2. 爷爷目录 (开发环境下的整个 Labdetector 项目根目录)
+    # ★ 完美兼容 Windows 隐藏扩展名导致的 .txt 后缀问题
     search_paths = [
-        os.path.join(os.path.dirname(current_dir), "VERSION"),
-        os.path.join(os.path.dirname(os.path.dirname(current_dir)), "VERSION")
+        os.path.join(grandparent_dir, "VERSION"),
+        os.path.join(grandparent_dir, "VERSION.txt"),
+        os.path.join(parent_dir, "VERSION"),
+        os.path.join(parent_dir, "VERSION.txt")
     ]
 
     for path in search_paths:
@@ -29,7 +26,7 @@ def get_app_version() -> str:
                     version_str = f.read().strip()
                     if version_str:
                         return version_str
-            except Exception as e:
-                print(f"[WARN] 读取 VERSION 文件失败: {e}")
+            except Exception:
+                pass
 
-    return "[WARN] 未知版本 (找不到 VERSION 文件)"
+    return "未知版本"
