@@ -1,170 +1,70 @@
-# LabDetector — 面向微纳流体实验室的多模态智能视觉管理系统 / LabDetector — Multimodal Visual Management for Microfluidics Labs
+# 🔬 Labdetector: 微纳流体实验室多模态智能科研助手
 
-简短说明（中文） | Brief summary (English)
-
-- 本项目实现边缘（Raspberry Pi 等）与中枢（PC/工作站）协同的多模态感知与交互平台，结合视觉、语音与知识增强检索（RAG），用于实验室操作监测与风险提示。
-- This project implements a distributed multimodal sensing and interaction platform (edge nodes such as Raspberry Pi + central PC), combining vision, speech, and retrieval-augmented generation (RAG) to monitor lab operations and provide risk alerts.
+> **核心目标**：针对微纳尺度固液界面物理力学实验，构建集“实时视觉监控、伴随式语音记录、专业知识回溯”于一体的智能科研闭环，实现实验室隐性知识的显性化与资产化。
 
 ---
 
-快速目视导览 / Quick at-a-glance
+## 📅 项目当前进展 (Current Milestones)
 
-- 主要目录：
-  - `pcside/` — PC/中枢端（推理、TTS、日志、网络）
-  - `piside/` — 边缘采集端（摄像头/麦克风采集与发送）
-  - `knowledge_base/` — RAG 示例/内容
-  - `test/` — 环境与依赖检测脚本
-- Key folders:
-  - `pcside/` — central/PC side (inference, TTS, networking, logs)
-  - `piside/` — edge side (capture & send)
-  - `knowledge_base/` — RAG samples
-  - `test/` — checks & diagnostics
+| 阶段 | 模块 | 状态 | 关键技术进展 |
+| :--- | :--- | :--- | :--- |
+| **第一阶段** | **分布式通信底座** | ✅ **已完成** | 基于 UDP 广播实现 1-5 台树莓派节点的**自动发现与动态编号**，支持 WebSocket 全双工通信。 |
+| **第二阶段** | **多模态感知框架** | ✅ **已完成** | 打通了边缘端视频采集与中心站推理链路，支持本地 Ollama 与云端 Qwen-VL 视觉大模型。 |
+| **第三阶段** | **知识库 (RAG)** | 🟡 **进行中** | 已完成向量数据库底座搭建，正批量录入实验室精密仪器 SOP 及流体力学经典文献。 |
+| **第四阶段** | **伴随式资产累积** | 🛠️ **待强化** | 规划开发“零知识学习”引擎，通过语音触发自动抓取实验瞬态画面并打标入库。 |
 
 ---
 
-核心目标（给老师看的要点） / Core goals (for quick review)
+## 🏗️ 系统架构 (System Architecture)
 
-1. 实时感知：采集视频/音频，做手部/动作/物体的结构化判断。
-2. 风险检测与告警：检测到异常或违规操作时触发语音/界面提示。
-3. 可溯源的决策：利用 RAG 将模型建议与知识库证据链接，降低幻觉风险。
+系统采用“边缘感知 + 中心推理”的分布式架构，充分利用实验室的RTX 5090算力资源。
 
-1. Real-time perception: capture video/audio and extract structured hand/action/object information.
-2. Risk detection & alerting: voice/UI alerts on anomalies.
-3. Traceable decisions: RAG links model outputs to knowledge evidence.
+- **感知层 (Piside)**：部署于隔振光学平台，通过树莓派 5 实时采集液膜、气泡及接触线图像。
+- **通信层 (Communication)**：自主研发的多节点管理模块，确保多路视频流顺序处理，防止算力冲突。
+- **决策层 (Pcside)**：基于大模型实现危险行为预警（如激光防护、电泳高压误触）与实验指导。
 
 ---
 
-部署（Deployment） — 目标：在 Windows/PC（中枢）与 Raspberry Pi（边缘）上可复现
+## 🚀 Quick Start
 
-注意：以下步骤假设你已克隆仓库并在项目根目录下（`D:\Labdetector`）。
-
-1) 建议的 Python 版本
-
-- 推荐：Python 3.8 ~ 3.11（以项目中 `setup.py` 指示为准）
-- Recommended: Python 3.8 — 3.11 (see `setup.py`)
-
-2) Windows / PC（中枢）快速部署步骤
-
-- 创建并激活虚拟环境（PowerShell）：
-
-```powershell
-python -m venv .venv; .\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-```
-
-- （可选）运行项目自检脚本以获得安装建议：
-
-```powershell
+### 1. 环境初始化 (仅需一次)
+在 PC 计算中枢根目录下运行，自动注册项目模块路径：
+```bash
 python setup.py
 ```
+2. 启动节点端 (树莓派)
 
-- 安装依赖（示例）：
-
-```powershell
-pip install -r requirements.txt
-```
-
-说明：如果仓库没有 `requirements.txt`，按需安装常见包，例如：numpy, opencv-python, torch（或依平台安装），requests, websocket-client, vosk (ASR 本地模型) 等。
-
-- 运行 PC 端服务（示例）：
-
-```powershell
-python launcher.py
-```
-
-3) Raspberry Pi / 边缘节点部署（树莓派）
-
-- 在树莓派上准备 Python3 环境并复制代码。
-- 激活虚拟环境并安装依赖：
+确保摄像头已连接，运行：
 
 ```bash
-python3 -m venv .venv; source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
+python piside/pisend_receive.py
 ```
 
-- 启动采集发送脚本：
+3. 启动中心端 (PC)
 
+运行主程序：
 ```bash
-python3 piside/pisend.py
-# 或接收/测试脚本
-python3 piside/pisend_receive.py
+python pcside/main.py
 ```
+    节点发现：系统会提示输入预期连接数量，自动扫描并编号。
 
-4) PyTorch 与硬件加速提示
+    按需推理：通过 pcside/core/config.ini 可自定义 AI 识别频率。
 
-- 如果需要 GPU 加速，请按 PyTorch 官方安装页选择适合的 CUDA 版本并安装。示例（CPU/无CUDA）：
-
-```powershell
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+📂 目录结构说明
+```bash
+Labdetector/
+├── pcside/                # PC 计算中枢逻辑
+│   ├── communication/     # 【新增】多节点自动发现、IP 维护与 WebSocket 分发逻辑
+│   ├── core/              # 配置管理 (config.ini)、AI 推理后端、语音引擎、日志模块
+│   └── log/               # 【新增】实验运行日志，按日期自动生成，方便复盘
+├── piside/                # 树莓派边缘感知逻辑 (视频推送、语音执行)
+├── assets/                # (规划) 用于存储实验快照、短视频等数字资产
+└── setup.py               # 工业级包管理脚本，解决跨路径调用报错
 ```
-
-- On Pi, prefer CPU/mobile/lightweight models (或使用 ONNX/量化模型以节省资源）。
-
-5) 网络与配置
-
-- 编辑：`pcside/core/config.ini`（或 `pcside/config.txt`）设置：
-  - 中央服务监听 IP/端口
-  - 边缘节点 ID 与密钥（若启用认证）
-  - 模型路径与语音合成参数
-
-- 默认路径举例（配置文件片段）：
-
+💡 建议
 ```
-[network]
-host = 0.0.0.0
-port = 8765
+跟踪进度：请重点查阅 pcside/log/ 下的运行日志，内含详细的扫描响应时间及 AI 推理延迟。
 
-[tts]
-engine = local
-model_path = ./models/tts-model
-```
+贡献知识：若需增加新的仪器说明书或实验心得，请放入 RAG 预留接口，系统将自动将其转化为“虚拟导师”的记忆。
 
----
-
-运行验证（Smoke test）
-
-1. 启动 PC 端：`python pcside\main.py`，查看 `pcside/log/` 中是否产生新日志。
-2. 在 Pi 端运行 `piside/pisend.py`，观察 PC 端是否接收到数据并在日志中记录。
-3. 可使用 `test/check_torch.py`、`test/check_version.py` 验证环境。
-
----
-
-常见问题 & 排查要点 / Troubleshooting
-
-- 模块导入失败：确保虚拟环境已激活并安装依赖；运行 `python setup.py` 获取提示。
-- 摄像头/麦克风无数据：检查设备权限、驱动、设备名称；在 Pi 上确认摄像头接口启用（raspi-config）。
-- 语音/ASR 效果差：确认 ASR/TTS 模型路径和采样率，优先使用项目中的 `test/qwen/vosk-model-small-cn-0.22` 做离线 ASR 测试。
-
----
-
-准备推送（你可以直接推送） / Ready to push
-
-如果你准备将修改提交并推送至远程仓库，常用命令（PowerShell）：
-
-```powershell
-git add README.md
-git commit -m "docs: bilingual README — deployment & overview"
-git push origin <branch-name>
-```
-
-将 `<branch-name>` 替换为你的分支名（如 `main` 或 `master`）。
-
----
-
-附：建议的后续改进（可选） / Suggested next improvements (optional)
-
-- 在仓库根添加 `requirements.txt`（明确版本）并把常用依赖列出；
-- 添加 `examples/config.example.ini` 作为模板；
-- 添加 `Makefile` 或 `scripts/` 目录来统一启动命令；
-- 补充演示视频或截图，便于老师快速评估成果。
-
----
-
-联系方式与许可 / Contact & License
-
-- 欢迎通过 Issue/PR 协作；合并到公共仓库前请补充 `LICENSE`（推荐 MIT/Apache-2.0）。
-
-
-
-(本 README 侧重部署与项目概览，若你希望我：1) 生成 `requirements.txt`；2) 添加 `config.example.ini`；3) 将 README 做成中英对照并列排格式，请回复我将继续执行并把文件推送到仓库。)
+硬件升级：下一步重点为树莓派采购麦克风阵列，以实现无接触式的语音伴随记录。
