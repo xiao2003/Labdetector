@@ -1,0 +1,20 @@
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# 日志文件
+pcside/log/
+*.log
+
+# 知识库与本地数据库
+pcside/knowledge_base/faiss_index/
+pcside/knowledge_base/docs/*.txt
+
+# 本地语音模型库 (太大了，别传到 Github，让其他人自己去下)
+models/
+
+# 环境配置
+.env
+config.ini

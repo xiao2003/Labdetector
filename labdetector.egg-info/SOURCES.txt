@@ -1,4 +1,3 @@
-README.md
 setup.py
 labdetector.egg-info/PKG-INFO
 labdetector.egg-info/SOURCES.txt
@@ -19,4 +18,7 @@ pcside/core/logger.py
 pcside/core/network.py
 pcside/core/tts.py
 pcside/core/voice_interaction.py
+pcside/knowledge_base/__init__.py
+pcside/knowledge_base/rag_engine.py
+pcside/knowledge_base/rag_test.py
 test/test.py

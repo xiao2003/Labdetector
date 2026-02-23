@@ -48,7 +48,7 @@ def analyze_image_ollama(frame, model):
 
         if resp.status_code == 200:
             result = resp.json()["response"].strip()
-            console_info(f"Ollama识别结果: {result}")
+            console_info(f"Ollama识别结果: {result}");
             return result
         else:
             console_error(f"Ollama API返回错误: {resp.status_code}")
@@ -226,3 +226,50 @@ def list_ollama_models():
         console_error(f"获取Ollama模型列表异常: {str(e)}")
 
     return []
+
+
+def ask_assistant_with_rag(frame, question: str, rag_context: str, model_name: str) -> str:
+    """
+    终极多模态问答：结合当前视频画面、用户的语音问题、以及 RAG 检索到的知识
+    """
+    import base64
+    import cv2
+    import requests
+    from pcside.core.config import get_config
+
+    prompt = f"""你是一个专业的微纳流体力学实验室AI助手。
+请结合我提供的【实时实验室画面】和下方的【实验室知识库背景】，回答我的问题。
+
+【知识库背景信息】:
+{rag_context if rag_context else "暂无相关背景知识。"}
+
+【用户问题】:
+{question}
+
+请用简明扼要、专业的中文回答，不超过50个字，适合语音播报。"""
+
+    # 如果有画面，则进行 Base64 编码
+    images = []
+    if frame is not None:
+        try:
+            _, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+            img_b64 = base64.b64encode(buffer).decode('utf-8')
+            images.append(img_b64)
+        except Exception:
+            pass
+
+    # 这里以 Ollama 为例调用
+    host = get_config("ollama.host", "http://localhost:11434")
+    try:
+        payload = {
+            "model": model_name,
+            "prompt": prompt,
+            "images": images,
+            "stream": False,
+            "options": {"temperature": 0.3}  # 降低温度保证回答的严谨性
+        }
+        resp = requests.post(f"{host}/api/generate", json=payload, timeout=20)
+        resp.raise_for_status()
+        return resp.json().get("response", "我暂时无法得出结论。")
+    except Exception as e:
+        return f"大脑思考异常: {str(e)[:30]}"

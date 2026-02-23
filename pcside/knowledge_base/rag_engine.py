@@ -1,12 +1,19 @@
 # pcside/knowledge_base/rag_engine.py
 import os
 import time
-from langchain_community.document_loaders import TextLoader
+import logging
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from pcside.core.logger import console_info, console_error
 
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+os.environ["TRANSFORMERS_VERBOSITY"] = "error" # 屏蔽 BertModel UNEXPECTED 提示
+logging.getLogger("httpx").setLevel(logging.WARNING) # 屏蔽 HTTP Request 提示
+logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
+logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+
+from langchain_community.document_loaders import TextLoader
 
 class RAGEngine:
     def __init__(self):

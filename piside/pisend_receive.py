@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-pisend_receive.py - 树莓派全双工收发器 (智能环境适配 + 极速响应版)
+pisend_receive.py - 树莓派全双工收发器 (支持 QoS 动态帧率均衡版)
 """
 import asyncio
 import websockets
@@ -15,7 +15,6 @@ import socket
 import json
 import cv2
 import numpy as np
-from typing import Optional, Any
 
 try:
     from picamera2 import Picamera2
@@ -24,10 +23,15 @@ try:
 except ImportError:
     PICAMERA_AVAILABLE = False
 
-# ====================== 日志与系统控制 ======================
+# 全局运行状态与日志
 LOG_FILE_PATH = os.path.join(os.getcwd(), f"{time.strftime('%Y%m%d_%H%M%S')}_运行日志.txt")
 log_lock = threading.Lock()
 running = True
+
+# ★ 默认帧率状态字典，可被 PC 动态修改 ★
+_PI_STATE = {
+    "sleep_time": 0.033  # 默认 30fps = 1/30
+}
 
 
 def write_log(level: str, text: str):
@@ -60,7 +64,6 @@ def get_local_ip():
         return "127.0.0.1"
 
 
-# ====================== TTS 与发现服务 ======================
 _TTS_ENGINE = None
 tts_queue = None
 
@@ -120,16 +123,13 @@ class NetworkDiscoveryResponder:
         console_info(f"UDP 发现服务已就绪 (端口: {self.port})")
 
 
-# ====================== WebSocket 硬件全双工核心逻辑 ======================
 picam2 = None
 
 
 async def get_frame():
-    """极致轻量化的画面捕获"""
     if not picam2: return None
     try:
-        # 使用 to_thread 保证 libcamera 的同步 IO 不会阻塞 Asyncio 心跳
-        return await asyncio.to_thread(picam2.capture_array)
+        return await asyncio.wait_for(asyncio.to_thread(picam2.capture_array), timeout=1.0)
     except:
         return None
 
@@ -138,60 +138,70 @@ async def handle_client(websocket, path=""):
     console_info(f"📱 PC连接成功: {websocket.remote_address}")
 
     async def recv_loop():
-        """持续接收 PC AI 结果"""
         try:
             async for msg in websocket:
+                # ★ 核心拦截：动态调配 QoS 指令 ★
+                if isinstance(msg, str) and msg.startswith("CMD:SET_FPS:"):
+                    try:
+                        target_fps = float(msg.split(":")[-1])
+                        _PI_STATE["sleep_time"] = 1.0 / max(1.0, target_fps)
+                        console_info(
+                            f"⚙️ 收到主控动态调配: 调整为 {target_fps:.1f} FPS (休眠 {_PI_STATE['sleep_time']:.3f}s)")
+                    except Exception as e:
+                        console_error(f"解析帧率指令失败: {e}")
+                    continue
+
+                # 普通文本则是 TTS 播报
                 text = msg.replace("VOICE_RESULT:", "").strip()
                 print(f"\n\033[92m[主机回报:] {text}\033[0m\n")
                 write_log("[AI]", text)
                 if tts_queue: await tts_queue.put(text)
+        except websockets.exceptions.ConnectionClosed:
+            pass
         except Exception as e:
             console_error(f"指令接收中断: {e}")
 
     async def send_loop():
-        """持续推送视频帧"""
-        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 65]
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 60]
         try:
             while running:
+                # ★ 核心：动态休眠 ★
+                await asyncio.sleep(_PI_STATE["sleep_time"])
+
                 frame = await get_frame()
                 if frame is not None:
-                    # 翻转并编码
                     flipped = cv2.flip(frame, 0)
-                    ret, buf = cv2.imencode('.jpg', flipped, encode_param)
+                    resized = cv2.resize(flipped, (640, 480))
+                    ret, buf = cv2.imencode('.jpg', resized, encode_param)
                     if ret:
                         await websocket.send(buf.tobytes())
-                # 稳定在 20FPS 左右，降低系统负载
-                await asyncio.sleep(0.04)
+        except websockets.exceptions.ConnectionClosed:
+            pass
         except Exception as e:
-            console_error(f"视频推送中断: {e}")
+            console_error(f"视频推送异常: {e}")
 
-    # 同时运行两个任务，直到任意一个任务出错（如 PC 断开）
     done, pending = await asyncio.wait(
         [asyncio.create_task(recv_loop()), asyncio.create_task(send_loop())],
         return_when=asyncio.FIRST_COMPLETED
     )
     for t in pending: t.cancel()
-    console_info("🔌 客户端连接已关闭")
+    console_info("🔌 客户端连接已平滑关闭")
 
 
 async def main_async():
     global picam2, tts_queue, running
-
-    # 1. 启动广播发现
     NetworkDiscoveryResponder().start()
 
-    # 2. 初始化相机硬件
     if PICAMERA_AVAILABLE:
         try:
             picam2 = Picamera2()
             config = picam2.create_video_configuration(main={"size": (1280, 720), "format": "RGB888"})
             picam2.configure(config)
             picam2.start()
-            console_info("✅ 摄像头 Picamera2 硬件初始化成功")
+            console_info("✅ Picamera2 硬件初始化成功")
         except Exception as e:
             console_error(f"摄像头启动失败: {e}")
 
-    # 3. 初始化文本播报
     if init_tts():
         tts_queue = asyncio.Queue()
 
@@ -202,33 +212,25 @@ async def main_async():
 
         asyncio.create_task(_tts_worker())
 
-    # 4. 启动 WebSocket 服务
-    async with websockets.serve(handle_client, "0.0.0.0", 8001, ping_interval=None):
+    async with websockets.serve(handle_client, "0.0.0.0", 8001, ping_interval=20, ping_timeout=20, max_size=None):
         console_info(f"🌐 WebSocket服务已就绪 ws://{get_local_ip()}:8001")
-        while running:
-            await asyncio.sleep(1)
+        while running: await asyncio.sleep(1)
 
 
 def main():
     global running
-    # ★ 核心修复：智能环境检测启动 ★
     try:
-        # 尝试获取当前环境中是否已经有事件循环在跑
         loop = asyncio.get_running_loop()
     except RuntimeError:
         loop = None
 
     if loop and loop.is_running():
-        # 如果在 Thonny/Notebook 等环境下，直接把主任务塞进去
-        console_info("检测到已运行的事件循环，任务已注入。")
         loop.create_task(main_async())
     else:
-        # 如果是命令行纯 Python 环境，开启新循环
         try:
             asyncio.run(main_async())
         except KeyboardInterrupt:
             running = False
-            print(f"\n✅ 程序结束，日志已导出: {LOG_FILE_PATH}")
 
 
 if __name__ == "__main__":

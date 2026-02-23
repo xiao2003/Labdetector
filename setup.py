@@ -9,7 +9,7 @@ import subprocess
 # 读取 README 作为长描述
 here = os.path.abspath(os.path.dirname(__file__))
 try:
-    with open(os.path.join(here, 'README.md'), encoding='utf-8') as f:
+    with open(os.path.join(here, 'readme/README.md'), encoding='utf-8') as f:
         long_description = f.read()
 except FileNotFoundError:
     long_description = "面向微纳流体实验室的多模态智能视觉管理系统"

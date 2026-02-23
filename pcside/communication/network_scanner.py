@@ -12,7 +12,6 @@ def scan_multi_nodes(expected_count: int, timeout: float = 3.0) -> dict:
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     sock.settimeout(timeout)
 
-    # 匹配 pisend_receive.py 的发现协议
     msg = json.dumps({'type': 'pc_discovery', 'service': 'video_analysis'}).encode('utf-8')
     found_ips = set()
 
@@ -22,7 +21,10 @@ def scan_multi_nodes(expected_count: int, timeout: float = 3.0) -> dict:
         while (time.time() - start_time) < timeout and len(found_ips) < expected_count:
             try:
                 data, addr = sock.recvfrom(1024)
-                resp = json.loads(data.decode('utf-8'))
+                # ★ 核心修复：加上 errors='ignore'，无视局域网里其他设备的二进制脏数据
+                payload = data.decode('utf-8', errors='ignore')
+                resp = json.loads(payload)
+
                 if resp.get('type') == 'raspberry_pi_response':
                     ip = resp.get('ip', addr[0])
                     if ip not in found_ips:
@@ -30,10 +32,12 @@ def scan_multi_nodes(expected_count: int, timeout: float = 3.0) -> dict:
                         console_info(f"✅ 发现节点: {ip} ({len(found_ips)}/{expected_count})")
             except socket.timeout:
                 break
+            except Exception:
+                # 遇到非 JSON 格式的干扰包直接忽略，继续监听下一个
+                continue
     finally:
         sock.close()
 
-    # 自动按 IP 升序编号 1, 2, 3...
     return {str(i + 1): ip for i, ip in enumerate(sorted(list(found_ips)))}
 
 
