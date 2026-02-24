@@ -1,4 +1,4 @@
-# LabDetector：智能多模态实验室管家 (V2.3.0)
+# LabDetector：智能多模态实验室管家 (V2.3.1)
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![Ollama](https://img.shields.io/badge/AI_Engine-Ollama-white)](https://ollama.ai/)
@@ -73,28 +73,6 @@ Labdetector
    ┗ voice/                    --- 边缘端唤醒模型储备
      ┗ model/                  --- Vosk 离线语音模型资源
 ```
-## 硬件准备与部署清单
-
-本系统采用“云-边-端”协同架构，为了保证大模型推理与多路视频流的极低延迟，建议采用以下硬件配置：
-
-### 1. 中心计算枢纽 (PC 端)
-负责全过程的 AI 视觉推理、RAG 向量检索、Vosk 离线语音解析与 GUI 渲染。
-* **显卡 (GPU)**: 强烈推荐 NVIDIA RTX 4090 / 5090 或同等 24GB+ 显存的设备（用于满载运行 Ollama 多模态视觉模型）。
-* **内存 (RAM)**: 32GB 及以上（保障多节点视频帧缓存与本地向量数据库常驻内存）。
-* **外设交互**: 
-  * 独立麦克风（或带麦克风的耳机），用于随时通过唤醒词触发交互。
-  * 扬声器 / 音响，用于接收 TTS 智能语音播报反馈。
-* **操作系统**: Windows 10/11 或 Ubuntu 22.04（需配置好完整的 CUDA 环境）。
-
-### 2. 边缘监控节点 (树莓派集群，1~N 台)
-负责实验室各个点位的视频采集、视频流高压缩传输及本地 TTS 语音响应。
-* **主板**: Raspberry Pi 4B 或 Raspberry Pi 5（需自带 Wi-Fi 模块）。
-* **摄像头**: 树莓派官方 CSI 摄像头模块（推荐 Camera Module V2 或 HQ 摄像头，兼容 `picamera2` 库）。
-* **音频输出 (可选)**: 通过 3.5mm 接口或蓝牙连接小型音箱，用于播放主控端下发的 AI 警告指令。
-* **电源**: 官方 15W / 27W Type-C 电源，防止满载录像时掉电死机。
-
-### 3. 网络环境
-* **局域网路由**: 建议使用 Wi-Fi 6 (802.11ax) 千兆路由器，所有设备必须处于**同一个局域网 (同一网段)** 下。由于系统采用了智能 QoS 动态调频技术，常规家用/实验室路由器即可稳定带载 5 台以上的监控节点并发。
 
 ## 硬件准备与部署清单
 
@@ -120,6 +98,14 @@ Labdetector
 ---
 
 ## 上手指南
+### 0. 克隆项目
+```bash
+# 1. 克隆项目
+git clone https://github.com/labdetector/Labdetector.git
+cd Labdetector
+# 2. 安装项目依赖 (建议在虚拟环境中执行)
+pip install -e .
+````
 
 ### 1. 中心端部署 (PC)
 在项目**根目录**下执行以下命令，完成依赖安装与环境初始化：
