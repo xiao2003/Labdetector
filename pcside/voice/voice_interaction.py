@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-pcside/voice/voice_interaction.py - 独立语音交互中枢 (暴力寻麦修复版)
+pcside/voice/voice_interaction.py - 独立语音交互中枢 (暴力寻麦修复版 + 纯净输出与精准RAG)
 """
 import threading
 import time
@@ -30,7 +30,6 @@ except ImportError:
     def speak_async(t):
         pass
 
-
     def stop_tts():
         pass
 
@@ -52,25 +51,22 @@ try:
     VOICE_INTERACTION_AVAILABLE = True
 except ImportError as e:
     console_error(f"语音交互功能不可用: {e}")
-    sr = None;
+    sr = None
     pyaudio = None
     VOICE_INTERACTION_AVAILABLE = False
 
 
 class VoiceInteractionConfig:
     def __init__(self):
-        # 强制将从配置文件读出来的字符串转换为正确的数据类型 (float / int)
         self.wake_word = str(get_config('voice_interaction.wake_word', '小爱同学'))
         self.wake_timeout = float(get_config('voice_interaction.wake_timeout', 10.0))
         self.wake_threshold = float(get_config('voice_interaction.wake_threshold', 0.01))
         self.energy_threshold = int(get_config('voice_interaction.energy_threshold', 300))
         self.pause_threshold = float(get_config('voice_interaction.pause_threshold', 0.8))
 
-        # 处理在线识别的布尔开关
         online_rec = get_config('voice_interaction.online_recognition', True)
         self.online_recognition = str(online_rec).lower() == 'true'
 
-        # 路径寻址
         current_dir = os.path.dirname(os.path.abspath(__file__))
         default_model_dir = os.path.join(current_dir, 'model')
         self.vosk_model_path = str(get_config('voice_interaction.vosk_model_path', default_model_dir))
@@ -80,7 +76,7 @@ class VoiceInteraction:
     def __init__(self, config: Optional[VoiceInteractionConfig] = None):
         self.config = config or VoiceInteractionConfig()
         self.recognizer = sr.Recognizer() if sr else None
-        self.microphone = None  # 延迟到启动时动态寻找
+        self.microphone = None
         self.is_active = False
         self.interaction_thread = None
         self.stop_event = threading.Event()
@@ -136,12 +132,8 @@ class VoiceInteraction:
 
         return ""
 
-    # ==========================================
-    # ★ 核心修复：自动寻找可用麦克风并强制接管
-    # ==========================================
     def _get_working_microphone(self):
         if not sr: return None
-        # 1. 尝试默认通道
         try:
             mic = sr.Microphone()
             with mic as source:
@@ -150,7 +142,6 @@ class VoiceInteraction:
         except Exception as e:
             console_error(f"默认录音通道被系统锁定 ({e})，正在扫描备用线路...")
 
-        # 2. 暴力扫描备用通道 (避开输出扬声器)
         for idx, name in enumerate(sr.Microphone.list_microphone_names()):
             if any(x in name for x in ["Output", "扬声器", "Speakers", "映射器"]):
                 continue
@@ -158,7 +149,7 @@ class VoiceInteraction:
                 mic = sr.Microphone(device_index=idx)
                 with mic as source:
                     pass
-                console_info(f"✅ 成功接管备用录音线路: [{idx}] {name}")
+                console_info(f"成功接管备用录音线路: [{idx}] {name}")
                 return mic
             except:
                 continue
@@ -167,19 +158,18 @@ class VoiceInteraction:
     def start(self) -> bool:
         if not VOICE_INTERACTION_AVAILABLE or self.is_running: return False
 
-        # 寻找麦克风
         self.microphone = self._get_working_microphone()
         if not self.microphone:
-            console_error("遍历了系统中所有音频设备，均无法访问麦克风！(请检查Windows独占模式设置)")
+            console_error("[VOICE]遍历了系统中所有音频设备，均无法访问麦克风！(请检查Windows独占模式设置)")
             return False
 
         try:
-            console_info("正在接通麦克风并校准底噪...")
+            console_info("[VOICE]正在接通麦克风并校准底噪...")
             with self.microphone as source:
                 self.recognizer.adjust_for_ambient_noise(source, duration=1)
-            console_info(f"智能语音中枢已完全启动，唤醒词: '{self.config.wake_word}'")
+            console_info(f"[VOICE]智能语音中枢已完全启动，唤醒词: '{self.config.wake_word}'")
         except Exception as e:
-            console_error(f"启动麦克风时发生严重冲突: {e}")
+            console_error(f"[VOICE]启动麦克风时发生严重冲突: {e}")
             return False
 
         self.stop_event.clear()
@@ -200,7 +190,7 @@ class VoiceInteraction:
                 with self.microphone as source:
                     if self.is_active and (time.time() - self.last_wake_time) > self.config.wake_timeout:
                         self.is_active = False
-                        console_info("💤 唤醒超时，重新进入待机模式。")
+                        console_info("[VOICE]唤醒超时，重新进入待机模式。")
 
                     if not self.is_active:
                         try:
@@ -214,7 +204,7 @@ class VoiceInteraction:
                             pass
                     else:
                         try:
-                            console_info("👂 正在聆听指令...")
+                            console_info("[VOICE]正在聆听指令...")
                             audio = self.recognizer.listen(source, timeout=5, phrase_time_limit=10)
                             text = self._recognize_audio_data(audio)
 
@@ -222,10 +212,10 @@ class VoiceInteraction:
                                 self._route_command(text)
                             else:
                                 self.is_active = False
-                                console_info("💤 没听清指令，进入待机。")
+                                console_info("[VOICE]没听清指令，进入待机。")
                         except sr.WaitTimeoutError:
                             self.is_active = False
-                            console_info("💤 没听到指令，进入待机。")
+                            console_info("[VOICE]没听到指令，进入待机。")
             except Exception:
                 time.sleep(1)
 
@@ -233,15 +223,14 @@ class VoiceInteraction:
         stop_tts()
         self.is_active = True
         self.last_wake_time = time.time()
-        console_info(f"✨ 检测到唤醒词！")
-        speak_async("我在。")
+        console_info(f"[VOICE]检测到唤醒词！")
+        speak_async("[VOICE]我在。")
 
     def _route_command(self, command: str):
-        console_info(f"🗣️ 收到语音输入: {command}")
-        rag_engine.save_and_ingest_note(f"【用户问询】{time.strftime('%Y-%m-%d %H:%M:%S')}：{command}")
+        console_info(f"[VOICE]收到语音输入: {command}")
 
         if "退出" in command or "关闭" in command:
-            speak_async("好的，停止语音服务。")
+            speak_async("[VOICE]好的，停止语音服务。")
             self.is_active = False
             return
 
@@ -252,8 +241,8 @@ class VoiceInteraction:
             if "我说完了" in note_content:
                 final_note = note_content.replace("我说完了", "").strip(" ，。！、")
                 if final_note:
-                    rag_engine.save_and_ingest_note(f"【长期记忆】{time.strftime('%Y-%m-%d %H:%M:%S')}：{final_note}")
-                speak_async("我记下了，您还有别的需要吗？")
+                    rag_engine.save_and_ingest_note(f"[长期记忆]{time.strftime('%Y-%m-%d %H:%M:%S')}：{final_note}")
+                speak_async("[VOICE]我记下了，您还有别的需要吗？")
                 self.is_active = True
                 self.last_wake_time = time.time()
                 return
@@ -274,7 +263,6 @@ class VoiceInteraction:
             model_name=self.ai_backend.get("model", "qwen-vl-max")
         )
         console_info(f"AI回答: {answer}")
-        rag_engine.save_and_ingest_note(f"【AI解答】{time.strftime('%Y-%m-%d %H:%M:%S')}：{answer}")
         speak_async(answer)
 
     def _record_long_note(self, initial_text: str = ""):
@@ -290,7 +278,7 @@ class VoiceInteraction:
                     text = self._recognize_audio_data(audio)
 
                     if text:
-                        console_info(f"✍️ 听写片段: {text}")
+                        console_info(f"听写片段: {text}")
                         timeout_retries = 0
                         if "我说完了" in text:
                             final_part = text.replace("我说完了", "").strip(" ，。！、")

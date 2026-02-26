@@ -1,4 +1,3 @@
-# pcside/communication/multi_ws_manager.py
 import asyncio
 import websockets
 import numpy as np
@@ -10,6 +9,7 @@ from pcside.core.config import get_config
 from pcside.core.expert_manager import expert_manager
 from pcside.core.tts import speak_async
 
+
 class MultiPiManager:
     def __init__(self, pi_dict: dict):
         self.pi_dict = pi_dict
@@ -17,28 +17,29 @@ class MultiPiManager:
         self.send_queues = {pid: asyncio.Queue() for pid in pi_dict}
         self.running = True
 
-        # ==========================================
-        # ★ 动态带宽均衡策略
-        # ==========================================
+        # ★ 新增：独立跟踪每个节点的状态
+        self.node_status = {pid: "connecting" for pid in pi_dict}
+
         num_nodes = len(pi_dict)
         self.target_fps = max(1.0, 30.0 / num_nodes) if num_nodes > 0 else 30.0
 
     async def _node_handler(self, pi_id, ip):
         uri = f"ws://{ip}:8001"
+        # ★ 修复：将节点连接放入死循环中，实现断线后无限重连
         while self.running:
             try:
+                self.node_status[pi_id] = "connecting"
                 async with websockets.connect(uri, ping_interval=None) as ws:
-                    console_info(f"🔗 节点 [{pi_id}] ({ip}) 握手成功")
+                    self.node_status[pi_id] = "online"
+                    console_info(f"节点 [{pi_id}] ({ip}) 握手成功")
                     await ws.send(f"CMD:SET_FPS:{self.target_fps}")
 
-                    # 1. 同步配置
                     sync_data = {"wake_word": get_config("voice_interaction.wake_word", "小爱同学")}
                     await ws.send(f"CMD:SYNC_CONFIG:{json.dumps(sync_data)}")
 
-                    # 2. 下发专家策略
                     policies = expert_manager.get_aggregated_edge_policy()
                     await ws.send(f"CMD:SYNC_POLICY:{json.dumps(policies)}")
-                    console_info(f"🧩 已下发 {len(policies['event_policies'])} 条专家策略至节点 [{pi_id}]")
+                    console_info(f"已下发 {len(policies['event_policies'])} 条专家策略至节点 [{pi_id}]")
 
                     async def recv_stream_task():
                         async for data in ws:
@@ -47,7 +48,6 @@ class MultiPiManager:
                             if isinstance(data, str):
                                 if data.startswith("PI_VOICE_COMMAND:"):
                                     self._handle_remote_voice(pi_id, data)
-                                # ★ 接收树莓派触发的高清关键帧 ★
                                 elif data.startswith("PI_EXPERT_EVENT:"):
                                     try:
                                         _, event_name, b64_img = data.split(":", 2)
@@ -55,9 +55,16 @@ class MultiPiManager:
                                         arr = np.frombuffer(img_bytes, np.uint8)
                                         expert_frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
-                                        console_info(f"⚡ 收到节点 [{pi_id}] 触发事件: {event_name}")
-                                        # 路由给专家，获取播报文本
-                                        tts_text = await asyncio.to_thread(expert_manager.route_and_analyze, event_name, expert_frame, {})
+                                        console_info(f"收到节点 [{pi_id}] 触发事件: {event_name}")
+
+                                        from pcside.voice.voice_interaction import get_voice_interaction
+                                        agent = get_voice_interaction()
+                                        if agent and agent.is_active:
+                                            console_info("语音助手正活跃，已自动拦截本次视觉检测结果播报。")
+                                            continue
+
+                                        tts_text = await asyncio.to_thread(expert_manager.route_and_analyze, event_name,
+                                                                           expert_frame, {})
 
                                         if tts_text:
                                             await ws.send(f"CMD:TTS:{tts_text}")
@@ -66,7 +73,6 @@ class MultiPiManager:
                                         console_error(f"处理专家事件异常: {e}")
                                 continue
 
-                            # 常规预览流
                             arr = np.frombuffer(data, np.uint8)
                             frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
                             if frame is not None:
@@ -80,13 +86,14 @@ class MultiPiManager:
                     await asyncio.gather(recv_stream_task(), send_command_task())
             except Exception as e:
                 if self.running:
-                    console_error(f"❌ 节点 [{pi_id}] 通信异常: {e}")
-                    await asyncio.sleep(3)
+                    # ★ 修复：断线后不再退出程序，而是标记为离线，等待5秒后进入下一次循环尝试重连
+                    self.node_status[pi_id] = "offline"
+                    console_error(f"节点 [{pi_id}] ({ip}) 通信断开，其他节点不受影响。正在后台尝试重连...")
+                    await asyncio.sleep(5)
 
     def _handle_remote_voice(self, pi_id, data):
-        """处理来自 Pi 的语音回传文本"""
         cmd_text = data.replace("PI_VOICE_COMMAND:", "")
-        console_info(f"📩 收到节点 {pi_id} 语音指令: {cmd_text}")
+        console_info(f"收到节点 {pi_id} 语音指令: {cmd_text}")
         from pcside.voice.voice_interaction import get_voice_interaction
         agent = get_voice_interaction()
         if agent:

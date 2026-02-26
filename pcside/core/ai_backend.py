@@ -13,18 +13,17 @@ from .logger import console_info, console_error
 import os
 import subprocess
 
-def analyze_image(frame, model):
-    """分析图像，根据选择的AI后端"""
+def analyze_image(frame, model, prompt="请精准描述画面内容，控制在20字以内，仅返回描述文本"):
     if _STATE.get("ai_backend") == "ollama":
-        return analyze_image_ollama(frame, model)
+        return analyze_image_ollama(frame, model, prompt)
     elif _STATE.get("ai_backend") == "qwen":
-        return analyze_image_qwen(frame, model)
+        return analyze_image_qwen(frame, model, prompt)
     else:
         console_error("未知AI后端")
         return "未知AI后端"
 
 
-def analyze_image_ollama(frame, model):
+def analyze_image_ollama(frame, model, prompt):
     """使用Ollama分析图像"""
     # 将OpenCV图像转换为JPG格式
     _, img_encoded = cv2.imencode('.jpg', frame)
@@ -33,7 +32,7 @@ def analyze_image_ollama(frame, model):
     # 准备请求数据
     payload = {
         "model": model,
-        "prompt": "请精准描述画面内容，控制在30字以内，仅返回描述文本",
+        "prompt": prompt,  # <--- ★ 这里改为动态使用传入的 prompt
         "images": [img_base64],
         "stream": False
     }
@@ -58,7 +57,7 @@ def analyze_image_ollama(frame, model):
         return "识别失败"
 
 
-def analyze_image_qwen(frame, model):
+def analyze_image_qwen(frame, model, prompt):
     """使用Qwen分析图像"""
     try:
         # 将OpenCV图像转换为JPG格式
@@ -100,7 +99,7 @@ def analyze_image_qwen(frame, model):
                                 "image": f"data:image/jpeg;base64,{img_base64}"
                             },
                             {
-                                "text": "请精准描述画面内容，控制在30字以内，仅返回描述文本"
+                                "text": prompt
                             }
                         ]
                     }

@@ -168,7 +168,7 @@ async def handle_client(websocket, path=""):
                         console_info(f"加载了 {len(_PI_STATE['policies'])} 条裁剪策略")
                     elif msg.startswith("CMD:TTS:"):
                         tts_text = msg.replace("CMD:TTS:", "")
-                        console_info(f"PC专家提示: {tts_text}")
+                        console_info(f" {tts_text}")
                     # 👇 新增拦截PC大模型结果的逻辑
                     elif msg.startswith("监控指令:"):
                         res_text = msg.replace("监控指令:", "").strip()
@@ -261,40 +261,55 @@ def main():
 
 
 async def voice_thread(websocket):
-    """独立的语音采集与识别协程"""
-    # 初始化
-    model_dir = os.path.join(os.path.dirname(__file__), "voice", "model")
-    recognizer = PiVoiceRecognizer(model_dir)
-    interaction = PiVoiceInteraction(recognizer)
+    """独立的语音采集与识别协程（防崩溃容错版）"""
+    try:
+        # 1. 尝试初始化模型和硬件
+        model_dir = os.path.join(os.path.dirname(__file__), "voice", "model")
+        recognizer = PiVoiceRecognizer(model_dir)
+        interaction = PiVoiceInteraction(recognizer)
 
-    # 开启麦克风
-    p = pyaudio.PyAudio()
-    stream = p.open(format=pyaudio.paInt16, channels=1, rate=16000,
-                    input=True, frames_per_buffer=4000)
-    stream.start_stream()
+        # 开启麦克风
+        p = pyaudio.PyAudio()
+        stream = p.open(format=pyaudio.paInt16, channels=1, rate=16000,
+                        input=True, frames_per_buffer=4000)
+        stream.start_stream()
 
-    console_info("🎤 Pi端本地语音引擎已就绪")
+        console_info("🎤 Pi端本地语音引擎已就绪")
 
+    except Exception as e:
+        # ★ 核心拦截：如果没插麦克风，在这里捕获报错，安全退出
+        console_info(f"未检测到有效麦克风硬件，已自动跳过语音唤醒功能。")
+        return  # 直接 `return` 结束该协程，主程序依然会完美运行！
+
+    # 2. 正常的工作循环（只有硬件成功才会走到这里）
     while running:
-        # 读取音频数据
-        data = await asyncio.to_thread(stream.read, 4000, exception_on_overflow=False)
+        try:
+            # 读取音频数据
+            data = await asyncio.to_thread(stream.read, 4000, exception_on_overflow=False)
 
-        # 交给交互模块处理
-        event = interaction.process_audio(data)
+            # 交给交互模块处理
+            event = interaction.process_audio(data)
 
-        if event == "EVENT:WOKEN":
-            speak_async("我在。")  # 本地先响应
-            await websocket.send("PI_EVENT:WOKEN")  # 通知 PC 联动
-        elif event and event.startswith("CMD_TEXT:"):
-            cmd_text = event.replace("CMD_TEXT:", "")
-            console_info(f"🗣️ 识别到指令: {cmd_text}")
+            if event == "EVENT:WOKEN":
+                speak_async("我在。")  # 本地先响应
+                await websocket.send("PI_EVENT:WOKEN")  # 通知 PC 联动
+            elif event and event.startswith("CMD_TEXT:"):
+                cmd_text = event.replace("CMD_TEXT:", "")
+                console_info(f"🗣️ 识别到指令: {cmd_text}")
 
-            # ★ 核心：回传给 PC ★
-            await websocket.send(f"PI_VOICE_COMMAND:{cmd_text}")
-            interaction.is_active = False  # 完成一次指令后回到待机
+                # 回传给 PC
+                await websocket.send(f"PI_VOICE_COMMAND:{cmd_text}")
+                interaction.is_active = False  # 完成一次指令后回到待机
+        except Exception as e:
+            break
 
-    stream.stop_stream()
-    stream.close()
+    # 3. 安全清理资源
+    try:
+        stream.stop_stream()
+        stream.close()
+        p.terminate()
+    except:
+        pass
 
 
 def run_pi_self_check():

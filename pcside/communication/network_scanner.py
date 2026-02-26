@@ -29,7 +29,7 @@ def scan_multi_nodes(expected_count: int, timeout: float = 3.0) -> dict:
                     ip = resp.get('ip', addr[0])
                     if ip not in found_ips:
                         found_ips.add(ip)
-                        console_info(f"✅ 发现节点: {ip} ({len(found_ips)}/{expected_count})")
+                        console_info(f"发现节点: {ip} ({len(found_ips)}/{expected_count})")
             except socket.timeout:
                 break
             except Exception:
@@ -45,7 +45,7 @@ def get_lab_topology() -> dict:
     """交互式确定实验室拓扑：处理设备不足或回退"""
     while True:
         try:
-            val = input("\n[PROMPT] 请输入要连接的树莓派总数 (默认1): ").strip()
+            val = input("\n[INFO] 请输入要连接的树莓派总数 (默认1): ").strip()
             expected = int(val) if val else 1
         except ValueError:
             continue
@@ -65,5 +65,5 @@ def get_lab_topology() -> dict:
 
         # 自动将编号后的 IP 字典存入配置 (序列化为JSON字符串)
         set_config("network.multi_pis", json.dumps(pi_dict))
-        console_info(f"💾 拓扑已保存: {pi_dict}")
+        console_info(f"拓扑已保存: {pi_dict}")
         return pi_dict
