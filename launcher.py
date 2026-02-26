@@ -31,8 +31,8 @@ def emergency_save_logs():
     if _log_saved:
         return
     try:
-        from pcside.main import export_logs
-        export_logs()
+        from pcside.main import export_log
+        export_log()
         print("\n[INFO] 系统运行日志已归档保存。")
         _log_saved = True
     except Exception as e:

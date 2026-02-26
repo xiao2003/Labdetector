@@ -107,10 +107,10 @@ class VoiceInteraction:
         if VOSK_AVAILABLE:
             if os.path.exists(self.config.vosk_model_path):
                 try:
-                    console_info(f"⏳ 正在加载 Vosk 离线语音模型...")
+                    console_info(f"正在加载 Vosk 离线语音模型...")
                     self.vosk_model = vosk.Model(self.config.vosk_model_path)
                     self.vosk_recognizer = vosk.KaldiRecognizer(self.vosk_model, 16000)
-                    console_info("✅ 离线语音听写模块加载成功！(支持完全断网)")
+                    console_info("离线语音听写模块加载成功！(支持完全断网)")
                 except Exception as e:
                     console_error(f"Vosk模型加载失败: {e}")
 
@@ -170,14 +170,14 @@ class VoiceInteraction:
         # 寻找麦克风
         self.microphone = self._get_working_microphone()
         if not self.microphone:
-            console_error("❌ 遍历了系统中所有音频设备，均无法访问麦克风！(请检查Windows独占模式设置)")
+            console_error("遍历了系统中所有音频设备，均无法访问麦克风！(请检查Windows独占模式设置)")
             return False
 
         try:
-            console_info("🔄 正在接通麦克风并校准底噪...")
+            console_info("正在接通麦克风并校准底噪...")
             with self.microphone as source:
                 self.recognizer.adjust_for_ambient_noise(source, duration=1)
-            console_info(f"🎤 智能语音中枢已完全启动，唤醒词: '{self.config.wake_word}'")
+            console_info(f"智能语音中枢已完全启动，唤醒词: '{self.config.wake_word}'")
         except Exception as e:
             console_error(f"启动麦克风时发生严重冲突: {e}")
             return False

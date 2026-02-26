@@ -19,6 +19,7 @@ import sys
 import codecs
 from typing import Optional, Dict, Any, List
 from pcside.tools.version_manager import get_app_version
+from pcside.core.scheduler_manager import scheduler_manager
 
 APP_VERSION = get_app_version();
 
@@ -320,7 +321,7 @@ def main() -> None:
     # ==================== ★ 语音强效排错启动 ★ ====================
     voice_agent = get_voice_interaction()
     if voice_agent:
-        safe_console_info("🎤 成功获取语音中枢实例，准备启动...")
+        safe_console_info("成功获取语音中枢实例，准备启动...")
         voice_agent.set_ai_backend(_STATE["ai_backend"], _STATE["selected_model"])
 
         def frame_provider():
@@ -340,6 +341,8 @@ def main() -> None:
     inf_interval = get_config("inference.interval", 5) if get_config else 5
     global_inf_thread = InferenceThread(inf_interval, _STATE["ai_backend"], _STATE["selected_model"])
     global_inf_thread.start()
+
+    scheduler_manager.start() #启动定时
 
     while _STATE["running"]:
         _STATE["connection_lost"] = False
@@ -441,7 +444,10 @@ def main() -> None:
     subprocess.run('taskkill /f /im ollama.exe >NUL 2>&1', shell=True)
     sys.stdout = getattr(sys.stdout, 'original_stream', sys.stdout)
     sys.stderr = getattr(sys.stderr, 'original_stream', sys.stderr)
-    export_log()
+
+    scheduler_manager.stop() #退出定时器
+
+    export_log() #导出日志
 
 if __name__ == "__main__":
     main()

@@ -16,7 +16,10 @@ import time
 import cv2
 import websockets
 
-from pcside.core.voice_interaction import pyaudio
+import base64
+from edge_vision.motion_detector import EdgeMotionDetector
+import pyaudio
+
 from tools.version_manager import get_app_version
 from voice.interaction import PiVoiceInteraction
 from voice.recognizer import PiVoiceRecognizer
@@ -41,7 +44,8 @@ running = True
 
 # ★ 默认帧率状态字典，可被 PC 动态修改 ★
 _PI_STATE = {
-    "sleep_time": 0.033  # 默认 30fps = 1/30
+    "sleep_time": 0.033,  # 默认 30fps = 1/30
+    "policies": []  # 新增：缓存策略
 }
 
 
@@ -146,57 +150,65 @@ async def get_frame():
 
 
 async def handle_client(websocket, path=""):
-    console_info(f"📱 PC连接成功: {websocket.remote_address}")
+    console_info(f"[INFO] PC连接成功: {websocket.remote_address}")
+
+    # ★ 新增：启动语音协程，共用当前的 websocket 连接
+    voice_task = asyncio.create_task(voice_thread(websocket))
 
     async def recv_loop():
         try:
             async for msg in websocket:
-                # ★ 核心拦截：动态调配 QoS 指令 ★
-                if isinstance(msg, str) and msg.startswith("CMD:SET_FPS:"):
-                    try:
+                if isinstance(msg, str):
+                    if msg.startswith("CMD:SET_FPS:"):
                         target_fps = float(msg.split(":")[-1])
                         _PI_STATE["sleep_time"] = 1.0 / max(1.0, target_fps)
-                        console_info(
-                            f"⚙️ 收到主控动态调配: 调整为 {target_fps:.1f} FPS (休眠 {_PI_STATE['sleep_time']:.3f}s)")
-                    except Exception as e:
-                        console_error(f"解析帧率指令失败: {e}")
-                    continue
-
-                # 普通文本则是 TTS 播报
-                text = msg.replace("VOICE_RESULT:", "").strip()
-                print(f"\n\033[92m[主机回报:] {text}\033[0m\n")
-                write_log("[AI]", text)
-                if tts_queue: await tts_queue.put(text)
-        except websockets.exceptions.ConnectionClosed:
-            pass
+                    elif msg.startswith("CMD:SYNC_POLICY:"):
+                        policy_str = msg.replace("CMD:SYNC_POLICY:", "")
+                        _PI_STATE["policies"] = json.loads(policy_str).get("event_policies", [])
+                        console_info(f"🧩 加载了 {len(_PI_STATE['policies'])} 条裁剪策略")
+                    elif msg.startswith("CMD:TTS:"):
+                        tts_text = msg.replace("CMD:TTS:", "")
+                        if tts_queue: await tts_queue.put(tts_text)
         except Exception as e:
             console_error(f"指令接收中断: {e}")
 
     async def send_loop():
         encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 60]
+        hd_encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 95]
+
+        motion_detector = EdgeMotionDetector(cooldown=3.0)
+
         try:
             while running:
-                # ★ 核心：动态休眠 ★
                 await asyncio.sleep(_PI_STATE["sleep_time"])
 
                 frame = await get_frame()
                 if frame is not None:
                     flipped = cv2.flip(frame, 0)
+
+                    # 1. 边缘触发分析
+                    event_name, crop_img = motion_detector.process_frame(flipped, _PI_STATE.get("policies", []))
+                    if event_name and crop_img is not None:
+                        ret, buf = cv2.imencode('.jpg', crop_img, hd_encode_param)
+                        if ret:
+                            b64_img = base64.b64encode(buf.tobytes()).decode('utf-8')
+                            await websocket.send(f"PI_EXPERT_EVENT:{event_name}:{b64_img}")
+                            console_info(f"[INFO] 捕捉异动，上传关键帧 [{event_name}]")
+
+                    # 2. 预览底噪流
                     resized = cv2.resize(flipped, (640, 480))
                     ret, buf = cv2.imencode('.jpg', resized, encode_param)
                     if ret:
                         await websocket.send(buf.tobytes())
-        except websockets.exceptions.ConnectionClosed:
-            pass
         except Exception as e:
-            console_error(f"视频推送异常: {e}")
+            pass
 
     done, pending = await asyncio.wait(
         [asyncio.create_task(recv_loop()), asyncio.create_task(send_loop())],
         return_when=asyncio.FIRST_COMPLETED
     )
     for t in pending: t.cancel()
-    console_info("🔌 客户端连接已平滑关闭")
+    console_info("[INFO] 客户端连接已关闭")
 
 
 async def main_async():
@@ -209,7 +221,7 @@ async def main_async():
             config = picam2.create_video_configuration(main={"size": (1280, 720), "format": "RGB888"})
             picam2.configure(config)
             picam2.start()
-            console_info("✅ Picamera2 硬件初始化成功")
+            console_info("Picamera2 硬件初始化成功")
         except Exception as e:
             console_error(f"摄像头启动失败: {e}")
 
@@ -224,7 +236,7 @@ async def main_async():
         asyncio.create_task(_tts_worker())
 
     async with websockets.serve(handle_client, "0.0.0.0", 8001, ping_interval=20, ping_timeout=20, max_size=None):
-        console_info(f"🌐 WebSocket服务已就绪 ws://{get_local_ip()}:8001")
+        console_info(f"WebSocket服务已就绪 ws://{get_local_ip()}:8001")
         while running: await asyncio.sleep(1)
 
 
@@ -296,10 +308,10 @@ def run_pi_self_check():
         import cv2
         import pyaudio
         import vosk
-        print("[INFO]   核心通信与语音依赖包已就绪.")
+        print("[INFO] 核心通信与语音依赖包已就绪.")
     except ImportError as e:
-        print(f"[ERROR]   缺少依赖: {e}")
-        print("[INFO]   请先运行: pip install -e .")
+        print(f"[ERROR] 缺少依赖: {e}")
+        print("[INFO] 请先运行: pip install -e .")
         sys.exit(1)
 
     # ---------------------------------------------------------
@@ -307,9 +319,9 @@ def run_pi_self_check():
     # ---------------------------------------------------------
     print("\n[INFO] [2/3] 检查摄像头硬件...")
     if PICAMERA_AVAILABLE:
-        print("[INFO]   Picamera2 模块加载成功，原生摄像头就绪.")
+        print("[INFO] Picamera2 模块加载成功，原生摄像头就绪.")
     else:
-        print("[WARN]   Picamera2 不可用，将尝试使用 OpenCV 备用捕捉模块.")
+        print("[WARN] Picamera2 不可用，将尝试使用 OpenCV 备用捕捉模块.")
 
     # ---------------------------------------------------------
     # [3/3] 离线语音唤醒模型自检

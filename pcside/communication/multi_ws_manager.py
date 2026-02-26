@@ -3,11 +3,12 @@ import asyncio
 import websockets
 import numpy as np
 import cv2
+import base64
 import json
 from pcside.core.logger import console_info, console_error
-# 引入配置获取接口
 from pcside.core.config import get_config
-
+from pcside.core.expert_manager import expert_manager
+from pcside.core.tts import speak_async
 
 class MultiPiManager:
     def __init__(self, pi_dict: dict):
@@ -28,26 +29,46 @@ class MultiPiManager:
             try:
                 async with websockets.connect(uri, ping_interval=None) as ws:
                     console_info(f"🔗 节点 [{pi_id}] ({ip}) 握手成功")
-
-                    # 1. 强制树莓派修改摄像头发送频率
                     await ws.send(f"CMD:SET_FPS:{self.target_fps}")
 
-                    # 2. ★ 新增：同步全局配置（如唤醒词、识别开关） ★
-                    sync_data = {
-                        "wake_word": get_config("voice_interaction.wake_word", "小爱同学"),
-                        "online_recognition": get_config("voice_interaction.online_recognition", True)
-                    }
+                    # 1. 同步配置
+                    sync_data = {"wake_word": get_config("voice_interaction.wake_word", "小爱同学")}
                     await ws.send(f"CMD:SYNC_CONFIG:{json.dumps(sync_data)}")
-                    console_info(f"⚙️ 已同步配置至节点 [{pi_id}]: {sync_data}")
+
+                    # 2. 下发专家策略
+                    policies = expert_manager.get_aggregated_edge_policy()
+                    await ws.send(f"CMD:SYNC_POLICY:{json.dumps(policies)}")
+                    console_info(f"🧩 已下发 {len(policies['event_policies'])} 条专家策略至节点 [{pi_id}]")
 
                     async def recv_stream_task():
                         async for data in ws:
                             if not self.running: break
-                            if isinstance(data, str) and data.startswith("PI_VOICE_COMMAND:"):
-                                # 之前讨论的回传指令处理逻辑
-                                self._handle_remote_voice(pi_id, data)
+
+                            if isinstance(data, str):
+                                if data.startswith("PI_VOICE_COMMAND:"):
+                                    self._handle_remote_voice(pi_id, data)
+                                # ★ 接收树莓派触发的高清关键帧 ★
+                                elif data.startswith("PI_EXPERT_EVENT:"):
+                                    try:
+                                        _, event_name, b64_img = data.split(":", 2)
+                                        img_bytes = base64.b64decode(b64_img)
+                                        arr = np.frombuffer(img_bytes, np.uint8)
+                                        expert_frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+
+                                        console_info(f"⚡ 收到节点 [{pi_id}] 触发事件: {event_name}")
+                                        # 路由给专家，获取播报文本
+                                        tts_text = expert_manager.route_and_analyze(event_name, expert_frame, {})
+
+                                        if tts_text:
+                                            await ws.send(f"CMD:TTS:{tts_text}")
+                                            speak_async(f"节点 {pi_id} 提示：{tts_text}")
+                                    except Exception as e:
+                                        console_error(f"处理专家事件异常: {e}")
                                 continue
 
+                            # 常规预览流
+                            import numpy as np
+                            import cv2
                             arr = np.frombuffer(data, np.uint8)
                             frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
                             if frame is not None:
@@ -61,7 +82,7 @@ class MultiPiManager:
                     await asyncio.gather(recv_stream_task(), send_command_task())
             except Exception as e:
                 if self.running:
-                    console_error(f"❌ 节点 [{pi_id}] 通信异常，3秒后重连: {e}")
+                    console_error(f"❌ 节点 [{pi_id}] 通信异常: {e}")
                     await asyncio.sleep(3)
 
     def _handle_remote_voice(self, pi_id, data):

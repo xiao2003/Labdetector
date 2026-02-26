@@ -25,7 +25,7 @@ class RAGEngine:
         os.makedirs(self.docs_dir, exist_ok=True)
 
         from pcside.core.logger import console_info  # 确保顶部或这里导入了 console_info
-        console_info(" 正在加载 RAG 本地语义向量模型，初次启动通常需要几十秒钟，请耐心等待...")
+        console_info("正在加载 RAG 本地语义向量模型，首次启动通常需要几十秒钟，请耐心等待...")
 
         # 2. 初始化 Embedding 模型 (中文推荐 text2vec)
         try:
@@ -39,12 +39,12 @@ class RAGEngine:
         """加载或新建 FAISS 向量数据库"""
         if os.path.exists(self.db_path):
             self.vector_db = FAISS.load_local(self.db_path, self.embeddings, allow_dangerous_deserialization=True)
-            console_info(" 已成功加载本地实验室知识库")
+            console_info("已成功加载本地实验室知识库")
         else:
             # 初始化一个空库
             self.vector_db = FAISS.from_texts(["实验室知识库初始化完成\n"], self.embeddings)
             self.vector_db.save_local(self.db_path)
-            console_info(" RAG: 尚未发现知识库，已创建全新向量数据库\n")
+            console_info("未发现知识库，已创建全新向量数据库\n")
 
     def save_and_ingest_note(self, text_content: str) -> bool:
         """
