@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-main.py - PC端主程序 (多节点独立重连 + ESC回退优化版)
+main.py - PC端主程序 (多节点独立重连 + 本机专家统合优化版)
 """
 import asyncio
 import cv2
@@ -62,6 +62,7 @@ try:
     from pcside.communication.network_scanner import get_lab_topology
     from pcside.communication.multi_ws_manager import MultiPiManager
     from pcside.voice.voice_interaction import get_voice_interaction
+    from pcside.core.expert_manager import expert_manager  # <--- ★ 引入专家管理器
 except ImportError as e:
     print(f"\n\033[91m[致命错误] 模块导入失败: {e}\033[0m")
     sys.exit(1)
@@ -152,6 +153,9 @@ sys.stdout = ThreadSafePrintSuppressor(sys.stdout)
 sys.stderr = ThreadSafePrintSuppressor(sys.stderr)
 
 
+# =========================================================================
+# ★ 重构 InferenceThread：让它统一走专家路由，彻底抛弃旧的裸模型推理
+# =========================================================================
 class InferenceThread(threading.Thread):
     def __init__(self, interval: int, backend: str, model: str):
         super().__init__(name="AI_Inference_Thread", daemon=True)
@@ -173,17 +177,40 @@ class InferenceThread(threading.Thread):
                 time.sleep(0.5)
                 continue
             try:
+                # 只有在 camera 模式下，才由本线程接管推理（websocket 模式由 manager 自行处理）
+                if _STATE.get("mode") != "camera":
+                    time.sleep(1)
+                    continue
+
                 frame = inference_queue.get(timeout=0.1)
-                if time.time() - last_infer_time < self.interval: continue
-                result = analyze_image(frame, self.model)
-                if result and result != "识别失败":
+
+                # 控制帧率
+                if time.time() - last_infer_time < self.interval:
+                    continue
+
+                # 模拟一个本地异动事件，触发所有专家进行联合研判
+                simulated_event = "Motion_Alert"
+
+                # ★ 核心改动：不再直接调 analyze_image，而是发给全体专家会诊！
+                result = expert_manager.route_and_analyze(simulated_event, frame, {})
+
+                if result and result.strip():
                     latest_inference_result["text"] = result
                     latest_inference_result["timestamp"] = time.time()
-                    safe_console_info(f" 本机视觉分析完成: {result}")
+                    safe_console_info(f"专家综合研判: {result}")
+
+                    # 同时触发语音播报，检查是否被静音拦截
+                    agent = get_voice_interaction()
+                    if agent and agent.is_active:
+                        safe_console_info("[VOICE] [静音拦截] 语音助手正活跃，已自动拦截视觉播报。")
+                    else:
+                        speak_async(f"本地提示：{result}")
+
                 last_infer_time = time.time()
             except queue.Empty:
                 continue
-            except:
+            except Exception as e:
+                safe_console_error(f"本地推理线程异常: {e}")
                 time.sleep(0.5)
 
 
@@ -315,6 +342,8 @@ def signal_handler(sig_num: Any, frame_data: Any) -> None:
 
 
 # ==================== 主程序入口 ====================
+# ... main.py 前半部分保持不变 ...
+
 def main() -> None:
     signal.signal(signal.SIGINT, signal_handler)
     if not run_as_admin() and os.name == 'nt': pass
@@ -335,6 +364,7 @@ def main() -> None:
         time.sleep(1)
 
     voice_agent = get_voice_interaction()
+
     inf_interval = get_config("inference.interval", 5) if get_config else 5
     global_inf_thread = InferenceThread(inf_interval, _STATE["ai_backend"], "")
     global_inf_thread.start()
@@ -342,128 +372,135 @@ def main() -> None:
     scheduler_manager.start()
 
     try:
-        # ★ 第一层循环：控制回退到“模型选择”
+        # ★ 第一层循环：模型选择 (通常只在启动或明确要求更换模型时进入)
+        if not select_model():
+            _STATE["running"] = False
+
+        global_inf_thread.model = _STATE["selected_model"]
+        import pcside.core.ai_backend as ai_be
+        if not hasattr(ai_be, '_STATE'): ai_be._STATE = {}
+        ai_be._STATE["selected_model"] = _STATE["selected_model"]
+
+        if voice_agent:
+            voice_agent.set_ai_backend(_STATE["ai_backend"], _STATE["selected_model"])
+            if not voice_agent.is_running:
+                def frame_provider():
+                    return _STATE.get("frame_buffer")
+
+                voice_agent.get_latest_frame_callback = frame_provider
+                if voice_agent.start():
+                    safe_console_info("[VOICE] 语音管家麦克风初始化成功！等待唤醒...")
+                else:
+                    safe_console_error("语音启动失败！(原因：未插入麦克风、或被占用)")
+
+        # ★ 第二层循环：模式选择与运行 (这是主循环)
         while _STATE["running"]:
-            if not select_model(): break
+            _STATE["connection_lost"] = False
+            _STATE["video_running"] = False
 
-            global_inf_thread.model = _STATE["selected_model"]
-            if voice_agent:
-                voice_agent.set_ai_backend(_STATE["ai_backend"], _STATE["selected_model"])
-                if not voice_agent.is_running:
-                    def frame_provider():
-                        return _STATE.get("frame_buffer")
+            while not inference_queue.empty():
+                try:
+                    inference_queue.get_nowait()
+                except:
+                    pass
 
-                    voice_agent.get_latest_frame_callback = frame_provider
-                    if voice_agent.start():
-                        safe_console_info("语音管家麦克风初始化成功！等待唤醒...")
-                    else:
-                        safe_console_error("语音启动失败！(原因：未插入麦克风、或被占用)")
+            # 每次监控结束，都会回到这里重新选择模式
+            if not select_run_mode():
+                break
 
-            # ★ 第二层循环：控制回退到“运行模式 / 节点选择”
-            while _STATE["running"]:
-                _STATE["connection_lost"] = False
-                _STATE["video_running"] = False
+            if _STATE["mode"] == "websocket":
+                pi_topology = get_lab_topology()
+                if not pi_topology: continue
 
-                while not inference_queue.empty():
-                    try:
-                        inference_queue.get_nowait()
-                    except:
-                        pass
+                manager = MultiPiManager(pi_topology)
+                threading.Thread(target=lambda: asyncio.run(manager.start()), daemon=True).start()
 
-                if not select_run_mode(): break
+                _STATE["video_running"] = True
+                safe_console_info(f"已启动多节点监控，共计 {len(pi_topology)} 个站点。按 ESC 退出监控。")
+                display_results = {pid: "" for pid in pi_topology.keys()}
 
-                if _STATE["mode"] == "websocket":
-                    pi_topology = get_lab_topology()
-                    if not pi_topology: continue
+                try:
+                    for pid in pi_topology.keys():
+                        cv2.namedWindow(f"Node_{pid}", cv2.WINDOW_NORMAL)
 
-                    manager = MultiPiManager(pi_topology)
-                    threading.Thread(target=lambda: asyncio.run(manager.start()), daemon=True).start()
-
-                    _STATE["video_running"] = True
-                    safe_console_info(f"已启动多节点监控，共计 {len(pi_topology)} 个站点。按 ESC 退出监控。")
-                    display_results = {pid: "" for pid in pi_topology.keys()}
-
-                    try:
-                        for pid in pi_topology.keys():
-                            cv2.namedWindow(f"Node_{pid}", cv2.WINDOW_NORMAL)
-
-                        # ★ 动态视频渲染循环
-                        while _STATE["video_running"] and _STATE["running"]:
-                            for pi_id in sorted(pi_topology.keys()):
-                                frame = manager.frame_buffers.get(pi_id)
-                                status = getattr(manager, 'node_status', {}).get(pi_id, "offline")
-
-                                # 如果没有收到画面（正在连接或掉线），自动生成一块纯黑色的背景画布
-                                if frame is None:
-                                    img = np.zeros((480, 640, 3), dtype=np.uint8)
-                                else:
-                                    _STATE["frame_buffer"] = frame.copy()
-                                    img = frame.copy()
-
-                                res_text = display_results.get(pi_id, "")
-
-                                # 在画面上动态打印该节点的当前状态
-                                if status == "offline":
-                                    img = draw_chinese_text(img, f"Node {pi_id}: 已断开, 正在尝试重连...", (20, 30),
-                                                            text_color=(0, 0, 255))
-                                elif status == "connecting":
-                                    img = draw_chinese_text(img, f"Node {pi_id}: 正在连接网络...", (20, 30),
-                                                            text_color=(0, 255, 255))
-                                else:
-                                    if res_text:
-                                        img = draw_chinese_text(img, f"Node {pi_id}: {res_text}", (20, 30))
-
-                                cv2.imshow(f"Node_{pi_id}", img)
-
-                            key = cv2.waitKey(30) & 0xFF
-                            if key == 27 or key == ord('q'):
-                                _STATE["video_running"] = False
-                                safe_console_info("用户主动按下退出键，结束当前监控。")
-                                break
-
-                            # ★ 智能断线回退判断：如果当前监控的【所有】节点都彻底断线，自动回退
-                            all_offline = all(
-                                getattr(manager, 'node_status', {}).get(pid) == "offline" for pid in pi_topology.keys())
-                            if all_offline:
-                                safe_console_info("所有节点均已断开，自动回退到网络配置...")
-                                _STATE["connection_lost"] = True
-                                _STATE["video_running"] = False
-                                break
-
-                    finally:
-                        manager.stop()
-                        cv2.destroyAllWindows()
-
-                elif _STATE["mode"] == "camera":
-                    cap = cv2.VideoCapture(0)
-                    _STATE["video_running"] = True
                     while _STATE["video_running"] and _STATE["running"]:
-                        ret, frame = cap.read()
-                        if ret:
-                            _STATE["frame_buffer"] = frame.copy()
-                            res_text = latest_inference_result.get("text", "")
-                            if res_text and time.time() - latest_inference_result.get("timestamp", 0) < 5:
-                                frame = draw_chinese_text(frame, res_text, (20, 30))
+                        for pi_id in sorted(pi_topology.keys()):
+                            frame = manager.frame_buffers.get(pi_id)
+                            status = getattr(manager, 'node_status', {}).get(pi_id, "offline")
 
-                            cv2.imshow("Local Preview", frame)
-                            try:
-                                inference_queue.put_nowait(frame.copy())
-                            except queue.Full:
-                                pass
+                            if frame is None:
+                                img = np.zeros((480, 640, 3), dtype=np.uint8)
+                            else:
+                                _STATE["frame_buffer"] = frame.copy()
+                                img = frame.copy()
+
+                            res_text = display_results.get(pi_id, "")
+
+                            if status == "offline":
+                                img = draw_chinese_text(img, f"Node {pi_id}: 已断开, 正在尝试重连...", (20, 30),
+                                                        text_color=(0, 0, 255))
+                            elif status == "connecting":
+                                img = draw_chinese_text(img, f"Node {pi_id}: 正在连接网络...", (20, 30),
+                                                        text_color=(0, 255, 255))
+                            else:
+                                if res_text:
+                                    img = draw_chinese_text(img, f"Node {pi_id}: {res_text}", (20, 30))
+
+                            cv2.imshow(f"Node_{pi_id}", img)
 
                         key = cv2.waitKey(30) & 0xFF
                         if key == 27 or key == ord('q'):
                             _STATE["video_running"] = False
+                            safe_console_info("用户主动按下退出键，结束当前监控。")
+                            break  # 跳出视频循环
+
+                        all_offline = all(
+                            getattr(manager, 'node_status', {}).get(pid) == "offline" for pid in pi_topology.keys())
+                        if all_offline:
+                            safe_console_info("所有节点均已断开，自动回退到网络配置...")
+                            _STATE["connection_lost"] = True
+                            _STATE["video_running"] = False
                             break
-                    cap.release()
+
+                finally:
+                    manager.stop()
                     cv2.destroyAllWindows()
 
-                # ★ 异常状态分发判断
-                if _STATE["connection_lost"] and _STATE["running"]:
-                    time.sleep(1)
-                    continue  # 继续第二层循环，回退到选模式/扫节点
-                else:
-                    break  # 跳出内层循环，回退到外层的模型选择
+            elif _STATE["mode"] == "camera":
+                cap = cv2.VideoCapture(0)
+                _STATE["video_running"] = True
+                safe_console_info("已启动本机摄像头监控，触发专家矩阵... 按 ESC 退出。")
+                while _STATE["video_running"] and _STATE["running"]:
+                    ret, frame = cap.read()
+                    if ret:
+                        _STATE["frame_buffer"] = frame.copy()
+                        res_text = latest_inference_result.get("text", "")
+
+                        if res_text and time.time() - latest_inference_result.get("timestamp", 0) < 5:
+                            frame = draw_chinese_text(frame, res_text, (20, 30))
+
+                        cv2.imshow("Local Preview", frame)
+                        try:
+                            inference_queue.put_nowait(frame.copy())
+                        except queue.Full:
+                            pass
+
+                    key = cv2.waitKey(30) & 0xFF
+                    if key == 27 or key == ord('q'):
+                        _STATE["video_running"] = False
+                        safe_console_info("用户主动按下退出键，结束本机监控。")
+                        break  # 跳出视频循环，回到模式选择
+                cap.release()
+                cv2.destroyAllWindows()
+
+            # ★ 异常状态分发判断
+            if _STATE["connection_lost"] and _STATE["running"]:
+                time.sleep(1)
+                continue  # 如果是断线，继续循环，重新选模式/扫节点
+
+            # 注意：如果正常按 ESC 退出视频循环，代码会自然执行到这里，
+            # 然后重新进入 `while _STATE["running"]:` 的开头，
+            # 从而再次调用 `select_run_mode()`，完美实现回退到模式选择页面。
 
     except KeyboardInterrupt:
         print("\n[INFO] 接收到安全退出信号。")
@@ -474,7 +511,7 @@ def main() -> None:
     sys.stdout = getattr(sys.stdout, 'original_stream', sys.stdout)
     sys.stderr = getattr(sys.stderr, 'original_stream', sys.stderr)
 
-    scheduler_manager.stop()  # 防止未定义退出
+    scheduler_manager.stop()
     export_log()
 
 

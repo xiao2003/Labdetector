@@ -124,7 +124,7 @@ def analyze_image_qwen(frame, model, prompt):
                     text_content = " ".join([item["text"] for item in content if item["type"] == "text"])
                 else:
                     text_content = content
-                console_info(f"Qwen识别结果: {text_content}")
+                console_info(f"Qwen识别结果: {text_content}");
                 return text_content
             else:
                 console_error("Qwen API响应格式错误")

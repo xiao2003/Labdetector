@@ -1,6 +1,6 @@
-# pcside/experts/danger_expert.py
 from pcside.core.base_expert import BaseExpert
 import pcside.core.ai_backend as ai_be
+from pcside.core.logger import console_error
 
 
 class DangerBehaviorExpert(BaseExpert):
@@ -22,24 +22,33 @@ class DangerBehaviorExpert(BaseExpert):
     def analyze(self, frame, context):
         model = ai_be._STATE.get("selected_model", "llava:7b-v1.5-q4_K_M")
 
-        # ★ 精心打磨的工业级 Prompt：杜绝神经病式播报
-        # 让它专注于“危险动作”和“化学品泄漏”
+        # 极简且严厉的 Prompt，防止大模型陷入自我辩论的幻觉
         custom_prompt = """
-        你是一个微纳流控实验室安全审核员。请检查画面是否存在以下两类危险：
-        1. 危险姿势：人员在实验台前趴着睡觉、异常跌倒、双手脱离高风险设备。
-        2. 物品异常：试剂瓶倾倒、桌面出现不明液体反光（疑似泄漏）、起火或烟雾。
-        如果存在上述情况，请用15个字以内发出严厉警告。
-        如果画面只是正常走动、拿取物品、写字、或是没有人的墙壁/噪点，请务必直接回复“无明显异常”。
+        【严格指令】你是一个安防监控器。
+        画面中是否发生以下事件：1.人员跌倒 2.人员趴在桌上睡觉 3.液体泄漏 4.起火冒烟。
+        如果有，请只输出事件名称（例如：人员跌倒）。
+        如果没有上述任何事件（包括正常走动、站立、空无一人），你【必须】只输出“无”这一个字。绝对禁止输出任何其他解释！
         """
 
-        # 调用 AI 底层接口
-        result = ai_be.analyze_image(frame, model, prompt=custom_prompt)
+        try:
+            # 调用 AI 底层接口
+            result = ai_be.analyze_image(frame, model, prompt=custom_prompt)
 
-        # ★ 静音拦截：只有真正危险时才开口
-        if result and "无明显异常" in result:
+            # ★ 异常暴露：如果底层接口明确返回了失败
+            if result == "识别失败" or result is None:
+                console_error(f"[{self.expert_name}] 底层大模型请求超时或崩溃！请检查 Ollama 状态。")
+                return ""
+
+            clean_result = result.strip().lower()
+
+            # 强化静音拦截：过滤掉大模型不听话产生的冗长废话
+            if "无" == clean_result or "无明显异常" in clean_result or "正常" in clean_result or len(clean_result) > 20:
+                # 哪怕它不听话输出了一大堆“我不认为存在...”，只要超过20个字，我们就认为它是幻觉废话，直接拦截。
+                return ""
+
+            return f"危险动作警报：{result}"
+
+        except Exception as e:
+            # ★ 确保专家内部的崩溃能在主程序日志中大声喊出来
+            console_error(f"[{self.expert_name}] 执行过程中发生未捕获异常: {e}")
             return ""
-
-        if result and result != "识别失败":
-            return f"实验室安全警告：{result}"
-
-        return ""

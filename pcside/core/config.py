@@ -19,7 +19,9 @@ _DEFAULT_CONFIG = {
         'type': 'ollama'
     },
     'ollama': {
-        'api_base': 'http://127.0.0.1:11434',  # <--- 新增：补全缺失的 API 地址
+        'url': 'http://127.0.0.1:11434',  # <--- 常见键名1
+        'api_base': 'http://127.0.0.1:11434',  # <--- 常见键名2
+        'base_url': 'http://127.0.0.1:11434',  # <--- 常见键名3
         'default_models': 'llava:13b-v1.5-q4_K_M, llava:7b-v1.5-q4_K_M, llava:latest, qwen-vl'
     },
     'qwen': {
@@ -96,6 +98,13 @@ def get_config(key: str, default: Any = None) -> Any:
     """
     获取配置值。支持 section.key 格式，如 'experts.danger_expert'
     """
+    # ===== [终极防爆兜底] =====
+    # 无论 ai_backend 源码里请求的是 url、api_base 还是 base_url
+    # 如果找不到且没提供默认值，我们在这里强行拦截并返回正确的 Ollama 地址
+    if default is None and 'ollama' in key.lower() and any(x in key.lower() for x in ['url', 'api', 'base', 'host']):
+        default = 'http://127.0.0.1:11434'
+    # ==========================
+
     if '.' in key:
         section, option = key.split('.', 1)
         if _config.has_section(section) and _config.has_option(section, option):
