@@ -213,10 +213,12 @@ def select_ai_backend():
             if choice == '1':
                 print("\n[INFO] 切换至 Ollama 本地后端...")
                 set_config('ai_backend.type', 'ollama')
+                _STATE["ai_backend"] = "ollama"
                 return True
             elif choice == '2':
                 print("\n[INFO] 切换至 Qwen 云端后端...")
                 set_config('ai_backend.type', 'qwen')
+                _STATE["ai_backend"] = "qwen"
                 return True
             else:
                 print("\n[WARN] 输入无效，请输入 1 或 2，或者输入 exit 退出。")
@@ -373,20 +375,20 @@ def main() -> None:
 
             def sequential_inference_worker():
                 while _STATE["video_running"] and _STATE["running"]:
-                    for pi_id in sorted(pi_topology.keys()):
-                        if not _STATE["video_running"]: break
-                        frame = manager.frame_buffers.get(pi_id)
-                        if frame is not None:
-                            try:
-                                result = analyze_image(frame.copy(), _STATE["selected_model"])
-                                if result and result != "识别失败":
-                                    manager.send_to_node(pi_id, f"监控指令: {result}")
-                                    display_results[pi_id] = result
-
-                                    # ★ 新增：将向树莓派发出的数据详细写入日志 ★
-                                    safe_console_info(f"向节点 {pi_id} 回传结果: {result}")
-                            except Exception as e:
-                                safe_console_error(f"节点 {pi_id} 分析异常: {e}")
+                    # for pi_id in sorted(pi_topology.keys()):
+                    #     if not _STATE["video_running"]: break
+                    #     frame = manager.frame_buffers.get(pi_id)
+                    #     if frame is not None:
+                    #         try:
+                    #             result = analyze_image(frame.copy(), _STATE["selected_model"])
+                    #             if result and result != "识别失败":
+                    #                 manager.send_to_node(pi_id, f"监控指令: {result}")
+                    #                 display_results[pi_id] = result
+                    #
+                    #                 # ★ 新增：将向树莓派发出的数据详细写入日志 ★
+                    #                 safe_console_info(f"向节点 {pi_id} 回传结果: {result}")
+                    #         except Exception as e:
+                    #             safe_console_error(f"节点 {pi_id} 分析异常: {e}")
                     time.sleep(1)
 
             threading.Thread(target=sequential_inference_worker, daemon=True, name="Multi_Infer").start()

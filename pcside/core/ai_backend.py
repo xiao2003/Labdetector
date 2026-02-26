@@ -268,7 +268,7 @@ def ask_assistant_with_rag(frame, question: str, rag_context: str, model_name: s
             "stream": False,
             "options": {"temperature": 0.3}  # 降低温度保证回答的严谨性
         }
-        resp = requests.post(f"{host}/api/generate", json=payload, timeout=20)
+        resp = requests.post(f"{host}/api/generate", json=payload, timeout=60)
         resp.raise_for_status()
         return resp.json().get("response", "我暂时无法得出结论。")
     except Exception as e:

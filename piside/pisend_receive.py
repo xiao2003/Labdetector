@@ -60,7 +60,7 @@ def write_log(level: str, text: str):
 
 def console_info(text: str):
     write_log('[INFO]', text)
-    print(f"[INFO] {text}")
+    print(text if text.startswith("[INFO]") else f"[INFO] {text}")
 
 
 def console_error(text: str):
@@ -165,10 +165,14 @@ async def handle_client(websocket, path=""):
                     elif msg.startswith("CMD:SYNC_POLICY:"):
                         policy_str = msg.replace("CMD:SYNC_POLICY:", "")
                         _PI_STATE["policies"] = json.loads(policy_str).get("event_policies", [])
-                        console_info(f"🧩 加载了 {len(_PI_STATE['policies'])} 条裁剪策略")
+                        console_info(f"加载了 {len(_PI_STATE['policies'])} 条裁剪策略")
                     elif msg.startswith("CMD:TTS:"):
                         tts_text = msg.replace("CMD:TTS:", "")
-                        if tts_queue: await tts_queue.put(tts_text)
+                        console_info(f"PC专家提示: {tts_text}")
+                    # 👇 新增拦截PC大模型结果的逻辑
+                    elif msg.startswith("监控指令:"):
+                        res_text = msg.replace("监控指令:", "").strip()
+                        console_info(f"大模型看懂了: {res_text}")
         except Exception as e:
             console_error(f"指令接收中断: {e}")
 
@@ -176,7 +180,7 @@ async def handle_client(websocket, path=""):
         encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 60]
         hd_encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 95]
 
-        motion_detector = EdgeMotionDetector(cooldown=3.0)
+        motion_detector = EdgeMotionDetector(cooldown=15.0)
 
         try:
             while running:
@@ -193,7 +197,7 @@ async def handle_client(websocket, path=""):
                         if ret:
                             b64_img = base64.b64encode(buf.tobytes()).decode('utf-8')
                             await websocket.send(f"PI_EXPERT_EVENT:{event_name}:{b64_img}")
-                            console_info(f"[INFO] 捕捉异动，上传关键帧 [{event_name}]")
+                            console_info(f"捕捉异动，上传关键帧 [{event_name}]")
 
                     # 2. 预览底噪流
                     resized = cv2.resize(flipped, (640, 480))

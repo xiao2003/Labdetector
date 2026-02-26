@@ -57,7 +57,7 @@ class MultiPiManager:
 
                                         console_info(f"⚡ 收到节点 [{pi_id}] 触发事件: {event_name}")
                                         # 路由给专家，获取播报文本
-                                        tts_text = expert_manager.route_and_analyze(event_name, expert_frame, {})
+                                        tts_text = await asyncio.to_thread(expert_manager.route_and_analyze, event_name, expert_frame, {})
 
                                         if tts_text:
                                             await ws.send(f"CMD:TTS:{tts_text}")
@@ -67,8 +67,6 @@ class MultiPiManager:
                                 continue
 
                             # 常规预览流
-                            import numpy as np
-                            import cv2
                             arr = np.frombuffer(data, np.uint8)
                             frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
                             if frame is not None:
