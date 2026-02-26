@@ -56,7 +56,7 @@ class ExpertManager:
                 except Exception as e:
                     console_error(f"加载专家 [{module_name}] 失败: {e}")
 
-        console_info(f"===== 共成功加载 {len(self.experts)} 个专家 =====")
+        console_info(f"===== 共成功加载 {len(self.experts)} 个专家 =====\n")
 
     def get_aggregated_edge_policy(self) -> Dict[str, Any]:
         """收集所有已启用专家的边缘端截帧策略，统一下发给树莓派"""
