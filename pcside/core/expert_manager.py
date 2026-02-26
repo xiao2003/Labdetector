@@ -41,7 +41,7 @@ class ExpertManager:
 
                 # 3. 如果配置为 0 或 False，则跳过加载
                 if str(is_enabled) == "0" or is_enabled is False:
-                    console_info(f"⭕ 已禁用: [{module_name}.py] (配置项为 0)")
+                    console_info(f"已禁用: [{module_name}.py] (配置项为 0)")
                     continue
 
                 # 4. 动态反射加载已启用的专家
@@ -52,9 +52,9 @@ class ExpertManager:
                         if issubclass(obj, BaseExpert) and obj is not BaseExpert:
                             expert_instance = obj()
                             self.experts[expert_instance.expert_name] = expert_instance
-                            console_info(f"✅ 已启用: [{expert_instance.expert_name}] ({module_name}.py)")
+                            console_info(f"已启用: [{expert_instance.expert_name}] ({module_name}.py)")
                 except Exception as e:
-                    console_error(f"❌ 加载专家 [{module_name}] 失败: {e}")
+                    console_error(f"加载专家 [{module_name}] 失败: {e}")
 
         console_info(f"===== 共成功加载 {len(self.experts)} 个专家 =====")
 
