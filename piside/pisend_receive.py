@@ -180,32 +180,34 @@ async def handle_client(websocket, path=""):
         encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 60]
         hd_encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 95]
 
-        motion_detector = EdgeMotionDetector(cooldown=15.0)
+        # 换用原生的 YOLO Detector
+        from edge_vision.yolo_detector import GeneralYoloDetector
+        yolo_detector = GeneralYoloDetector()
 
         try:
             while running:
-                await asyncio.sleep(_PI_STATE["sleep_time"])
+                await asyncio.sleep(0.5)  # 控制在 2fps 左右抽帧即可，防止 Pi 发热过载
 
                 frame = await get_frame()
                 if frame is not None:
                     flipped = cv2.flip(frame, 0)
 
-                    # 1. 边缘触发分析
-                    event_name, crop_img = motion_detector.process_frame(flipped, _PI_STATE.get("policies", []))
-                    if event_name and crop_img is not None:
-                        ret, buf = cv2.imencode('.jpg', crop_img, hd_encode_param)
+                    is_triggered, event_name = yolo_detector.process_frame(flipped)
+                    if is_triggered:
+                        ret, buf = cv2.imencode('.jpg', flipped, hd_encode_param)
                         if ret:
                             b64_img = base64.b64encode(buf.tobytes()).decode('utf-8')
+                            # 复用现成协议，发送给 PC 端的专家矩阵
                             await websocket.send(f"PI_EXPERT_EVENT:{event_name}:{b64_img}")
-                            console_info(f"捕捉异动，上传关键帧 [{event_name}]")
+                            console_info(f"捕捉违规，上传关键帧 [{event_name}]")
 
-                    # 2. 预览底噪流
+                    # 原有的预览底噪流保持不变，用于 PC 端实时查看画面
                     resized = cv2.resize(flipped, (640, 480))
                     ret, buf = cv2.imencode('.jpg', resized, encode_param)
                     if ret:
                         await websocket.send(buf.tobytes())
         except Exception as e:
-            pass
+            console_error(f"视频流发送异常: {e}")
 
     done, pending = await asyncio.wait(
         [asyncio.create_task(recv_loop()), asyncio.create_task(send_loop())],

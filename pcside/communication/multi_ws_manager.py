@@ -48,31 +48,45 @@ class MultiPiManager:
                             if isinstance(data, str):
                                 if data.startswith("PI_VOICE_COMMAND:"):
                                     self._handle_remote_voice(pi_id, data)
-                                elif data.startswith("PI_EXPERT_EVENT:"):
+
+                                # 修复：恢复完整的数据接收与解码逻辑
+                                elif data.startswith("PI_EXPERT_EVENT:") or data.startswith("PI_YOLO_EVENT:"):
                                     try:
-                                        _, event_name, b64_img = data.split(":", 2)
+                                        # 解析数据包 格式为: 事件前缀:事件名称:Base64图片
+                                        _, event_str, b64_img = data.split(":", 2)
                                         img_bytes = base64.b64decode(b64_img)
                                         arr = np.frombuffer(img_bytes, np.uint8)
                                         expert_frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
-                                        console_info(f"收到节点 [{pi_id}] 触发事件: {event_name}")
+                                        console_info(f"收到节点 [{pi_id}] 边缘端高优告警: {event_str}")
 
                                         from pcside.voice.voice_interaction import get_voice_interaction
                                         agent = get_voice_interaction()
                                         if agent and agent.is_active:
-                                            console_info("语音助手正活跃，已自动拦截本次视觉检测结果播报。")
+                                            console_info("语音助手正活跃，安防播报暂缓。")
                                             continue
 
-                                        tts_text = await asyncio.to_thread(expert_manager.route_and_analyze, event_name,
-                                                                           expert_frame, {})
+                                        # 将 event_str 组装成上下文，确保通用安防专家能提取到具体的违规内容
+                                        context = {"event_desc": event_str}
 
+                                        # 抛给专家矩阵进行分析和 RAG 日志归档
+                                        tts_text = await asyncio.to_thread(
+                                            expert_manager.route_and_analyze,
+                                            event_str,
+                                            expert_frame,
+                                            context
+                                        )
+
+                                        # 如果专家返回了阻断语音，立刻下发并在 PC 端同步播报
                                         if tts_text:
                                             await ws.send(f"CMD:TTS:{tts_text}")
-                                            speak_async(f"节点 {pi_id} 提示：{tts_text}")
+                                            speak_async(f"节点 {pi_id} 安防警告：{tts_text}")
+
                                     except Exception as e:
-                                        console_error(f"处理专家事件异常: {e}")
+                                        console_error(f"处理边缘告警事件异常: {e}")
                                 continue
 
+                            # 处理常规预览视频流的渲染
                             arr = np.frombuffer(data, np.uint8)
                             frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
                             if frame is not None:

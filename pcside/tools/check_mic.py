@@ -55,7 +55,7 @@ def check_audio():
                 rec = KaldiRecognizer(model, 16000)
 
                 print("\n" + "=" * 50)
-                print("🎤 交互测试：请对着麦克风大声说出【你好】")
+                print("[VOICE] 交互测试：请对着麦克风说出【你好】")
                 print("=" * 50 + "\n")
 
                 success = False
@@ -70,9 +70,9 @@ def check_audio():
                         result = json.loads(rec.Result())
                         text = result.get("text", "").replace(" ", "")
                         if text:
-                            print(f"-> 听到声音: '{text}'")
+                            print(f"[VOICE] 听到声音: '{text}'")
                             if "你好" in text:
-                                print("\n[INFO] 🎉 验证通过！成功识别到“你好”！")
+                                print("\n[INFO] MIC验证通过")
                                 success = True
                                 break
                     else:
