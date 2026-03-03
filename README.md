@@ -1,10 +1,10 @@
-# LabDetector：智能多模态实验室管家 (V2.3.3)
+# NeuroLab Hub —— 基于可编排专家模型的实验室多模态智能中枢 (V2.3.3)
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![Ollama](https://img.shields.io/badge/AI_Engine-Ollama-white)](https://ollama.ai/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-LabDetector 是专为微纳流体力学及重型科研实验室打造的**分布式智能多模态管家系统**。本项目将边缘计算（树莓派节点）与高性能中心算力（如 RTX 系列显卡）相结合，支持**动态 QoS 视频并发、RAG 本地知识库、以及离线环境下的语音交互**。
+NeuroLab Hub 是专为微纳流体力学及中小型实验室打造的**分布式智能多模态管家系统**。本项目将边缘计算（树莓派节点）与高性能中心算力（如 RTX 系列显卡）相结合，支持**动态 QoS 视频并发、RAG 本地知识库、以及离线环境下的语音交互**。
 
 系统旨在为科研人员提供实时的实验状态监控、语音辅助数据记录以及长时实验资产的智能检索服务。
 
