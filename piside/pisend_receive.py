@@ -45,7 +45,9 @@ running = True
 # ★ 默认帧率状态字典，可被 PC 动态修改 ★
 _PI_STATE = {
     "sleep_time": 0.033,  # 默认 30fps = 1/30
-    "policies": []  # 新增：缓存策略
+    "policies": [],  # 新增：缓存策略
+    "has_mic": False,
+    "has_speaker": False,
 }
 
 
@@ -94,6 +96,25 @@ def init_tts():
         return True
     except:
         return False
+
+
+def detect_audio_capabilities():
+    """检测 Pi 端音频能力（麦克风/扬声器）。"""
+    has_mic, has_speaker = False, False
+    try:
+        p = pyaudio.PyAudio()
+        try:
+            has_mic = p.get_default_input_device_info() is not None
+        except Exception:
+            has_mic = False
+        try:
+            has_speaker = p.get_default_output_device_info() is not None
+        except Exception:
+            has_speaker = False
+        p.terminate()
+    except Exception:
+        pass
+    return has_mic, has_speaker
 
 
 def speak_async(text):
@@ -152,6 +173,8 @@ async def get_frame():
 async def handle_client(websocket, path=""):
     console_info(f"[INFO] PC连接成功: {websocket.remote_address}")
 
+    await websocket.send(f"PI_CAPS:{json.dumps({'has_mic': _PI_STATE['has_mic'], 'has_speaker': _PI_STATE['has_speaker']})}")
+
     # ★ 新增：启动语音协程，共用当前的 websocket 连接
     voice_task = asyncio.create_task(voice_thread(websocket))
 
@@ -168,7 +191,9 @@ async def handle_client(websocket, path=""):
                         console_info(f"加载了 {len(_PI_STATE['policies'])} 条裁剪策略")
                     elif msg.startswith("CMD:TTS:"):
                         tts_text = msg.replace("CMD:TTS:", "")
-                        console_info(f" {tts_text}")
+                        console_info(f"[专家结论] {tts_text}")
+                        if _PI_STATE["has_speaker"]:
+                            await tts_queue.put(tts_text)
                     # 👇 新增拦截PC大模型结果的逻辑
                     elif msg.startswith("监控指令:"):
                         res_text = msg.replace("监控指令:", "").strip()
@@ -192,16 +217,20 @@ async def handle_client(websocket, path=""):
                 if frame is not None:
                     flipped = cv2.flip(frame, 0)
 
-                    is_triggered, event_name = yolo_detector.process_frame(flipped)
-                    if is_triggered:
-                        ret, buf = cv2.imencode('.jpg', flipped, hd_encode_param)
+                    triggered_events = yolo_detector.process_frame(flipped, _PI_STATE["policies"])
+                    for event_name, event_frame, detected_str in triggered_events:
+                        ret, buf = cv2.imencode('.jpg', event_frame, hd_encode_param)
                         if ret:
                             b64_img = base64.b64encode(buf.tobytes()).decode('utf-8')
-                            # 复用现成协议，发送给 PC 端的专家矩阵
-                            await websocket.send(f"PI_EXPERT_EVENT:{event_name}:{b64_img}")
-                            console_info(f"捕捉违规，上传关键帧 [{event_name}]")
+                            payload = {
+                                "event_name": event_name,
+                                "detected_classes": detected_str,
+                                "timestamp": time.time()
+                            }
+                            await websocket.send(f"PI_EXPERT_EVENT:{json.dumps(payload, ensure_ascii=False)}:{b64_img}")
+                            console_info(f"捕捉违规，上传关键帧 [{event_name}] classes={detected_str}")
 
-                    # 原有的预览底噪流保持不变，用于 PC 端实时查看画面
+                    # 原有的预览底噪流持不变，用于 PC 端实时查看画面
                     resized = cv2.resize(flipped, (640, 480))
                     ret, buf = cv2.imencode('.jpg', resized, encode_param)
                     if ret:
@@ -231,7 +260,9 @@ async def main_async():
         except Exception as e:
             console_error(f"摄像头启动失败: {e}")
 
-    if init_tts():
+    _PI_STATE["has_mic"], _PI_STATE["has_speaker"] = detect_audio_capabilities()
+
+    if _PI_STATE["has_speaker"] and init_tts():
         tts_queue = asyncio.Queue()
 
         async def _tts_worker():
@@ -345,9 +376,16 @@ def run_pi_self_check():
         print("[WARN] Picamera2 不可用，将尝试使用 OpenCV 备用捕捉模块.")
 
     # ---------------------------------------------------------
-    # [3/3] 离线语音唤醒模型自检
+    # [3/4] 音频硬件能力自检
     # ---------------------------------------------------------
-    print("\n[INFO] [3/3] 检查 Vosk 离线唤醒模型...")
+    print("\n[INFO] [3/4] 检查音频硬件能力...")
+    has_mic, has_speaker = detect_audio_capabilities()
+    print(f"[INFO] 麦克风: {'可用' if has_mic else '不可用'} | 扬声器: {'可用' if has_speaker else '不可用'}")
+
+    # ---------------------------------------------------------
+    # [4/4] 离线语音唤醒模型自检
+    # ---------------------------------------------------------
+    print("\n[INFO] [4/4] 检查 Vosk 离线唤醒模型...")
     try:
         from tools.model_downloader import check_and_download_vosk
         check_and_download_vosk()

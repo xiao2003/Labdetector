@@ -1,4 +1,4 @@
-# LabDetector：智能多模态实验室管家 (V2.3.1)
+# LabDetector：智能多模态实验室管家 (V2.3.3)
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![Ollama](https://img.shields.io/badge/AI_Engine-Ollama-white)](https://ollama.ai/)
@@ -24,6 +24,12 @@ LabDetector 是专为微纳流体力学及重型科研实验室打造的**分布
   视频流渲染与大模型推理流程实现彻底解耦。支持 Ollama 本地私有化视觉大模型（如 Llava/Qwen-VL）满载运行。通过合理的算力分配（GPU 专用于视觉推理，CPU 处理 RAG 与控制逻辑），保障系统的快速响应。
 
 ## 更新日志
+
+* **[V2.3.3] 专家模型测试更新** (2026-03-03)
+  本次更新引入了多个领域专家模型，增强了系统在特定场景下的专业分析能力。
+  * **新增专家系统框架**：在 `pcside/experts/` 目录下新增多个专家模型，包括化学品安全专家（`chem_safety_expert.py`）、设备OCR专家（`equipment_ocr_expert.py`）、通用安全专家（`general_safety_expert.py`）和防护装备专家（`ppe_expert.py`）。
+  * **专业领域增强**：系统现在能够针对实验室安全、设备识别和合规性检查等特定任务提供更精准的分析和建议。
+
 * **[V2.3.0] 重大架构升级与稳定性重构** (2026-02-24)
   本次更新对系统的底层架构进行了深度重构，全面引入微服务解耦、单一真相源（SSOT）版本控制以及容灾兜底机制。
   * **彻底的分布式解耦架构**：废除全局共享的 `tools` 目录，将工具链下放至 `pcside/tools` 和 `piside/tools`。双端实现物理级解耦，`piside` 模块可独立迁移。
@@ -36,17 +42,22 @@ LabDetector 是专为微纳流体力学及重型科研实验室打造的**分布
 
 ```text
 Labdetector
- ┣ VERSION                     --- [新增] 全局单一真相源版本控制文件
+ ┣ VERSION                     --- 版本控制文件
  ┣ requirements.txt            --- 环境依赖清单
  ┣ setup.py                    --- 项目安装与打包配置
  ┣ config.ini                  --- 全局热更新配置文件
- ┣ launcher.py                 --- [重构] 全局统一启动器 (Pre-flight Check)
+ ┣ launcher.py                 --- 全局统一启动器 (Pre-flight Check)
  ┣ pcside/                     --- PC 智算中枢端 (挂载 RTX 算力)
  ┃ ┣ main.py                   --- PC 主控核心引擎
- ┃ ┣ tools/                    --- [解耦] PC端专属工具链
+ ┃ ┣ experts/                  --- [新增] 专家系统模块
+ ┃ ┃ ┣ chem_safety_expert.py   --- 化学品安全专家
+ ┃ ┃ ┣ equipment_ocr_expert.py --- 设备OCR专家
+ ┃ ┃ ┣ general_safety_expert.py--- 通用安全专家
+ ┃ ┃ ┗ ppe_expert.py           --- 防护装备专家
+ ┃ ┣ tools/                    --- PC端工具链
  ┃ ┃ ┣ version_manager.py      --- 全局版本号寻路接口
  ┃ ┃ ┣ model_downloader.py     --- 模型资产自愈与静默回收器
- ┃ ┃ ┣ check_gpu.py            --- 算力探针 (含 CPU 降级容错)
+ ┃ ┃ ┣ check_gpu.py            --- GPU测试 (含 CPU 降级容错)
  ┃ ┃ ┗ check_mic.py            --- 音频硬件自检
  ┃ ┣ core/                     --- 核心驱动底座
  ┃ ┃ ┣ config.py               --- 配置文件解析器
@@ -67,9 +78,9 @@ Labdetector
  ┃ ┗ log/                      --- 实验运行日志归档目录
  ┗ piside/                     --- Pi 边缘节点端 (高度内聚，独立运行)
    ┣ pisend_receive.py         --- Pi 边缘节点端主控流
-   ┣ tools/                    --- [解耦] Pi端专属工具链
-   ┃ ┣ version_manager.py
-   ┃ ┗ model_downloader.py
+   ┣ tools/                    --- Pi端工具链
+   ┃ ┣ version_manager.py      --- 全局版本号寻路接口
+   ┃ ┗ model_downloader.py     --- 模型资产自愈与静默回收器
    ┗ voice/                    --- 边缘端唤醒模型储备
      ┗ model/                  --- Vosk 离线语音模型资源
 ```

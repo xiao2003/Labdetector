@@ -72,3 +72,13 @@ class SemanticEdgeEngine:
                     triggered_events.append((event_name, frame.copy(), detected_str))
 
         return triggered_events
+
+
+class GeneralYoloDetector:
+    """兼容旧调用方的策略驱动检测器封装。"""
+
+    def __init__(self):
+        self.engine = SemanticEdgeEngine()
+
+    def process_frame(self, frame, policies):
+        return self.engine.process_frame(frame, policies)

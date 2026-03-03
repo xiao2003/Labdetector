@@ -19,6 +19,7 @@ class MultiPiManager:
 
         # ★ 新增：独立跟踪每个节点的状态
         self.node_status = {pid: "connecting" for pid in pi_dict}
+        self.node_caps = {pid: {"has_mic": False, "has_speaker": False} for pid in pi_dict}
 
         num_nodes = len(pi_dict)
         self.target_fps = max(1.0, 30.0 / num_nodes) if num_nodes > 0 else 30.0
@@ -48,12 +49,21 @@ class MultiPiManager:
                             if isinstance(data, str):
                                 if data.startswith("PI_VOICE_COMMAND:"):
                                     self._handle_remote_voice(pi_id, data)
+                                elif data.startswith("PI_CAPS:"):
+                                    caps_raw = data.replace("PI_CAPS:", "", 1)
+                                    try:
+                                        self.node_caps[pi_id] = json.loads(caps_raw)
+                                        console_info(f"节点 [{pi_id}] 能力上报: {self.node_caps[pi_id]}")
+                                    except Exception:
+                                        pass
 
                                 # 修复：恢复完整的数据接收与解码逻辑
                                 elif data.startswith("PI_EXPERT_EVENT:") or data.startswith("PI_YOLO_EVENT:"):
                                     try:
-                                        # 解析数据包 格式为: 事件前缀:事件名称:Base64图片
-                                        _, event_str, b64_img = data.split(":", 2)
+                                        # 解析数据包 格式为: 事件前缀:JSON元数据:Base64图片
+                                        _, event_meta_raw, b64_img = data.split(":", 2)
+                                        event_meta = json.loads(event_meta_raw) if event_meta_raw.startswith("{") else {"event_name": event_meta_raw}
+                                        event_str = event_meta.get("event_name", "未知事件")
                                         img_bytes = base64.b64decode(b64_img)
                                         arr = np.frombuffer(img_bytes, np.uint8)
                                         expert_frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -67,7 +77,7 @@ class MultiPiManager:
                                             continue
 
                                         # 将 event_str 组装成上下文，确保通用安防专家能提取到具体的违规内容
-                                        context = {"event_desc": event_str}
+                                        context = {"event_desc": event_str, "detected_classes": event_meta.get("detected_classes", "")}
 
                                         # 抛给专家矩阵进行分析和 RAG 日志归档
                                         tts_text = await asyncio.to_thread(
@@ -79,7 +89,8 @@ class MultiPiManager:
 
                                         # 如果专家返回了阻断语音，立刻下发并在 PC 端同步播报
                                         if tts_text:
-                                            await ws.send(f"CMD:TTS:{tts_text}")
+                                            if self.node_caps.get(pi_id, {}).get("has_speaker"):
+                                                await ws.send(f"CMD:TTS:{tts_text}")
                                             speak_async(f"节点 {pi_id} 安防警告：{tts_text}")
 
                                     except Exception as e:
