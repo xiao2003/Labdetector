@@ -19,6 +19,7 @@ import websockets
 
 import base64
 from edge_vision.motion_detector import EdgeMotionDetector
+from edge_vision.adaptive_capture import AdaptiveCaptureController
 import pyaudio
 
 from tools.version_manager import get_app_version
@@ -49,7 +50,8 @@ _PI_STATE = {
     "policies": [],  # 新增：缓存策略
     "has_mic": False,
     "has_speaker": False,
-    "expert_results": {}
+    "expert_results": {},
+    "storage_budget_mb_per_hour": 500.0
 }
 
 
@@ -173,6 +175,7 @@ async def get_frame():
 
 
 async def handle_client(websocket, path=""):
+    capture_controller = AdaptiveCaptureController()
     console_info(f"[INFO] PC连接成功: {websocket.remote_address}")
 
     await websocket.send(f"PI_CAPS:{json.dumps({'has_mic': _PI_STATE['has_mic'], 'has_speaker': _PI_STATE['has_speaker']})}")
@@ -189,7 +192,10 @@ async def handle_client(websocket, path=""):
                         _PI_STATE["sleep_time"] = 1.0 / max(1.0, target_fps)
                     elif msg.startswith("CMD:SYNC_POLICY:"):
                         policy_str = msg.replace("CMD:SYNC_POLICY:", "")
-                        _PI_STATE["policies"] = json.loads(policy_str).get("event_policies", [])
+                        payload = json.loads(policy_str)
+                        _PI_STATE["policies"] = payload.get("event_policies", [])
+                        if "storage_budget_mb_per_hour" in payload:
+                            _PI_STATE["storage_budget_mb_per_hour"] = float(payload.get("storage_budget_mb_per_hour", 500.0))
                         console_info(f"加载了 {len(_PI_STATE['policies'])} 条裁剪策略")
                     elif msg.startswith("CMD:TTS:"):
                         tts_text = msg.replace("CMD:TTS:", "")
@@ -228,20 +234,28 @@ async def handle_client(websocket, path=""):
             console_error(f"指令接收中断: {e}")
 
     async def send_loop():
-        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 60]
-        hd_encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 95]
-
         # 换用原生的 YOLO Detector
         from edge_vision.yolo_detector import GeneralYoloDetector
         yolo_detector = GeneralYoloDetector()
 
         try:
             while running:
-                await asyncio.sleep(0.5)  # 控制在 2fps 左右抽帧即可，防止 Pi 发热过载
+                target_sleep = max(0.03, float(_PI_STATE.get("sleep_time", 0.2)))
+                await asyncio.sleep(target_sleep)
 
                 frame = await get_frame()
                 if frame is not None:
                     flipped = cv2.flip(frame, 0)
+                    metrics = capture_controller.evaluate_frame(flipped)
+                    profile = capture_controller.suggest_profile(
+                        metrics,
+                        storage_budget_mb_per_hour=float(_PI_STATE.get("storage_budget_mb_per_hour", 500.0)),
+                    )
+
+                    # 动态收敛至建议fps，同时保留PC下发上限能力
+                    _PI_STATE["sleep_time"] = max(_PI_STATE["sleep_time"], 1.0 / max(1.0, profile.fps))
+                    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), int(profile.preview_jpeg_quality)]
+                    hd_encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), int(profile.event_jpeg_quality)]
 
                     triggered_events = yolo_detector.process_frame(flipped, _PI_STATE["policies"])
                     for event_name, event_frame, detected_str in triggered_events:
@@ -252,19 +266,18 @@ async def handle_client(websocket, path=""):
                                 "event_id": str(uuid.uuid4()),
                                 "event_name": event_name,
                                 "detected_classes": detected_str,
-                                "timestamp": time.time()
+                                "timestamp": time.time(),
+                                "capture_metrics": metrics,
                             }
                             await websocket.send(f"PI_EXPERT_EVENT:{json.dumps(payload, ensure_ascii=False)}:{b64_img}")
                             console_info(f"捕捉违规，上传关键帧 [{event_name}] classes={detected_str}")
 
-                    # 控制本地研判结果缓存，防止内存无限增长
                     if len(_PI_STATE["expert_results"]) > 200:
                         oldest = sorted(_PI_STATE["expert_results"].items(), key=lambda kv: kv[1].get("received_at", 0))[:80]
                         for key, _ in oldest:
                             _PI_STATE["expert_results"].pop(key, None)
 
-                    # 原有的预览底噪流持不变，用于 PC 端实时查看画面
-                    resized = cv2.resize(flipped, (640, 480))
+                    resized = cv2.resize(flipped, (int(profile.preview_width), int(profile.preview_height)))
                     ret, buf = cv2.imencode('.jpg', resized, encode_param)
                     if ret:
                         await websocket.send(buf.tobytes())

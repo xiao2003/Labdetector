@@ -2,6 +2,7 @@ from typing import Dict, List
 
 from pcside.core.base_expert import BaseExpert
 from pcside.experts.utils import has_any, parse_detected_classes
+from pcside.experts.safety.semantic_risk_mapper import build_semantic_observation, map_semantic_risk
 
 
 class IntegratedLabSafetyExpert(BaseExpert):
@@ -51,6 +52,16 @@ class IntegratedLabSafetyExpert(BaseExpert):
         if has_any(d, ["bottle", "reagent bottle"]) and not has_any(d, ["glove", "gloves"]):
             alerts.append("试剂操作未佩戴手套")
 
+        sem = build_semantic_observation(
+            event_name=str(context.get("event_name", "")),
+            detected_classes=d,
+            metrics=context.get("metrics", {}),
+        )
+        risk = map_semantic_risk(sem)
+
         if alerts:
-            return "综合风险告警：" + "；".join(alerts)
+            return "综合风险告警：" + "；".join(alerts) + f"。语义风险等级={risk.risk_level}({risk.score})"
+
+        if risk.risk_level in ["medium", "high"] and risk.reasons:
+            return f"语义风险提示：等级={risk.risk_level}({risk.score})；" + "；".join(risk.reasons)
         return ""
