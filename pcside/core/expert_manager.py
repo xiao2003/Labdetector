@@ -22,18 +22,29 @@ class ExpertManager:
             return
 
         console_info("===== 正在扫描并加载专家模型 =====")
-        for filename in sorted(os.listdir(experts_dir)):
-            if not filename.endswith(".py") or filename.startswith("__"):
-                continue
+        module_paths = []
+        for root, _, files in os.walk(experts_dir):
+            for filename in files:
+                if not filename.endswith(".py") or filename.startswith("__"):
+                    continue
+                full_path = os.path.join(root, filename)
+                rel = os.path.relpath(full_path, experts_dir)
+                module_paths.append(rel[:-3].replace(os.sep, "."))
 
-            module_name = filename[:-3]
+        for module_name in sorted(module_paths):
             config_key = f"experts.{module_name}"
             is_enabled = get_config(config_key, -1)
             if is_enabled == -1:
-                set_config(config_key, 1)
-                is_enabled = 1
+                # 兼容历史配置键 experts.<basename>
+                legacy_key = f"experts.{module_name.split('.')[-1]}"
+                legacy_enabled = get_config(legacy_key, -1)
+                if legacy_enabled != -1:
+                    is_enabled = legacy_enabled
+                else:
+                    set_config(config_key, 1)
+                    is_enabled = 1
             if str(is_enabled) == "0" or is_enabled is False:
-                console_info(f"已禁用: [{module_name}.py] (配置项为 0)")
+                console_info(f"已禁用: [{module_name}] (配置项为 0)")
                 continue
 
             try:

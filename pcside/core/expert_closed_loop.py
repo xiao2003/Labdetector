@@ -15,6 +15,7 @@ class ExpertEvent:
     detected_classes: str
     timestamp: float
     frame: Any
+    capture_metrics: Dict[str, Any]
 
 
 @dataclass
@@ -58,6 +59,7 @@ def parse_pi_expert_packet(packet: str) -> Tuple[Optional[ExpertEvent], Optional
             detected_classes=meta.get("detected_classes", ""),
             timestamp=float(meta.get("timestamp", 0.0)),
             frame=frame,
+            capture_metrics=meta.get("capture_metrics", {}) if isinstance(meta, dict) else {},
         ), None
     except Exception as exc:
         return None, str(exc)

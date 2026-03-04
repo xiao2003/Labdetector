@@ -123,7 +123,7 @@ class MultiPiManager:
                                         continue
 
                                     # 将 event_str 组装成上下文，确保通用安防专家能提取到具体的违规内容
-                                    context = {"event_desc": event.event_name, "detected_classes": event.detected_classes}
+                                    context = {"event_desc": event.event_name, "detected_classes": event.detected_classes, "metrics": event.capture_metrics}
 
                                     # 抛给专家矩阵进行分析和 RAG 日志归档
                                     tts_text = await asyncio.to_thread(
