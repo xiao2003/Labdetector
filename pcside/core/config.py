@@ -39,6 +39,10 @@ _DEFAULT_CONFIG = {
     'inference': {
         'interval': '5'
     },
+    'expert_loop': {
+        'ack_timeout': '2.0',
+        'ack_retries': '2'
+    },
     'experts': {
         # 专家开关默认配置，扫描时会自动补充
     }

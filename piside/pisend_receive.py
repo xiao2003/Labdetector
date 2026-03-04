@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 
 import cv2
 import websockets
@@ -48,6 +49,7 @@ _PI_STATE = {
     "policies": [],  # 新增：缓存策略
     "has_mic": False,
     "has_speaker": False,
+    "expert_results": {}
 }
 
 
@@ -192,8 +194,32 @@ async def handle_client(websocket, path=""):
                     elif msg.startswith("CMD:TTS:"):
                         tts_text = msg.replace("CMD:TTS:", "")
                         console_info(f"[专家结论] {tts_text}")
-                        if _PI_STATE["has_speaker"]:
+                        if _PI_STATE["has_speaker"] and tts_queue is not None:
                             await tts_queue.put(tts_text)
+                    elif msg.startswith("CMD:EXPERT_RESULT:"):
+                        result_raw = msg.replace("CMD:EXPERT_RESULT:", "", 1)
+                        payload = json.loads(result_raw)
+                        event_id = str(payload.get("event_id") or uuid.uuid4())
+                        text = payload.get("text", "")
+                        should_speak = bool(payload.get("speak", False))
+                        severity = payload.get("severity", "info")
+                        _PI_STATE["expert_results"][event_id] = {
+                            "text": text,
+                            "severity": severity,
+                            "received_at": time.time()
+                        }
+                        if text:
+                            console_info(f"[专家研判-{severity}] ({event_id}) {text}")
+                            if should_speak and _PI_STATE["has_speaker"] and tts_queue is not None:
+                                await tts_queue.put(text)
+
+                        ack = {
+                            "event_id": event_id,
+                            "received": True,
+                            "spoken": bool(should_speak and _PI_STATE["has_speaker"]),
+                            "timestamp": time.time(),
+                        }
+                        await websocket.send(f"PI_EXPERT_ACK:{json.dumps(ack, ensure_ascii=False)}")
                     # 👇 新增拦截PC大模型结果的逻辑
                     elif msg.startswith("监控指令:"):
                         res_text = msg.replace("监控指令:", "").strip()
@@ -223,12 +249,19 @@ async def handle_client(websocket, path=""):
                         if ret:
                             b64_img = base64.b64encode(buf.tobytes()).decode('utf-8')
                             payload = {
+                                "event_id": str(uuid.uuid4()),
                                 "event_name": event_name,
                                 "detected_classes": detected_str,
                                 "timestamp": time.time()
                             }
                             await websocket.send(f"PI_EXPERT_EVENT:{json.dumps(payload, ensure_ascii=False)}:{b64_img}")
                             console_info(f"捕捉违规，上传关键帧 [{event_name}] classes={detected_str}")
+
+                    # 控制本地研判结果缓存，防止内存无限增长
+                    if len(_PI_STATE["expert_results"]) > 200:
+                        oldest = sorted(_PI_STATE["expert_results"].items(), key=lambda kv: kv[1].get("received_at", 0))[:80]
+                        for key, _ in oldest:
+                            _PI_STATE["expert_results"].pop(key, None)
 
                     # 原有的预览底噪流持不变，用于 PC 端实时查看画面
                     resized = cv2.resize(flipped, (640, 480))
