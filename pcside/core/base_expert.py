@@ -1,29 +1,41 @@
-# pcside/core/base_expert.py
 from abc import ABC, abstractmethod
-import numpy as np
-from typing import Dict, Any
+from typing import Any, Dict, List
 
 
 class BaseExpert(ABC):
-    """LabDetector V3.0 实验操作专家模型的标准基类"""
+    """统一专家插件接口（支持即插即用）。"""
 
     @property
     @abstractmethod
     def expert_name(self) -> str:
-        """插件名称"""
         pass
 
+    @property
+    def expert_version(self) -> str:
+        return "1.0"
+
+    def supported_events(self) -> List[str]:
+        """可选：声明支持的事件名列表。"""
+        return []
+
     @abstractmethod
-    def get_edge_policy(self) -> Dict[str, Any]:
-        """向边缘端下发的画面截取策略"""
+    def get_edge_policy(self) -> Dict[str, Any] | List[Dict[str, Any]]:
+        """返回边缘策略，可为单个 dict 或 dict 列表。"""
         pass
 
     @abstractmethod
     def match_event(self, event_name: str) -> bool:
-        """路由匹配逻辑"""
         pass
 
     @abstractmethod
-    def analyze(self, frame: np.ndarray, context: dict) -> str:
-        """核心分析逻辑，返回需要语音播报的警告文本"""
+    def analyze(self, frame: Any, context: dict) -> str:
         pass
+
+    def self_check(self) -> Dict[str, Any]:
+        """本地自检接口，供测试脚本统一调用。"""
+        return {
+            "expert": self.expert_name,
+            "version": self.expert_version,
+            "status": "ok",
+            "events": self.supported_events(),
+        }
