@@ -9,6 +9,12 @@ import subprocess
 import sys
 import time
 
+core_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pcside", "core")
+if core_path not in sys.path:
+    sys.path.insert(0, core_path)
+
+import pcside.core.logger as logger
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)

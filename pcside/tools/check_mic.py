@@ -71,7 +71,7 @@ def check_audio():
                         text = result.get("text", "").replace(" ", "")
                         if text:
                             print(f"[VOICE] 听到声音: '{text}'")
-                            if "你好" in text:
+                            if "你好" or "您好"  in text:
                                 print("\n[INFO] MIC验证通过")
                                 success = True
                                 break
@@ -79,9 +79,9 @@ def check_audio():
                         # ★ 极速响应：不用等用户停顿，边说边识别
                         partial = json.loads(rec.PartialResult())
                         partial_text = partial.get("partial", "").replace(" ", "")
-                        if "你好" in partial_text:
+                        if "你好" or "您好" in partial_text:
                             print(f"-> 听到声音: '{partial_text}'")
-                            print("\n[INFO] 🎉 验证通过！麦克风与听写引擎完美联动！")
+                            print("\n[INFO] MIC验证通过MIC验证通过")
                             success = True
                             break
 

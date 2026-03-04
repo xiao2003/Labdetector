@@ -11,12 +11,12 @@ class SchedulerManager:
 
     def _morning_routine(self):
         msg = "早上好，今天进行实验时，请务必佩戴护目镜和手套。"
-        console_info(f"⏰ 定时广播: {msg}")
+        console_info(f"定时广播: {msg}")
         speak_async(msg)
 
     def _evening_routine(self):
         msg = "离开实验室前，请检查废液桶是否盖紧，水电气是否关闭。"
-        console_info(f"⏰ 定时广播: {msg}")
+        console_info(f"定时广播: {msg}")
         speak_async(msg)
 
     def start(self):
