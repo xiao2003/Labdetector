@@ -1,0 +1,28 @@
+# NanoFluidics / NanoMechanics Models (MATLAB -> Python Port Notes)
+
+本目录提供了常见微纳流体与纳米力学实验图像处理算法的 Python 版本，便于将实验室已有 MATLAB 脚本迁移到本系统。
+
+## 已实现模型
+1. **接触角估计** (`estimate_contact_angle_from_silhouette`)
+   - MATLAB 常见流程：`rgb2gray -> imgaussfilt -> edge -> bwboundaries`。
+2. **粒子速度估计（Lucas-Kanade）** (`estimate_particle_velocity_lk`)
+   - MATLAB 对应：`opticalFlowLK` / `vision.PointTracker`。
+3. **弯月面曲率估计** (`estimate_meniscus_curvature`)
+   - MATLAB 对应：边缘提取 + 二次曲线拟合 `polyfit`。
+4. **毛细管气泡追踪套件** (`run_nanomechanics_bubble_suite`)
+   - 支持轮廓边缘检测、速度大小/方向估计、接触线接触角近似、接触线钉扎提示、单泡分裂为双泡识别。
+
+## 集成入口
+- `pcside/experts/nanofluidics/nanofluidics_models.py`
+- `pcside/experts/nanofluidics/nanofluidics_multimodel_expert.py`
+
+## 典型适配场景
+- 电渗流（EOF）驱动下的毛细管气泡迁移监测
+- 电泳（EP）驱动下的气泡速度与方向在线估计
+- 分裂前后子气泡追踪与接触线稳定性诊断
+
+## 建议后续扩展
+- Young-Laplace 曲线拟合
+- 接触线钉扎事件持续时间统计
+- 颗粒浓度场估计（PIV 近似）
+- Capillary number / Bond number 在线估计

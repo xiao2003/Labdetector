@@ -1,0 +1,69 @@
+# 专家模型即插即用接口说明
+本项目的专家系统采用 **自动发现 + 统一接口** 的插件机制：
+- 新增专家文件到 `pcside/experts/*.py`；
+- 继承 `BaseExpert` 并实现约定方法；
+- `ExpertManager` 启动时自动扫描并加载，无需手工注册。
+
+## 1. 最小接口（必须实现）
+
+`BaseExpert` 约束如下：
+- `expert_name`：专家显示名称（唯一性建议由开发者保证）。
+- `get_edge_policy()`：返回边缘事件触发策略（`dict` 或 `List[dict]`）。
+- `match_event(event_name)`：是否处理某事件。
+- `analyze(frame, context)`：核心分析逻辑，返回结果字符串（空字符串表示无输出）。
+
+可选实现：
+- `expert_version`：默认 `1.0`。
+- `supported_events()`：声明支持事件列表，便于自检和文档化。
+- `self_check()`：继承默认自检或按需覆盖。
+
+## 2. 即插即用示例
+
+```python
+from typing import Dict, List
+from pcside.core.base_expert import BaseExpert
+
+
+class DemoExpert(BaseExpert):
+    @property
+    def expert_name(self) -> str:
+        return "示例专家"
+
+    @property
+    def expert_version(self) -> str:
+        return "1.0"
+
+    def supported_events(self) -> List[str]:
+        return ["示例事件"]
+
+    def get_edge_policy(self) -> Dict:
+        return {
+            "event_name": "示例事件",
+            "trigger_classes": ["person"],
+            "condition": "any",
+            "action": "full_frame",
+            "cooldown": 2.0,
+        }
+
+    def match_event(self, event_name: str) -> bool:
+        return event_name in self.supported_events()
+
+    def analyze(self, frame, context) -> str:
+        return "示例专家已处理" if frame is not None else ""
+```
+
+## 3. 启用/禁用控制（无需改代码）
+
+`ExpertManager` 会按模块名读取配置项：
+- 配置键：`experts.<module_name>`
+- 值为 `0`：禁用该专家
+- 值为 `1`：启用该专家（默认）
+
+例如，文件名为 `my_custom_expert.py`：
+- 配置键为 `experts.my_custom_expert`
+
+## 4. 开发约定建议
+
+- 一个文件内可包含多个专家类，但建议“一文件一专家”，便于独立开关与追踪。
+- `analyze` 建议仅做当前职责内判断，跨职责通过新增专家实现，避免耦合。
+- 输出文本尽量结构化（指标 + 阈值 + 结论），便于前端/日志消费。
