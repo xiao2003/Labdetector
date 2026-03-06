@@ -6,6 +6,7 @@
 numpy<2.0.0
 opencv-python>=4.8.0
 pillow>=10.0.0
+easyocr
 
 # 2. 网络通信与控制
 requests>=2.31.0

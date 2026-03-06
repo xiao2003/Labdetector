@@ -188,11 +188,15 @@ class InferenceThread(threading.Thread):
                 if time.time() - last_infer_time < self.interval:
                     continue
 
-                # 模拟一个本地异动事件，触发所有专家进行联合研判
-                simulated_event = "Motion_Alert"
+                # [核心改动] 根据全局状态动态分配算力任务 (默认保持安防监控)
+                simulated_event = _STATE.get("current_vision_task", "Motion_Alert")
 
-                # ★ 核心改动：不再直接调 analyze_image，而是发给全体专家会诊！
+                # 发给全体专家会诊
                 result = expert_manager.route_and_analyze(simulated_event, frame, {})
+
+                # 如果是极度消耗显存的临时任务（如 ocr_read），识别一次后立刻卸载并切回常规监控
+                if simulated_event != "Motion_Alert":
+                    _STATE["current_vision_task"] = "Motion_Alert"
 
                 if result and result.strip():
                     latest_inference_result["text"] = result

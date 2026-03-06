@@ -203,39 +203,3 @@ class LabMultiModalScheduler:
         else:
             # 开启子线程去请求大模型，防止阻塞主程序的语音监听
             threading.Thread(target=self.llm_expert.chat, args=(recognized_text,)).start()
-
-
-# ==========================================
-# 模拟入口
-# ==========================================
-if __name__ == "__main__":
-    console_prompt("==================================================")
-    console_prompt(" LabDetector V2.6 - 全模态算力调度中枢 (CUDA Enabled)")
-    console_prompt("==================================================")
-
-    scheduler = LabMultiModalScheduler()
-
-    # 启动异步视觉引擎
-    vision_thread = threading.Thread(target=scheduler.start_vision_stream)
-    vision_thread.start()
-
-    # --- 剧本模拟演练 ---
-    time.sleep(2)
-    # 场景 1: 日常问答 (交给 Ollama)
-    scheduler.process_voice_command("如果氢氟酸洒在手套上应该怎么处理？")
-
-    time.sleep(6)
-    # 场景 2: 启动吃算力的实验 (卸载非必要显存，加载专属CV)
-    scheduler.process_voice_command("管家，帮我开始分析接触角")
-
-    time.sleep(4)
-    # 场景 3: 临时需要读取仪表盘
-    scheduler.process_voice_command("帮我看下读数是多少")
-
-    time.sleep(5)
-    # 场景 4: 实验结束
-    scheduler.process_voice_command("实验结束")
-
-    time.sleep(2)
-    scheduler.is_running = False
-    vision_thread.join()

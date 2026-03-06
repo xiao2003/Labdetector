@@ -160,16 +160,23 @@ class VoiceInteraction:
 
         self.microphone = self._get_working_microphone()
         if not self.microphone:
-            console_error("[VOICE]遍历了系统中所有音频设备，均无法访问麦克风！(请检查Windows独占模式设置)")
+            console_error("\n[VOICE] 遍历了系统中所有音频设备，均无法访问麦克风！(请检查Windows独占模式设置)")
             return False
 
         try:
-            console_info("[VOICE]正在接通麦克风并校准底噪...")
+            # 修复：在初始化开始前显式换行，避免与自检日志粘连
+            print("")
+            console_info("[VOICE] 正在接通麦克风并校准底噪...")
+
             with self.microphone as source:
                 self.recognizer.adjust_for_ambient_noise(source, duration=1)
-            console_info(f"[VOICE]智能语音中枢已完全启动，唤醒词: '{self.config.wake_word}'")
+
+            # 修复：确保输出清晰分行
+            console_info(f"[VOICE] 智能语音中枢已完全启动，唤醒词: '{self.config.wake_word}'")
+            console_info("[VOICE] 状态：语音管家已就绪，等待唤醒...\n")
+
         except Exception as e:
-            console_error(f"[VOICE]启动麦克风时发生严重冲突: {e}")
+            console_error(f"\n[VOICE] 启动麦克风时发生严重冲突: {e}")
             return False
 
         self.stop_event.clear()
