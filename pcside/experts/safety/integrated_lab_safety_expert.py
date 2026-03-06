@@ -56,6 +56,7 @@ class IntegratedLabSafetyExpert(BaseExpert):
             event_name=str(context.get("event_name", "")),
             detected_classes=d,
             metrics=context.get("metrics", {}),
+            context=context,
         )
         risk = map_semantic_risk(sem)
 
