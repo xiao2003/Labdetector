@@ -1,14 +1,14 @@
-#define MyAppId "{{A48DB687-BD0A-4F91-B7B3-6AFB0C2DCE41}}"
+﻿#define MyAppId "{{A48DB687-BD0A-4F91-B7B3-6AFB0C2DCE41}}"
 #define MyAppName "LabDetector"
-#define MyAppDisplayName "LabDetector 智能实验室监控软件"
-#define MyAppPublisher "LabDetector 软件研发组"
+#define MyAppDisplayName "LabDetector ?????????"
+#define MyAppPublisher "LabDetector ?????"
 #define MyAppURL "https://github.com/xiao2003/Labdetector"
 #define MyAppExeName "LabDetector.exe"
 #ifndef MyAppVersion
-  #define MyAppVersion "3.0.1"
+  #define MyAppVersion "3.0.2"
 #endif
 #ifndef ReleaseDir
-  #define ReleaseDir "..\\release\\LabDetector-v" + MyAppVersion
+  #define ReleaseDir "..\release\LabDetector-v" + MyAppVersion
 #endif
 
 [Setup]
@@ -20,12 +20,12 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-AppCopyright=Copyright (C) 2026 LabDetector 软件研发组. All rights reserved.
+AppCopyright=Copyright (C) 2026 LabDetector ?????. All rights reserved.
 DefaultDirName={autopf}\LabDetector
 DefaultGroupName=LabDetector
 DisableProgramGroupPage=yes
-LicenseFile={#ReleaseDir}\_internal\docs\软件版权声明.md
-InfoBeforeFile={#ReleaseDir}\_internal\docs\LabDetector软件说明书.md
+LicenseFile={#ReleaseDir}\_internal\docs\LabDetector_Copyright.md
+InfoBeforeFile={#ReleaseDir}\_internal\docs\LabDetector_Manual.md
 WizardStyle=modern
 SetupIconFile=..\assets\branding\labdetector.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
@@ -45,10 +45,11 @@ CloseApplications=yes
 SetupLogging=yes
 
 [Languages]
+Name: "chinesesimp"; MessagesFile: "ChineseSimplified.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加任务"
+Name: "desktopicon"; Description: "????????"; GroupDescription: "????"
 
 [Dirs]
 Name: "{app}\_internal"; Attribs: hidden system
@@ -62,4 +63,4 @@ Name: "{autoprograms}\LabDetector"; Filename: "{app}\{#MyAppExeName}"; WorkingDi
 Name: "{autodesktop}\LabDetector"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "安装完成后立即启动 LabDetector"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "????????? LabDetector"; Flags: nowait postinstall skipifsilent
