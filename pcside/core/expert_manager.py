@@ -1,4 +1,4 @@
-﻿# pcside/core/expert_manager.py
+# pcside/core/expert_manager.py
 from __future__ import annotations
 
 import importlib
@@ -17,6 +17,21 @@ except Exception:
 
 
 class ExpertManager:
+    _DEMO_COPY: Dict[str, str] = {
+        "equipment_ocr_expert": "对准仪表盘或设备屏幕，展示 OCR 读数识别与状态提示。",
+        "lab_qa_expert": "演示口述或输入实验问题，展示知识库问答与规范检索。",
+        "nanofluidics.microfluidic_contact_angle_expert": "对准液滴边界样本，展示接触角测量结果与趋势解释。",
+        "nanofluidics.nanofluidics_multimodel_expert": "对准微流控芯片或气泡画面，展示多物理量联动分析。",
+        "safety.chem_safety_expert": "对准试剂瓶与危化标签，展示危化识别、禁忌与防护提示。",
+        "safety.equipment_operation_expert": "对准离心机、移液器或设备面板，展示仪器操作合规检查。",
+        "safety.flame_fire_expert": "对准酒精灯、明火或烟雾场景，展示热源风险告警。",
+        "safety.general_safety_expert": "模拟实验区使用手机或分心行为，展示通用安全违规提醒。",
+        "safety.hand_pose_expert": "展示抓握、伸手或危险手势，演示手部姿态估计与操作语义识别。",
+        "safety.integrated_lab_safety_expert": "汇总危化、PPE、热源与行为信号，展示综合安全结论。",
+        "safety.ppe_expert": "对准人员防护装备，演示实验服、手套、护目镜穿戴检查。",
+        "safety.spill_detection_expert": "展示台面液体洒漏或残留液滴，演示洒漏识别与处置提醒。",
+    }
+
     def __init__(self):
         self.experts: Dict[str, BaseExpert] = {}
         self.load_experts()
@@ -150,6 +165,49 @@ class ExpertManager:
                 }
             )
         return sorted(scopes, key=lambda item: item["scope"])
+
+    def list_experts_metadata(self) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        for expert in self.experts.values():
+            events = [item for item in expert.supported_events() if str(item).strip()]
+            rows.append(
+                {
+                    "expert_name": expert.expert_name,
+                    "expert_code": expert.expert_code,
+                    "expert_version": expert.expert_version,
+                    "events": events,
+                    "knowledge_scope": expert.knowledge_scope,
+                }
+            )
+        return sorted(rows, key=lambda item: item["expert_code"])
+
+    def build_demo_sequence(self) -> List[Dict[str, Any]]:
+        experts = self.list_experts_metadata()
+        total = len(experts)
+        sequence: List[Dict[str, Any]] = []
+        for index, item in enumerate(experts, start=1):
+            expert_code = str(item["expert_code"])
+            expert_name = str(item["expert_name"])
+            events = list(item.get("events") or [])
+            primary_event = events[0] if events else "演示事件"
+            description = self._DEMO_COPY.get(
+                expert_code,
+                f"展示事件 [{primary_event}] 的触发效果，并联动知识库作用域 {item['knowledge_scope']}。",
+            )
+            hint = f"【演示 {index}/{total}】{expert_name}：{description}"
+            sequence.append(
+                {
+                    "index": index,
+                    "total": total,
+                    "expert_name": expert_name,
+                    "expert_code": expert_code,
+                    "event_name": primary_event,
+                    "knowledge_scope": item["knowledge_scope"],
+                    "hint": hint,
+                    "log": f"演示模式 [{index}/{total}] {expert_name} -> 事件[{primary_event}]，{description}",
+                }
+            )
+        return sequence
 
 
 expert_manager = ExpertManager()

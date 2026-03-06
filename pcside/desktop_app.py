@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import queue
+import re
 import threading
 import tkinter as tk
 from pathlib import Path
@@ -866,6 +867,60 @@ class DesktopApp:
             pass
         return fallback
 
+    def _prepare_markdown_tags(self, viewer: tk.Text) -> None:
+        viewer.tag_configure("md_body", spacing1=2, spacing3=2)
+        viewer.tag_configure("md_h1", font=("Microsoft YaHei UI", 16, "bold"), spacing1=8, spacing3=6)
+        viewer.tag_configure("md_h2", font=("Microsoft YaHei UI", 13, "bold"), spacing1=8, spacing3=4)
+        viewer.tag_configure("md_h3", font=("Microsoft YaHei UI", 11, "bold"), spacing1=6, spacing3=3)
+        viewer.tag_configure("md_code", font=("Consolas", 10), background="#16212d", foreground="#e8f0f8", spacing1=2, spacing3=2)
+        viewer.tag_configure("md_quote", foreground="#8fb3c9", lmargin1=18, lmargin2=18, spacing1=2, spacing3=2)
+
+    def _normalize_markdown_inline(self, text: str) -> str:
+        text = re.sub(r"!\[(.*?)\]\((.*?)\)", r"[image: \1]", text)
+        text = re.sub(r"\[(.*?)\]\((.*?)\)", r"\1 (\2)", text)
+        text = re.sub(r"`([^`]+)`", r"\1", text)
+        text = text.replace("**", "")
+        text = text.replace("__", "")
+        return text
+
+    def _render_markdown(self, viewer: tk.Text, body: str) -> None:
+        viewer.configure(state="normal")
+        viewer.delete("1.0", tk.END)
+        self._prepare_markdown_tags(viewer)
+        in_code = False
+        for raw_line in body.splitlines():
+            stripped = raw_line.strip()
+            if stripped.startswith("```"):
+                in_code = not in_code
+                continue
+            if in_code:
+                viewer.insert(tk.END, f"{raw_line}\n", "md_code")
+                continue
+            if not stripped:
+                viewer.insert(tk.END, "\n", "md_body")
+                continue
+            if stripped.startswith("### "):
+                viewer.insert(tk.END, self._normalize_markdown_inline(stripped[4:]) + "\n", "md_h3")
+                continue
+            if stripped.startswith("## "):
+                viewer.insert(tk.END, self._normalize_markdown_inline(stripped[3:]) + "\n", "md_h2")
+                continue
+            if stripped.startswith("# "):
+                viewer.insert(tk.END, self._normalize_markdown_inline(stripped[2:]) + "\n", "md_h1")
+                continue
+            if stripped.startswith("> "):
+                viewer.insert(tk.END, self._normalize_markdown_inline(stripped[2:]) + "\n", "md_quote")
+                continue
+            if re.match(r"^[-*]\s+", stripped):
+                line = "- " + self._normalize_markdown_inline(re.sub(r"^[-*]\s+", "", stripped))
+                viewer.insert(tk.END, line + "\n", "md_body")
+                continue
+            if re.match(r"^\d+\.\s+", stripped):
+                viewer.insert(tk.END, self._normalize_markdown_inline(stripped) + "\n", "md_body")
+                continue
+            viewer.insert(tk.END, self._normalize_markdown_inline(raw_line) + "\n", "md_body")
+        viewer.configure(state="disabled")
+
     def _show_about_and_copyright(self) -> None:
         self._show_about_window()
         self.root.after(150, self._show_copyright_window)
@@ -954,8 +1009,7 @@ class DesktopApp:
 
         viewer = tk.Text(text_frame, bg="#0f1720", fg="#dbe6f2", insertbackground="#dbe6f2", relief="flat", font=("Microsoft YaHei UI", 10), wrap="word")
         viewer.grid(row=0, column=0, sticky="nsew")
-        viewer.insert("1.0", body)
-        viewer.configure(state="disabled")
+        self._render_markdown(viewer, body)
         scrollbar = ttk.Scrollbar(text_frame, orient="vertical", command=viewer.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
         viewer.configure(yscrollcommand=scrollbar.set)

@@ -276,6 +276,12 @@ class LabDetectorRuntime:
         self.scheduler_started = False
         self._scheduler_manager: Any = None
         self.self_check_has_run = False
+        self.demo_mode_enabled = False
+        self.demo_interval = 8.0
+        self.demo_thread: Optional[threading.Thread] = None
+        self.demo_sequence: List[Dict[str, Any]] = []
+        self.demo_index = 0
+        self._refresh_shadow_demo_config()
 
     def set_server_meta(self, host: str, port: int) -> None:
         self.server_meta = {"host": host, "port": port}
@@ -320,6 +326,14 @@ class LabDetectorRuntime:
             return str(get_config("qwen.model", "qwen-vl-max"))
         models = self._ollama_models()
         return models[0] if models else "llava:7b-v1.5-q4_K_M"
+
+    def _refresh_shadow_demo_config(self) -> None:
+        self.demo_mode_enabled = bool(get_config("shadow_demo.enabled", False))
+        try:
+            interval = float(get_config("shadow_demo.interval_seconds", 8))
+        except (TypeError, ValueError):
+            interval = 8.0
+        self.demo_interval = max(4.0, interval)
 
     def _ollama_models(self) -> List[str]:
         raw_defaults = get_config("ollama.default_models", "llava:7b-v1.5-q4_K_M")
@@ -606,6 +620,7 @@ class LabDetectorRuntime:
     def start_session(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         with self.lock:
             self._stop_session_locked(announce=False)
+            self._refresh_shadow_demo_config()
             self.ai_backend = str(payload.get("ai_backend") or "ollama")
             custom_model = str(payload.get("custom_model") or "").strip()
             selected_model = str(payload.get("selected_model") or "").strip()
@@ -621,6 +636,9 @@ class LabDetectorRuntime:
             self.local_frame = None
             self.topology = {}
             self.manager = None
+            self.demo_sequence = []
+            self.demo_index = 0
+            self.demo_thread = None
 
             self._configure_backend()
             self._ensure_scheduler()
@@ -633,6 +651,10 @@ class LabDetectorRuntime:
                 self._start_websocket_session_locked()
                 self.status_message = f"多节点监控已启动，目标节点数 {self.expected_nodes}"
 
+            if self.demo_mode_enabled:
+                self._start_shadow_demo_locked()
+                self.status_message = f"隐藏演示模式已激活：{self.status_message}"
+
             self.session_phase = "running"
             self._log_info(
                 f"监控会话已启动: backend={self.ai_backend}, model={self.selected_model}, mode={self.mode}"
@@ -643,6 +665,82 @@ class LabDetectorRuntime:
         with self.lock:
             self._stop_session_locked(announce=True)
         return self.get_state()
+
+    def _start_shadow_demo_locked(self) -> None:
+        if not self.demo_mode_enabled:
+            return
+        from pcside.core.expert_manager import expert_manager
+
+        self.demo_sequence = expert_manager.build_demo_sequence()
+        self.demo_index = 0
+        if not self.demo_sequence:
+            self._log_error("隐藏演示模式已开启，但未发现可轮播的专家模型")
+            return
+        self._log_info(
+            f"隐藏演示模式已激活：共 {len(self.demo_sequence)} 个专家，轮播间隔 {int(self.demo_interval)} 秒"
+        )
+        self.demo_thread = threading.Thread(target=self._shadow_demo_loop, daemon=True, name="ShadowDemoLoop")
+        self.demo_thread.start()
+
+    def _shadow_demo_loop(self) -> None:
+        while not self.stop_event.is_set():
+            if not self.session_active or not self.demo_sequence:
+                time.sleep(0.4)
+                continue
+
+            step = self.demo_sequence[self.demo_index % len(self.demo_sequence)]
+            published = False
+            if self.mode == "camera":
+                if self.local_frame is not None:
+                    self._publish_local_demo_step(step)
+                    published = True
+            elif self.mode == "websocket":
+                if self.manager and self.topology:
+                    online_nodes = [
+                        node_id for node_id in self.topology
+                        if self.manager.node_status.get(node_id, "offline") == "online"
+                    ]
+                    if online_nodes:
+                        self._publish_websocket_demo_step(step, online_nodes)
+                        published = True
+
+            if not published:
+                time.sleep(0.5)
+                continue
+
+            self.demo_index += 1
+            wait_until = time.time() + self.demo_interval
+            while not self.stop_event.is_set() and time.time() < wait_until:
+                time.sleep(0.25)
+
+    def _publish_local_demo_step(self, step: Dict[str, Any]) -> None:
+        message = str(step.get("hint") or "")
+        with self.lock:
+            self.latest_inference_result = {
+                "text": message,
+                "timestamp": time.time(),
+                "demo": True,
+                "expert": step.get("expert_name", ""),
+            }
+            self.status_message = f"演示模式进行中：{step.get('expert_name', '')}"
+        self._log_info(str(step.get("log") or message))
+
+    def _publish_websocket_demo_step(self, step: Dict[str, Any], online_nodes: List[str]) -> None:
+        if not self.manager:
+            return
+        now = time.time()
+        message = str(step.get("hint") or "")
+        for node_id in online_nodes:
+            self.manager.node_latest_results[node_id] = {
+                "text": message,
+                "event_name": step.get("event_name", "演示事件"),
+                "timestamp": now,
+                "demo": True,
+                "expert": step.get("expert_name", ""),
+            }
+        with self.lock:
+            self.status_message = f"演示模式进行中：{step.get('expert_name', '')}"
+        self._log_info(str(step.get("log") or message))
 
     def _configure_backend(self) -> None:
         set_config("ai_backend.type", self.ai_backend)
@@ -716,9 +814,13 @@ class LabDetectorRuntime:
             raise RuntimeError("无法打开本机摄像头")
 
         self.camera_thread = threading.Thread(target=self._camera_capture_loop, daemon=True, name="CameraCapture")
-        self.inference_thread = threading.Thread(target=self._camera_inference_loop, daemon=True, name="CameraInference")
         self.camera_thread.start()
-        self.inference_thread.start()
+        if self.demo_mode_enabled:
+            self.inference_thread = None
+            self._log_info("隐藏演示模式已接管本机专家提示轮播，真实本机推理已暂停")
+        else:
+            self.inference_thread = threading.Thread(target=self._camera_inference_loop, daemon=True, name="CameraInference")
+            self.inference_thread.start()
 
     def _camera_capture_loop(self) -> None:
         read_failures = 0
@@ -825,6 +927,9 @@ class LabDetectorRuntime:
         self.local_frame = None
         self.latest_inference_result = {"text": "", "timestamp": 0.0}
         self.topology = {}
+        self.demo_sequence = []
+        self.demo_index = 0
+        self.demo_thread = None
         self.session_active = False
         self.session_phase = "idle"
         self.mode = "idle"
@@ -835,13 +940,13 @@ class LabDetectorRuntime:
     def _build_streams(self) -> List[Dict[str, Any]]:
         if self.mode == "camera":
             result_text = self.latest_inference_result.get("text", "")
-            if result_text and time.time() - float(self.latest_inference_result.get("timestamp", 0.0)) > 8:
+            if result_text and not self.demo_mode_enabled and time.time() - float(self.latest_inference_result.get("timestamp", 0.0)) > 8:
                 result_text = ""
             if self.session_active or self.local_frame is not None:
                 return [{
                     "id": "local",
                     "title": "本机摄像头",
-                    "subtitle": "统一专家矩阵",
+                    "subtitle": "统一专家矩阵 · 演示模式" if self.demo_mode_enabled else "统一专家矩阵",
                     "status": "online" if self.local_frame is not None else "connecting",
                     "hint": result_text or "等待最新画面与研判结果",
                     "address": "Local Device",
@@ -863,7 +968,7 @@ class LabDetectorRuntime:
                 streams.append({
                     "id": node_id,
                     "title": f"节点 {node_id}",
-                    "subtitle": "边缘视觉联动",
+                    "subtitle": "边缘视觉联动 · 演示模式" if self.demo_mode_enabled else "边缘视觉联动",
                     "status": status,
                     "hint": hint,
                     "address": ip,
