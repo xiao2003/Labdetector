@@ -1,4 +1,6 @@
-# pcside/core/expert_manager.py
+﻿# pcside/core/expert_manager.py
+from __future__ import annotations
+
 import importlib
 import inspect
 import os
@@ -7,6 +9,11 @@ from typing import Any, Dict, List
 from pcside.core.base_expert import BaseExpert
 from pcside.core.config import get_config, set_config
 from pcside.core.logger import console_error, console_info
+
+try:
+    from pcside.knowledge_base.rag_engine import knowledge_manager
+except Exception:
+    knowledge_manager = None
 
 
 class ExpertManager:
@@ -35,7 +42,6 @@ class ExpertManager:
             config_key = f"experts.{module_name}"
             is_enabled = get_config(config_key, -1)
             if is_enabled == -1:
-                # 兼容历史配置键 experts.<basename>
                 legacy_key = f"experts.{module_name.split('.')[-1]}"
                 legacy_enabled = get_config(legacy_key, -1)
                 if legacy_enabled != -1:
@@ -44,7 +50,7 @@ class ExpertManager:
                     set_config(config_key, 1)
                     is_enabled = 1
             if str(is_enabled) == "0" or is_enabled is False:
-                console_info(f"已禁用: [{module_name}] (配置项为 0)")
+                console_info(f"已禁用 [{module_name}] (配置项为 0)")
                 continue
 
             try:
@@ -54,25 +60,59 @@ class ExpertManager:
                         expert_instance = obj()
                         self.experts[expert_instance.expert_name] = expert_instance
                         console_info(
-                            f"已启用: [{expert_instance.expert_name}] "
+                            f"已启用 [{expert_instance.expert_name}] "
                             f"v{expert_instance.expert_version} ({module_name}.py)"
                         )
-            except Exception as e:
-                console_error(f"加载专家 [{module_name}] 失败: {e}")
+            except Exception as exc:
+                console_error(f"加载专家 [{module_name}] 失败: {exc}")
 
         console_info(f"===== 共成功加载 {len(self.experts)} 个专家 =====\n")
 
     def get_aggregated_edge_policy(self) -> Dict[str, Any]:
         policies: List[Dict[str, Any]] = []
         for expert in self.experts.values():
-            p = expert.get_edge_policy()
-            if not p:
+            policy = expert.get_edge_policy()
+            if not policy:
                 continue
-            if isinstance(p, list):
-                policies.extend([x for x in p if isinstance(x, dict)])
-            elif isinstance(p, dict):
-                policies.append(p)
+            if isinstance(policy, list):
+                policies.extend(item for item in policy if isinstance(item, dict))
+            elif isinstance(policy, dict):
+                policies.append(policy)
         return {"event_policies": policies}
+
+    def _build_knowledge_context(self, expert: BaseExpert, event_name: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        if knowledge_manager is None:
+            return {}
+        query = expert.build_knowledge_query(event_name, context)
+        if not query.strip():
+            return {
+                "knowledge_scope": expert.knowledge_scope,
+                "knowledge_scopes": ["common", expert.knowledge_scope],
+                "knowledge_query": "",
+                "knowledge_context": "",
+                "knowledge_structured_rows": [],
+                "knowledge_vector_hits": [],
+            }
+        try:
+            bundle = knowledge_manager.build_scope_bundle(query, expert.knowledge_scope, top_k=3)
+            return {
+                "knowledge_scope": expert.knowledge_scope,
+                "knowledge_scopes": bundle["scopes"],
+                "knowledge_query": query,
+                "knowledge_context": bundle["context"],
+                "knowledge_structured_rows": bundle["structured_rows"],
+                "knowledge_vector_hits": bundle["vector_hits"],
+            }
+        except Exception as exc:
+            console_error(f"知识库检索失败 [{expert.expert_name}]: {exc}")
+            return {
+                "knowledge_scope": expert.knowledge_scope,
+                "knowledge_scopes": ["common", expert.knowledge_scope],
+                "knowledge_query": query,
+                "knowledge_context": "",
+                "knowledge_structured_rows": [],
+                "knowledge_vector_hits": [],
+            }
 
     def route_and_analyze(self, event_name: str, frame: Any, context: Dict[str, Any]) -> str:
         results = []
@@ -82,11 +122,12 @@ class ExpertManager:
                     enriched = dict(context or {})
                     enriched.setdefault("event_name", event_name)
                     enriched.setdefault("expert", expert.expert_name)
-                    res = expert.analyze(frame, enriched)
-                    if res:
-                        results.append(res)
-                except Exception as e:
-                    console_error(f"专家 [{expert.expert_name}] 分析异常: {e}")
+                    enriched.update(self._build_knowledge_context(expert, event_name, enriched))
+                    response = expert.analyze(frame, enriched)
+                    if response:
+                        results.append(response)
+                except Exception as exc:
+                    console_error(f"专家 [{expert.expert_name}] 分析异常: {exc}")
         return " ".join(results) if results else ""
 
     def run_self_checks(self) -> List[Dict[str, Any]]:
@@ -94,9 +135,21 @@ class ExpertManager:
         for expert in self.experts.values():
             try:
                 reports.append(expert.self_check())
-            except Exception as e:
-                reports.append({"expert": expert.expert_name, "status": "error", "error": str(e)})
+            except Exception as exc:
+                reports.append({"expert": expert.expert_name, "status": "error", "error": str(exc)})
         return reports
+
+    def list_knowledge_scopes(self) -> List[Dict[str, str]]:
+        scopes = []
+        for expert in self.experts.values():
+            scopes.append(
+                {
+                    "expert_name": expert.expert_name,
+                    "expert_code": expert.expert_code,
+                    "scope": expert.knowledge_scope,
+                }
+            )
+        return sorted(scopes, key=lambda item: item["scope"])
 
 
 expert_manager = ExpertManager()

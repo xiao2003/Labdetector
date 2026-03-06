@@ -1,0 +1,99 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LabDetector 控制台</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">LabDetector Front Console</p>
+        <h1>实验室监控控制台</h1>
+        <p id="heroStatus" class="hero-copy">把 `launcher` 自检和 `main` 运行逻辑收口到统一面板。</p>
+      </div>
+      <div class="hero-side">
+        <div class="hero-chip">版本 <span id="versionText">-</span></div>
+        <div id="sessionBadge" class="hero-chip hero-chip-accent">待机</div>
+        <button id="selfCheckBtn" class="ghost-btn" type="button">运行自检</button>
+      </div>
+    </header>
+
+    <main class="dashboard-grid">
+      <section class="panel panel-config">
+        <div class="panel-head">
+          <div>
+            <p class="panel-kicker">Launcher / Main</p>
+            <h2>运行配置</h2>
+          </div>
+          <button id="refreshModelsBtn" class="ghost-btn" type="button">刷新模型</button>
+        </div>
+
+        <form id="controlForm" class="control-form">
+          <label>
+            <span>AI 后端</span>
+            <select id="backendSelect"></select>
+          </label>
+          <label>
+            <span>模型预设</span>
+            <select id="modelSelect"></select>
+          </label>
+          <label id="customModelField">
+            <span>自定义模型</span>
+            <input id="customModelInput" type="text" placeholder="留空则使用预设">
+          </label>
+          <label>
+            <span>运行模式</span>
+            <select id="modeSelect"></select>
+          </label>
+          <label id="expectedNodesField">
+            <span>预期节点数</span>
+            <input id="expectedNodesInput" type="number" min="1" step="1" value="1">
+          </label>
+
+          <div class="action-row">
+            <button id="startBtn" class="primary-btn" type="submit">启动监控</button>
+            <button id="stopBtn" class="ghost-btn" type="button">停止监控</button>
+          </div>
+        </form>
+
+        <div id="summaryGrid" class="summary-grid"></div>
+      </section>
+
+      <section class="panel panel-checks">
+        <div class="panel-head">
+          <div>
+            <p class="panel-kicker">Launcher Self Check</p>
+            <h2>启动自检</h2>
+          </div>
+        </div>
+        <div id="checkGrid" class="check-grid"></div>
+      </section>
+
+      <section class="panel panel-wall">
+        <div class="panel-head">
+          <div>
+            <p class="panel-kicker">Monitoring Wall</p>
+            <h2>节点平铺视图</h2>
+          </div>
+        </div>
+        <div id="streamGrid" class="stream-grid empty-state"></div>
+      </section>
+
+      <section class="panel panel-logs">
+        <div class="panel-head">
+          <div>
+            <p class="panel-kicker">Hints / Logs</p>
+            <h2>提示信息</h2>
+          </div>
+        </div>
+        <div id="logList" class="log-list"></div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

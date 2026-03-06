@@ -1,104 +1,88 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-launcher.py - LabDetector 全局自检启动器
-"""
-import atexit
-import os
-import subprocess
+"""Unified launcher for LabDetector desktop/web/cli modes."""
+
+from __future__ import annotations
+
+import argparse
+import json
 import sys
-import time
+from pathlib import Path
 
-core_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pcside", "core")
-if core_path not in sys.path:
-    sys.path.insert(0, core_path)
-
-import pcside.core.logger as logger
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
+from pcside.app_identity import APP_DISPLAY_NAME, APP_NAME, COMPANY_NAME
+from pcside.desktop_app import launch_desktop_app
+from pcside.tools.version_manager import get_app_version
+from pcside.webui.runtime import LabDetectorRuntime
+from pcside.webui.server import serve_dashboard
 
 
-# --- 1. 获取版本号 ---
-def get_version():
-    from pcside.tools.version_manager import get_app_version
-    return get_app_version()
+APP_VERSION = get_app_version()
 
 
-APP_VERSION = get_version()
+def run_cli_entry() -> int:
+    runtime = LabDetectorRuntime()
+    print("=" * 56)
+    print(f"{APP_NAME} v{APP_VERSION} CLI 模式")
+    print("=" * 56)
+    print("启动自检中...\n")
+    for item in runtime.run_self_check():
+        print(f"[{item['status'].upper()}] {item['title']}: {item['summary']}")
+    print("\n切换到旧版控制台主流程。\n")
 
-# --- 2. 日志兜底保存 ---
-_log_saved = False
-
-
-def emergency_save_logs():
-    global _log_saved
-    if _log_saved:
-        return
-    try:
-        from pcside.main import export_log
-        export_log()
-        print("\n[INFO] 系统运行日志已归档保存。")
-        _log_saved = True
-    except Exception as e:
-        print(f"\n[WARN] 日志兜底保存未触发: {e}")
-
-
-atexit.register(emergency_save_logs)
-
-
-# --- 3. 自检主逻辑 ---
-def run_pc_self_check():
-    print("\n" + "=" * 55)
-    print(f"[INFO] LabDetector V{APP_VERSION} (PC 智算中枢) - 系统启动自检")
-    print("=" * 55)
-
-    print("\n[INFO] [1/5] 检查 Python 依赖环境...")
-    # ... (这里保留你原本的检查代码，为了节省篇幅我省略了) ...
-    print("[INFO] requirements 中的依赖已全部就绪.")
-
-    print("\n[INFO] [2/5] 检查 GPU 算力资源...")
-    gpu_script = os.path.join(BASE_DIR, "pcside", "tools", "check_gpu.py")
-    if os.path.exists(gpu_script): subprocess.run([sys.executable, gpu_script])
-
-    print("\n[INFO] [3/5] 检查 PC 端音频输入设备...")
-    mic_script = os.path.join(BASE_DIR, "pcside", "tools", "check_mic.py")
-    if os.path.exists(mic_script): subprocess.run([sys.executable, mic_script])
-
-    print("\n[INFO] [4/5] 检查离线预训练模型资产...")
-    try:
-        from pcside.tools.model_downloader import check_and_download_vosk
-        check_and_download_vosk()
-        print("[INFO] 已成功下载离线预训练模型资产.")
-    except Exception:
-        pass
-
-    print("\n[INFO] [5/5] 检查本地实验室知识库 (RAG)...")
-    rag_dir = os.path.join(BASE_DIR, "pcside", "knowledge_base")
-    if os.path.exists(rag_dir):
-        print("[INFO] 已成功扫描到本地实验室知识库目录及结构.")
-
-    print("\n" + "=" * 55)
-    print("[INFO] 系统自检全部通过，正在启动主控制流...")
-    print("=" * 55 + "\n")
-    time.sleep(1)
-
-
-# --- 4. 终极安全启动与退出 ---
-if __name__ == '__main__':
-    run_pc_self_check()
-
-    from pcside.main import main
+    from pcside.main import main as cli_main
 
     try:
-        main()
+        cli_main()
+        return 0
     except KeyboardInterrupt:
-        print("\n[INFO] 接收到手动退出指令。")
-    except Exception as e:
-        print(f"\n[ERROR] 程序发生异常退出: {e}")
-    finally:
-        emergency_save_logs()
-        print("[INFO] LabDetector PC 端已安全关闭。", flush=True)
-        # 物理拔电源，终结所有残留的 AI 线程
-        os._exit(0)
+        print("\n[INFO] 已收到退出信号")
+        return 0
+
+
+def run_smoke_test(output_path: str) -> int:
+    runtime = LabDetectorRuntime()
+    payload = runtime.bootstrap(include_self_check=False)
+    runtime.shutdown()
+
+    target = Path(output_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+    return 0
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=f"{APP_NAME} Launcher")
+    parser.add_argument("--cli", action="store_true", help="使用旧版控制台入口")
+    parser.add_argument("--web", action="store_true", help="使用浏览器控制台")
+    parser.add_argument("--host", default="127.0.0.1", help="Web 控制台监听地址")
+    parser.add_argument("--port", default=8765, type=int, help="Web 控制台监听端口")
+    parser.add_argument("--open-browser", action="store_true", help="启动 Web 模式后自动打开浏览器")
+    parser.add_argument("--smoke-test-file", default="", help="写出初始化 JSON 后退出，用于打包产物验收")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv or sys.argv[1:])
+    if args.smoke_test_file:
+        return run_smoke_test(args.smoke_test_file)
+    if args.cli:
+        return run_cli_entry()
+    if args.web:
+        print("=" * 56)
+        print(f"{APP_NAME} v{APP_VERSION} Web 控制台")
+        print("=" * 56)
+        print(f"访问地址: http://{args.host}:{args.port}\n")
+        serve_dashboard(host=args.host, port=args.port, open_browser=args.open_browser)
+        return 0
+
+    print("=" * 56)
+    print(f"{APP_DISPLAY_NAME} v{APP_VERSION}")
+    print(COMPANY_NAME)
+    print("=" * 56)
+    print("正在启动桌面可视化软件...\n")
+    return launch_desktop_app()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

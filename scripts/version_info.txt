@@ -1,0 +1,30 @@
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(3, 0, 0, 0),
+    prodvers=(3, 0, 0, 0),
+    mask=0x3F,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        u'080404B0',
+        [
+          StringStruct(u'CompanyName', u'LabDetector Software Team'),
+          StringStruct(u'FileDescription', u'LabDetector Intelligent Laboratory Desktop Suite'),
+          StringStruct(u'FileVersion', u'3.0.0'),
+          StringStruct(u'InternalName', u'LabDetector'),
+          StringStruct(u'LegalCopyright', u'Copyright (C) 2026 LabDetector Software Team. All rights reserved.'),
+          StringStruct(u'OriginalFilename', u'LabDetector.exe'),
+          StringStruct(u'ProductName', u'LabDetector'),
+          StringStruct(u'ProductVersion', u'3.0.0')
+        ]
+      )
+    ]),
+    VarFileInfo([VarStruct(u'Translation', [2052, 1200])])
+  ]
+)

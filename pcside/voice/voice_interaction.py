@@ -16,7 +16,34 @@ project_root = os.path.dirname(os.path.dirname(current_dir))
 from pcside.core.logger import console_info, console_error
 from pcside.core.config import get_config
 from pcside.core.ai_backend import ask_assistant_with_rag
-from pcside.knowledge_base.rag_engine import rag_engine
+from pcside.knowledge_base.rag_engine import knowledge_manager
+
+
+def _common_memory_engine():
+    return knowledge_manager.get_scope("common")
+
+
+def _build_voice_rag_context(command: str) -> str:
+    try:
+        bundle = knowledge_manager.build_scope_bundle(command, "expert.lab_qa_expert", top_k=3)
+    except Exception as exc:
+        console_error(f"语音知识库检索失败: {exc}")
+        return ""
+
+    parts = []
+    context = str(bundle.get("context") or "").strip()
+    if context:
+        parts.append(context)
+
+    rows = bundle.get("structured_rows") or []
+    if rows:
+        detail_lines = []
+        for row in rows[:3]:
+            scope_title = row.get("scope_title", row.get("scope", "知识库"))
+            detail_lines.append(f"[{scope_title}] {row.get('name', '')}: {str(row.get('value', ''))[:120]}")
+        parts.append("结构化知识:\n" + "\n".join(detail_lines))
+
+    return "\n\n".join(part for part in parts if part.strip())
 
 try:
     from pcside.core.tts import speak_async
@@ -248,7 +275,7 @@ class VoiceInteraction:
             if "我说完了" in note_content:
                 final_note = note_content.replace("我说完了", "").strip(" ，。！、")
                 if final_note:
-                    rag_engine.save_and_ingest_note(f"[长期记忆]{time.strftime('%Y-%m-%d %H:%M:%S')}：{final_note}")
+                    _common_memory_engine().save_and_ingest_note(f"[长期记忆]{time.strftime('%Y-%m-%d %H:%M:%S')}：{final_note}")
                 speak_async("[VOICE]我记下了，您还有别的需要吗？")
                 self.is_active = True
                 self.last_wake_time = time.time()
@@ -260,7 +287,7 @@ class VoiceInteraction:
         self.is_active = False
         if not self.ai_backend: return
 
-        context = rag_engine.retrieve_context(command)
+        context = _build_voice_rag_context(command)
         current_frame = self.get_latest_frame_callback() if self.get_latest_frame_callback else None
 
         answer = ask_assistant_with_rag(
@@ -303,7 +330,7 @@ class VoiceInteraction:
                 continue
 
         if accumulated.strip("，。 "):
-            rag_engine.save_and_ingest_note(
+            _common_memory_engine().save_and_ingest_note(
                 f"【长期语音记忆】{time.strftime('%Y-%m-%d %H:%M:%S')}：{accumulated.strip('，。 ')}")
             console_info(f"长语音已完整归档入库！")
 

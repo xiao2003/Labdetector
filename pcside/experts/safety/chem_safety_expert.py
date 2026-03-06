@@ -1,8 +1,8 @@
-import os
+﻿from __future__ import annotations
+
 from typing import Dict, List
 
 from pcside.core.base_expert import BaseExpert
-from pcside.core.config import get_config
 from pcside.experts.utils import parse_detected_classes, safe_upper_tokens
 
 
@@ -15,7 +15,7 @@ class ChemSafetyExpert(BaseExpert):
 
     @property
     def expert_version(self) -> str:
-        return "2.5"
+        return "2.7.0"
 
     def supported_events(self) -> List[str]:
         return ["危化品识别", "化学品容器识别"]
@@ -33,9 +33,8 @@ class ChemSafetyExpert(BaseExpert):
         return event_name in self.supported_events()
 
     def _load_hazard_map(self):
-        # 轻量本地规则；如果未来有结构化文件，可用 kb_builder 导入并扩展。
         return {
-            "HF": "高危：检测到氢氟酸（HF），必须佩戴面罩+耐酸手套。",
+            "HF": "高危：检测到氢氟酸（HF），必须佩戴面罩和耐酸手套。",
             "H2SO4": "警告：检测到硫酸，请检查护目镜与防酸围裙。",
             "HNO3": "警告：检测到硝酸，注意通风柜操作并远离有机物。",
             "NAOH": "警告：检测到氢氧化钠，注意碱液飞溅风险。",
@@ -45,7 +44,6 @@ class ChemSafetyExpert(BaseExpert):
         }
 
     def _extract_text(self, frame) -> str:
-        # 可选 OCR，缺失依赖时自动降级。
         try:
             import easyocr  # type: ignore
 
@@ -62,20 +60,26 @@ class ChemSafetyExpert(BaseExpert):
         hazard_map = self._load_hazard_map()
         for chem, tip in hazard_map.items():
             if chem in token_set or chem in text.upper():
-                # 与 PPE 结合做闭环提醒
                 if chem == "HF" and "glove" not in detected and "gloves" not in detected:
                     return "极度危险：识别到 HF 且未检测到手套，请立即停止操作并上报。"
                 return tip
 
-        # 结构化KB补充（例如危化品目录表）
-        try:
-            from pcside.knowledge_base.structured_kb import get_default_structured_kb
+        structured_rows = context.get("knowledge_structured_rows") or []
+        for row in structured_rows:
+            row_name = str(row.get("name", "")).upper()
+            row_value = str(row.get("value", ""))
+            if any(token and token in row_name for token in token_set):
+                return f"危化品知识库提醒：{row.get('name')} - {row_value[:120]}"
 
-            sk = get_default_structured_kb()
+        try:
+            from pcside.knowledge_base.rag_engine import knowledge_manager
+
             for token in token_set:
-                rows = sk.search(token, limit=2)
+                bundle = knowledge_manager.build_scope_bundle(token, self.knowledge_scope, top_k=2)
+                rows = bundle.get("structured_rows") or []
                 if rows:
-                    return f"危化品知识库提醒：{rows[0]['name']} - {rows[0]['value'][:80]}"
+                    row = rows[0]
+                    return f"危化品知识库提醒：{row['name']} - {str(row['value'])[:120]}"
         except Exception:
             pass
 

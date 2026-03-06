@@ -1,9 +1,9 @@
-from abc import ABC, abstractmethod
+﻿from abc import ABC, abstractmethod
 from typing import Any, Dict, List
 
 
 class BaseExpert(ABC):
-    """统一专家插件接口（支持即插即用）。"""
+    """统一专家插件接口。"""
 
     @property
     @abstractmethod
@@ -39,3 +39,28 @@ class BaseExpert(ABC):
             "status": "ok",
             "events": self.supported_events(),
         }
+
+    @property
+    def expert_code(self) -> str:
+        module_name = self.__class__.__module__
+        prefix = "pcside.experts."
+        if module_name.startswith(prefix):
+            return module_name[len(prefix):]
+        return module_name
+
+    @property
+    def knowledge_scope(self) -> str:
+        return f"expert.{self.expert_code}"
+
+    def build_knowledge_query(self, event_name: str, context: Dict[str, Any]) -> str:
+        parts: List[str] = []
+        if event_name:
+            parts.append(event_name)
+        for key in ("query", "question", "event_desc", "detected_classes"):
+            value = context.get(key)
+            if value:
+                parts.append(str(value))
+        metrics = context.get("metrics")
+        if metrics:
+            parts.append(str(metrics))
+        return " ".join(part.strip() for part in parts if str(part).strip())
