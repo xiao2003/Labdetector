@@ -9,11 +9,11 @@ import json
 import sys
 from pathlib import Path
 
-from pcside.app_identity import APP_DISPLAY_NAME, APP_NAME, COMPANY_NAME
-from pcside.desktop_app import launch_desktop_app
-from pcside.tools.version_manager import get_app_version
-from pcside.webui.runtime import LabDetectorRuntime
-from pcside.webui.server import serve_dashboard
+from pc.app_identity import APP_DISPLAY_NAME, APP_NAME, COMPANY_NAME
+from pc.desktop_app import launch_desktop_app
+from pc.tools.version_manager import get_app_version
+from pc.webui.runtime import LabDetectorRuntime
+from pc.webui.server import serve_dashboard
 
 
 APP_VERSION = get_app_version()
@@ -29,7 +29,7 @@ def run_cli_entry() -> int:
         print(f"[{item['status'].upper()}] {item['title']}: {item['summary']}")
     print("\n切换到旧版控制台主流程。\n")
 
-    from pcside.main import main as cli_main
+    from pc.main import main as cli_main
 
     try:
         cli_main()

@@ -1,14 +1,14 @@
-﻿#define MyAppId "{{A48DB687-BD0A-4F91-B7B3-6AFB0C2DCE41}}"
+#define MyAppId "{{A48DB687-BD0A-4F91-B7B3-6AFB0C2DCE41}}"
 #define MyAppName "LabDetector"
-#define MyAppDisplayName "LabDetector ?????????"
-#define MyAppPublisher "LabDetector ?????"
+#define MyAppDisplayName "LabDetector Intelligent Laboratory Desktop Suite"
+#define MyAppPublisher "LabDetector Software Team"
 #define MyAppURL "https://github.com/xiao2003/Labdetector"
 #define MyAppExeName "LabDetector.exe"
 #ifndef MyAppVersion
   #define MyAppVersion "3.0.2"
 #endif
 #ifndef ReleaseDir
-  #define ReleaseDir "..\release\LabDetector-v" + MyAppVersion
+  #define ReleaseDir "..\\release\\LabDetector\\pc"
 #endif
 
 [Setup]
@@ -20,12 +20,13 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-AppCopyright=Copyright (C) 2026 LabDetector ?????. All rights reserved.
+AppCopyright=Copyright (C) 2026 LabDetector Software Team. All rights reserved.
 DefaultDirName={autopf}\LabDetector
 DefaultGroupName=LabDetector
 DisableProgramGroupPage=yes
-LicenseFile={#ReleaseDir}\_internal\docs\LabDetector_Copyright.md
-InfoBeforeFile={#ReleaseDir}\_internal\docs\LabDetector_Manual.md
+DisableDirPage=no
+LicenseFile=LICENSE_zh_cn.txt
+InfoBeforeFile=INFO_zh_cn.txt
 WizardStyle=modern
 SetupIconFile=..\assets\branding\labdetector.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
@@ -49,18 +50,18 @@ Name: "chinesesimp"; MessagesFile: "ChineseSimplified.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "????????"; GroupDescription: "????"
+Name: "desktopicon"; Description: "Create desktop shortcut"; GroupDescription: "Additional tasks"
 
 [Dirs]
-Name: "{app}\_internal"; Attribs: hidden system
+Name: "{app}\APP"; Attribs: hidden system
 
 [Files]
 Source: "{#ReleaseDir}\LabDetector.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#ReleaseDir}\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#ReleaseDir}\APP\*"; DestDir: "{app}\APP"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\LabDetector"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\LabDetector"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "????????? LabDetector"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch LabDetector now"; Flags: nowait postinstall skipifsilent

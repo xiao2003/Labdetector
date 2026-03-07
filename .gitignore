@@ -5,16 +5,16 @@ __pycache__/
 *.egg-info/
 
 # Logs
-pcside/log/
+pc/log/
 *.log
 
 # Knowledge base runtime artifacts
-pcside/knowledge_base/faiss_index/
-pcside/knowledge_base/docs/*.txt
+pc/knowledge_base/faiss_index/
+pc/knowledge_base/docs/*.txt
 
 # Local models and large assets
 models/
-pcside/voice/model/
+pc/voice/model/
 *.pt
 
 # Local environment and IDE
@@ -22,6 +22,7 @@ pcside/voice/model/
 config.ini
 .build_venv/
 .idea/
+pc/communication/.idea/
 
 # Build, release and temporary outputs
 build/
@@ -33,4 +34,4 @@ release/
 
 # Generated caches
 scripts/__pycache__/
-pcside/webui/__pycache__/
+pc/webui/__pycache__/

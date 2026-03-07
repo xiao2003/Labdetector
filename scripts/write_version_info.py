@@ -5,12 +5,16 @@
 from __future__ import annotations
 
 from pathlib import Path
-
-from pcside.app_identity import APP_NAME, COMPANY_NAME_EN, COPYRIGHT_TEXT_EN
-from pcside.tools.version_manager import get_app_version
+import sys
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from pc.app_identity import APP_NAME, COMPANY_NAME_EN, COPYRIGHT_TEXT_EN
+from pc.tools.version_manager import get_app_version
+
 OUTPUT_PATH = PROJECT_ROOT / 'scripts' / 'version_info.txt'
 
 

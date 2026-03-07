@@ -1,0 +1,284 @@
+from __future__ import annotations
+
+import base64
+import os
+import subprocess
+from typing import Any, Dict, List
+
+import cv2
+import requests
+
+from pc.core.config import get_config, set_config
+from pc.core.logger import console_error, console_info
+
+PROVIDER_PRESETS: Dict[str, Dict[str, str]] = {
+    "ollama": {
+        "label": "Ollama（本地私有化模型）",
+        "section": "ollama",
+        "model_key": "default_model",
+        "default_model": "llava:7b-v1.5-q4_K_M",
+        "base_url": "http://127.0.0.1:11434",
+    },
+    "qwen": {
+        "label": "通义千问（阿里云）",
+        "section": "qwen",
+        "model_key": "model",
+        "default_model": "qwen-vl-max",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    },
+    "openai": {
+        "label": "OpenAI 云模型",
+        "section": "openai_cloud",
+        "model_key": "model",
+        "default_model": "gpt-4.1-mini",
+        "base_url": "https://api.openai.com/v1",
+    },
+    "deepseek": {
+        "label": "DeepSeek 云模型",
+        "section": "deepseek_cloud",
+        "model_key": "model",
+        "default_model": "deepseek-chat",
+        "base_url": "https://api.deepseek.com/v1",
+    },
+    "kimi": {
+        "label": "Kimi / Moonshot 云模型",
+        "section": "kimi_cloud",
+        "model_key": "model",
+        "default_model": "moonshot-v1-128k",
+        "base_url": "https://api.moonshot.cn/v1",
+    },
+    "openai_compatible": {
+        "label": "兼容 OpenAI 协议云模型",
+        "section": "openai_compatible",
+        "model_key": "model",
+        "default_model": "custom-model",
+        "base_url": "",
+    },
+}
+
+_STATE: Dict[str, str] = {
+    "ai_backend": str(get_config("ai_backend.type", "ollama")),
+    "selected_model": "",
+}
+
+
+def provider_choices() -> List[Dict[str, str]]:
+    return [{"value": key, "label": value["label"]} for key, value in PROVIDER_PRESETS.items()]
+
+
+def provider_section(backend: str) -> str:
+    preset = PROVIDER_PRESETS.get(backend or "", PROVIDER_PRESETS["ollama"])
+    return preset["section"]
+
+
+def default_model_for_backend(backend: str) -> str:
+    preset = PROVIDER_PRESETS.get(backend or "", PROVIDER_PRESETS["ollama"])
+    return str(get_config(f"{preset['section']}.{preset['model_key']}", preset["default_model"]))
+
+
+def get_backend_runtime_config(backend: str) -> Dict[str, str]:
+    preset = PROVIDER_PRESETS.get(backend or "", PROVIDER_PRESETS["ollama"])
+    section = preset["section"]
+    return {
+        "backend": backend,
+        "label": preset["label"],
+        "api_key": str(get_config(f"{section}.api_key", "")),
+        "base_url": str(
+            get_config(f"{section}.base_url", get_config(f"{section}.api_base", preset.get("base_url", "")))
+        ).rstrip("/"),
+        "model": str(get_config(f"{section}.{preset['model_key']}", preset["default_model"])),
+    }
+
+
+def save_backend_runtime_config(backend: str, api_key: str = "", base_url: str = "", model: str = "") -> Dict[str, str]:
+    if backend not in PROVIDER_PRESETS:
+        raise ValueError(f"未知后端: {backend}")
+    preset = PROVIDER_PRESETS[backend]
+    section = preset["section"]
+    if api_key is not None:
+        set_config(f"{section}.api_key", api_key.strip())
+    if base_url is not None:
+        set_config(f"{section}.base_url", base_url.strip() or preset.get("base_url", ""))
+    if model is not None and model.strip():
+        set_config(f"{section}.{preset['model_key']}", model.strip())
+    return get_backend_runtime_config(backend)
+
+
+def list_ollama_models() -> List[str]:
+    try:
+        ollama_exe = "ollama"
+        default_path = r"C:\Users\Administrator\AppData\Local\Programs\Ollama\ollama.exe"
+        if default_path and os.path.exists(default_path):
+            ollama_exe = default_path
+
+        result = subprocess.run(
+            [ollama_exe, "list"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            models: List[str] = []
+            for line in result.stdout.strip().splitlines()[1:]:
+                parts = line.split()
+                if parts:
+                    models.append(parts[0])
+            return sorted(set(models))
+    except Exception as exc:
+        console_error(f"获取 Ollama 模型列表失败: {exc}")
+
+    try:
+        host = str(get_config("ollama.base_url", get_config("ollama.url", "http://127.0.0.1:11434"))).rstrip("/")
+        response = requests.get(f"{host}/api/tags", timeout=5)
+        response.raise_for_status()
+        models = [str(item.get("name", "")) for item in response.json().get("models", []) if item.get("name")]
+        return sorted(set(models))
+    except Exception:
+        return []
+
+
+def configured_model_catalog() -> Dict[str, List[str]]:
+    catalog = {"ollama": list_ollama_models()}
+    if not catalog["ollama"]:
+        raw_defaults = get_config("ollama.default_models", "llava:7b-v1.5-q4_K_M")
+        catalog["ollama"] = [item.strip() for item in str(raw_defaults).split(",") if item.strip()]
+    for backend in PROVIDER_PRESETS:
+        if backend == "ollama":
+            continue
+        model = default_model_for_backend(backend)
+        catalog[backend] = [model] if model else []
+    return catalog
+
+
+def set_ai_backend(backend: str, model: str | None = None) -> None:
+    target = backend if backend in PROVIDER_PRESETS else "ollama"
+    _STATE["ai_backend"] = target
+    if model is not None:
+        _STATE["selected_model"] = model
+
+
+def _active_model(model: str | None = None) -> str:
+    if model and model.strip():
+        return model.strip()
+    selected = str(_STATE.get("selected_model") or "").strip()
+    if selected:
+        return selected
+    return default_model_for_backend(_STATE.get("ai_backend", "ollama"))
+
+
+def _timeout_seconds() -> float:
+    try:
+        return float(get_config("inference.timeout", 20))
+    except Exception:
+        return 20.0
+
+
+def _encode_frame(frame: Any) -> str:
+    ok, encoded = cv2.imencode(".jpg", frame)
+    if not ok:
+        raise RuntimeError("图像编码失败")
+    return base64.b64encode(encoded.tobytes()).decode("utf-8")
+
+
+def _openai_chat_completion(
+    backend: str,
+    prompt: str,
+    model: str,
+    frame: Any | None = None,
+    max_tokens: int = 220,
+) -> str:
+    config = get_backend_runtime_config(backend)
+    api_key = config.get("api_key", "").strip()
+    base_url = config.get("base_url", "").rstrip("/")
+    if not api_key:
+        return f"{config['label']} 尚未配置 API Key。"
+    if not base_url:
+        return f"{config['label']} 尚未配置 Base URL。"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
+    if frame is not None:
+        try:
+            content.insert(
+                0,
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{_encode_frame(frame)}"},
+                },
+            )
+        except Exception as exc:
+            console_error(f"图像编码失败，已回退为纯文本请求: {exc}")
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": content}],
+        "temperature": 0.3,
+        "max_tokens": max_tokens,
+    }
+    response = requests.post(
+        f"{base_url}/chat/completions",
+        headers=headers,
+        json=payload,
+        timeout=_timeout_seconds(),
+    )
+    response.raise_for_status()
+    data = response.json()
+    choices = data.get("choices") or []
+    if not choices:
+        raise RuntimeError("云端模型未返回有效结果")
+    message = choices[0].get("message", {})
+    result = str(message.get("content", "")).strip()
+    return result or "云端模型未返回文本内容。"
+
+
+def _ollama_generate(prompt: str, model: str, frame: Any | None = None) -> str:
+    host = str(
+        get_config("ollama.base_url", get_config("ollama.api_base", get_config("ollama.url", "http://127.0.0.1:11434")))
+    ).rstrip("/")
+    payload: Dict[str, Any] = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "options": {"temperature": 0.3},
+    }
+    if frame is not None:
+        payload["images"] = [_encode_frame(frame)]
+    response = requests.post(f"{host}/api/generate", json=payload, timeout=_timeout_seconds())
+    response.raise_for_status()
+    result = str(response.json().get("response", "")).strip()
+    return result or "本地模型未返回文本内容。"
+
+
+def analyze_image(frame, model: str, prompt: str = "请精准描述画面内容，控制在 20 字以内，仅返回描述文本。") -> str:
+    backend = _STATE.get("ai_backend", "ollama")
+    active_model = _active_model(model)
+    try:
+        if backend == "ollama":
+            result = _ollama_generate(prompt, active_model, frame=frame)
+        else:
+            result = _openai_chat_completion(backend, prompt, active_model, frame=frame, max_tokens=180)
+        console_info(f"{backend} 识别结果: {result}")
+        return result
+    except Exception as exc:
+        console_error(f"{backend} 图像分析失败: {exc}")
+        return "图像分析失败"
+
+
+def ask_assistant_with_rag(frame, question: str, rag_context: str, model_name: str) -> str:
+    prompt = (
+        "你是一名实验室监控与安全辅助专家。请结合当前问题、知识库背景和可见画面，"
+        "用简洁、专业的中文回答，控制在 80 字以内。\n\n"
+        f"【知识库背景】\n{rag_context or '暂无相关背景知识。'}\n\n"
+        f"【用户问题】\n{question}\n"
+    )
+    backend = _STATE.get("ai_backend", "ollama")
+    active_model = _active_model(model_name)
+    try:
+        if backend == "ollama":
+            return _ollama_generate(prompt, active_model, frame=frame)
+        return _openai_chat_completion(backend, prompt, active_model, frame=frame, max_tokens=220)
+    except Exception as exc:
+        console_error(f"{backend} 问答失败: {exc}")
+        return f"模型回答失败: {str(exc)[:60]}"
