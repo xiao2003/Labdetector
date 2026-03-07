@@ -1,15 +1,17 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import base64
 import os
 import subprocess
-from typing import Any, Dict, List
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
 
 import cv2
 import requests
 
 from pc.core.config import get_config, set_config
 from pc.core.logger import console_error, console_info
+from pc.training.model_linker import model_linker
 
 PROVIDER_PRESETS: Dict[str, Dict[str, str]] = {
     "ollama": {
@@ -18,6 +20,13 @@ PROVIDER_PRESETS: Dict[str, Dict[str, str]] = {
         "model_key": "default_model",
         "default_model": "llava:7b-v1.5-q4_K_M",
         "base_url": "http://127.0.0.1:11434",
+    },
+    "local_adapter": {
+        "label": "本地微调适配器（Transformers + PEFT）",
+        "section": "local_llm",
+        "model_key": "active_model",
+        "default_model": "",
+        "base_url": "",
     },
     "qwen": {
         "label": "通义千问（阿里云）",
@@ -61,6 +70,8 @@ _STATE: Dict[str, str] = {
     "selected_model": "",
 }
 
+_LOCAL_MODEL_CACHE: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
 
 def provider_choices() -> List[Dict[str, str]]:
     return [{"value": key, "label": value["label"]} for key, value in PROVIDER_PRESETS.items()]
@@ -95,6 +106,10 @@ def save_backend_runtime_config(backend: str, api_key: str = "", base_url: str =
         raise ValueError(f"未知后端: {backend}")
     preset = PROVIDER_PRESETS[backend]
     section = preset["section"]
+    if backend == "local_adapter":
+        if model is not None:
+            set_config(f"{section}.{preset['model_key']}", model.strip())
+        return get_backend_runtime_config(backend)
     if api_key is not None:
         set_config(f"{section}.api_key", api_key.strip())
     if base_url is not None:
@@ -137,13 +152,19 @@ def list_ollama_models() -> List[str]:
         return []
 
 
+def list_local_adapter_models() -> List[str]:
+    rows = model_linker.list_llm_deployments()
+    return [str(item.get("name", "")).strip() for item in rows if str(item.get("name", "")).strip()]
+
+
 def configured_model_catalog() -> Dict[str, List[str]]:
     catalog = {"ollama": list_ollama_models()}
     if not catalog["ollama"]:
         raw_defaults = get_config("ollama.default_models", "llava:7b-v1.5-q4_K_M")
         catalog["ollama"] = [item.strip() for item in str(raw_defaults).split(",") if item.strip()]
+    catalog["local_adapter"] = list_local_adapter_models()
     for backend in PROVIDER_PRESETS:
-        if backend == "ollama":
+        if backend in {"ollama", "local_adapter"}:
             continue
         model = default_model_for_backend(backend)
         catalog[backend] = [model] if model else []
@@ -251,12 +272,92 @@ def _ollama_generate(prompt: str, model: str, frame: Any | None = None) -> str:
     return result or "本地模型未返回文本内容。"
 
 
-def analyze_image(frame, model: str, prompt: str = "请精准描述画面内容，控制在 20 字以内，仅返回描述文本。") -> str:
+def _load_local_adapter_runtime(base_model: str, adapter_path: str) -> Dict[str, Any]:
+    cache_key = (str(base_model), str(adapter_path))
+    cached = _LOCAL_MODEL_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        import torch
+        from peft import PeftModel
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+    except Exception as exc:  # pragma: no cover - optional dependency
+        raise RuntimeError(f"未安装本地微调模型推理依赖: {exc}") from exc
+
+    model_source = str(base_model).strip()
+    adapter_source = str(adapter_path).strip()
+    if not model_source:
+        raise RuntimeError("本地微调模型缺少底座模型路径。")
+    if not adapter_source or not Path(adapter_source).exists():
+        raise RuntimeError("本地微调模型适配器目录不存在。")
+
+    tokenizer_source = adapter_source if Path(adapter_source, "tokenizer_config.json").exists() else model_source
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+    base = AutoModelForCausalLM.from_pretrained(model_source, trust_remote_code=True, torch_dtype=torch_dtype)
+    model = PeftModel.from_pretrained(base, adapter_source)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    model.eval()
+
+    cached = {"tokenizer": tokenizer, "model": model, "device": device, "torch": torch}
+    _LOCAL_MODEL_CACHE[cache_key] = cached
+    return cached
+
+
+def _local_adapter_generate(prompt: str, model: str, frame: Any | None = None) -> str:
+    deployment = model_linker.resolve_llm_deployment(model)
+    if deployment is None:
+        return "当前未找到可用的本地微调模型，请先在训练工作台完成 LLM 微调。"
+
+    prompt_text = str(prompt or "").strip()
+    if frame is not None:
+        prompt_text = (
+            "你正在使用本地文本微调模型。当前不会直接解析图像像素，请基于问题文本、知识库上下文和已有语义线索作答。\n\n"
+            + prompt_text
+        )
+
+    runtime = _load_local_adapter_runtime(str(deployment.get("base_model", "")), str(deployment.get("adapter_path", "")))
+    tokenizer = runtime["tokenizer"]
+    model_obj = runtime["model"]
+    device = runtime["device"]
+    torch = runtime["torch"]
+
+    max_new_tokens = int(get_config("local_llm.generation_max_new_tokens", 192) or 192)
+    temperature = float(get_config("local_llm.temperature", 0.3) or 0.3)
+    top_p = float(get_config("local_llm.top_p", 0.9) or 0.9)
+
+    encoded = tokenizer(prompt_text, return_tensors="pt", truncation=True, max_length=1024)
+    encoded = {key: value.to(device) for key, value in encoded.items()}
+    with torch.inference_mode():
+        generated = model_obj.generate(
+            **encoded,
+            max_new_tokens=max(32, max_new_tokens),
+            do_sample=temperature > 0,
+            temperature=max(0.0, temperature),
+            top_p=max(0.1, top_p),
+            pad_token_id=tokenizer.pad_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+        )
+    output_ids = generated[0][encoded["input_ids"].shape[-1] :]
+    text = tokenizer.decode(output_ids, skip_special_tokens=True).strip()
+    if not text:
+        return "本地微调模型未返回有效文本。"
+    return text
+
+
+def analyze_image(frame, model: str, prompt: str = "请精准描述画面内容，控制在20字以内，仅返回描述文本。") -> str:
     backend = _STATE.get("ai_backend", "ollama")
     active_model = _active_model(model)
     try:
         if backend == "ollama":
             result = _ollama_generate(prompt, active_model, frame=frame)
+        elif backend == "local_adapter":
+            result = _local_adapter_generate(prompt, active_model, frame=frame)
         else:
             result = _openai_chat_completion(backend, prompt, active_model, frame=frame, max_tokens=180)
         console_info(f"{backend} 识别结果: {result}")
@@ -278,6 +379,8 @@ def ask_assistant_with_rag(frame, question: str, rag_context: str, model_name: s
     try:
         if backend == "ollama":
             return _ollama_generate(prompt, active_model, frame=frame)
+        if backend == "local_adapter":
+            return _local_adapter_generate(prompt, active_model, frame=frame)
         return _openai_chat_completion(backend, prompt, active_model, frame=frame, max_tokens=220)
     except Exception as exc:
         console_error(f"{backend} 问答失败: {exc}")

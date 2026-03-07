@@ -1,4 +1,4 @@
-# Python cache
+﻿# Python cache
 __pycache__/
 *.py[cod]
 *$py.class
@@ -43,3 +43,9 @@ LabDetector-v*.zip
 # Generated caches
 scripts/__pycache__/
 pc/webui/__pycache__/
+# Training and runtime generated models
+pc/training_runs/
+pc/training_assets/
+pc/models/llm_adapters/
+pc/models/registry/
+pi/models/detectors/

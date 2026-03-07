@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from typing import Any, Dict
@@ -27,18 +28,21 @@ def run_pi_detector_finetune(
     if not yaml_path.exists():
         raise FileNotFoundError(f"Pi 检测训练数据不存在: {yaml_path}")
 
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
     model = YOLO(base_weights)
     results = model.train(
         data=str(yaml_path),
         epochs=max(1, int(epochs)),
         imgsz=max(320, int(imgsz)),
-        project=output_dir,
+        project=str(output_path),
         name="run",
         device=device or None,
         exist_ok=True,
     )
 
-    run_dir = Path(output_dir) / "run"
+    run_dir = output_path / "run"
     best_weights = run_dir / "weights" / "best.pt"
     deployed_path = ""
     if deploy_to_pi and best_weights.exists():
@@ -48,9 +52,15 @@ def run_pi_detector_finetune(
         shutil.copy2(best_weights, target_file)
         deployed_path = str(target_file)
 
-    return {
+    summary = {
         "output_dir": str(run_dir),
         "best_weights": str(best_weights),
         "deployed_path": deployed_path,
         "results": str(results),
+        "epochs": max(1, int(epochs)),
+        "imgsz": max(320, int(imgsz)),
+        "base_weights": str(base_weights),
+        "dataset_yaml": str(yaml_path),
     }
+    (run_dir / "training_result.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    return summary

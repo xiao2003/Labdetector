@@ -30,6 +30,8 @@ def run_llm_finetune(
 
     train_file = Path(train_path)
     eval_file = Path(eval_path) if eval_path else None
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
     if not train_file.exists():
         raise FileNotFoundError(f"训练数据不存在: {train_file}")
 
@@ -73,7 +75,7 @@ def run_llm_finetune(
         eval_dataset = Dataset.from_list(eval_rows).map(render_example, remove_columns=list(eval_rows[0].keys()))
 
     args = TrainingArguments(
-        output_dir=output_dir,
+        output_dir=str(output_path),
         num_train_epochs=max(1, int(epochs)),
         per_device_train_batch_size=max(1, int(batch_size)),
         per_device_eval_batch_size=max(1, int(batch_size)),
@@ -88,11 +90,18 @@ def run_llm_finetune(
 
     trainer = Trainer(model=model, args=args, train_dataset=train_dataset, eval_dataset=eval_dataset)
     trainer.train()
-    trainer.save_model(output_dir)
-    tokenizer.save_pretrained(output_dir)
-    return {
-        "output_dir": str(output_dir),
+    trainer.save_model(str(output_path))
+    tokenizer.save_pretrained(str(output_path))
+    summary = {
+        "output_dir": str(output_path),
         "train_samples": len(train_rows),
         "eval_samples": len(eval_rows),
         "base_model": base_model,
+        "epochs": max(1, int(epochs)),
+        "batch_size": max(1, int(batch_size)),
+        "learning_rate": float(learning_rate),
+        "lora_r": max(1, int(lora_r)),
+        "lora_alpha": max(1, int(lora_alpha)),
     }
+    (output_path / "training_result.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    return summary

@@ -8,10 +8,10 @@ import configparser
 import os
 from typing import Any
 
-from pc.app_identity import pc_bundle_root, resource_path
+from pc.app_identity import resource_path
 
 
-project_root = str(pc_bundle_root())
+project_root = str(resource_path("pc"))
 config_file = str(resource_path("config.ini"))
 
 _config = configparser.ConfigParser()
@@ -25,6 +25,14 @@ _DEFAULT_CONFIG = {
         "api_base": "http://127.0.0.1:11434",
         "base_url": "http://127.0.0.1:11434",
         "default_models": "llava:13b-v1.5-q4_K_M, llava:7b-v1.5-q4_K_M, llava:latest, qwen-vl",
+    },
+    "local_llm": {
+        "active_model": "",
+        "active_adapter_path": "",
+        "base_model": "",
+        "generation_max_new_tokens": "192",
+        "temperature": "0.3",
+        "top_p": "0.9",
     },
     "qwen": {
         "model": "qwen-vl-max",
@@ -58,10 +66,11 @@ _DEFAULT_CONFIG = {
         "energy_threshold": "300",
         "pause_threshold": "0.8",
         "online_recognition": "True",
-        "vosk_model_path": os.path.join(project_root, "pc", "voice", "model"),
+        "vosk_model_path": str(resource_path("pc/voice/model")),
     },
     "inference": {
         "interval": "5",
+        "timeout": "20",
     },
     "expert_loop": {
         "ack_timeout": "2.0",
@@ -96,6 +105,11 @@ _DEFAULT_CONFIG = {
         "pi_imgsz": "640",
         "pi_device": "",
     },
+    "pi_detector": {
+        "active_weights": "",
+        "conf": "0.4",
+        "imgsz": "640",
+    },
     "experts": {},
 }
 
@@ -104,13 +118,13 @@ def _save_config() -> None:
     config_dir = os.path.dirname(config_file)
     if config_dir:
         os.makedirs(config_dir, exist_ok=True)
-    with open(config_file, "w", encoding="utf-8") as configfile:
+    with open(config_file, "w", encoding="utf-8-sig") as configfile:
         _config.write(configfile)
 
 
 def _init_config() -> None:
     if os.path.exists(config_file):
-        _config.read(config_file, encoding="utf-8")
+        _config.read(config_file, encoding="utf-8-sig")
 
     needs_save = False
     for section, options in _DEFAULT_CONFIG.items():
@@ -152,7 +166,7 @@ def get_config(key: str, default: Any = None) -> Any:
             if lowered in ["false", "no", "off"]:
                 return False
             try:
-                if "." in val:
+                if "." in val and all(ch.isdigit() or ch in {".", "-"} for ch in val.replace("e", "").replace("E", "")):
                     return float(val)
                 return int(val)
             except ValueError:
@@ -167,3 +181,5 @@ def set_config(key: str, value: Any) -> None:
             _config.add_section(section)
         _config.set(section, option, str(value))
         _save_config()
+
+

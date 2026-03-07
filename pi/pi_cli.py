@@ -58,6 +58,11 @@ def _config_snapshot() -> dict[str, Any]:
             "online_recognition": bool(get_pi_config("voice.online_recognition", True)),
             "model_path": str(get_pi_config("voice.model_path", "voice/model") or "voice/model"),
         },
+        "detector": {
+            "weights_path": str(get_pi_config("detector.weights_path", "yolov8n.pt") or "yolov8n.pt"),
+            "conf": float(get_pi_config("detector.conf", 0.4) or 0.4),
+            "imgsz": int(get_pi_config("detector.imgsz", 640) or 640),
+        },
     }
 
 
@@ -70,6 +75,9 @@ def _print_block(data: dict[str, Any]) -> None:
     print(f"唤醒词: {data['voice']['wake_word']}")
     print(f"在线语音识别: {_bool_text(data['voice']['online_recognition'])}")
     print(f"离线模型目录: {data['voice']['model_path']}")
+    print(f"检测权重: {data['detector']['weights_path']}")
+    print(f"检测阈值: {data['detector']['conf']}")
+    print(f"检测尺寸: {data['detector']['imgsz']}")
 
 
 def _load_runtime():
@@ -109,6 +117,12 @@ def apply_start_overrides(args: argparse.Namespace) -> None:
         set_pi_config("voice.wake_word", args.wake_word)
     if getattr(args, "online_recognition", None) is not None:
         set_pi_config("voice.online_recognition", args.online_recognition)
+    if getattr(args, "weights_path", None):
+        set_pi_config("detector.weights_path", args.weights_path)
+    if getattr(args, "detector_conf", None) is not None:
+        set_pi_config("detector.conf", args.detector_conf)
+    if getattr(args, "detector_imgsz", None) is not None:
+        set_pi_config("detector.imgsz", args.detector_imgsz)
 
 
 def start_node(skip_self_check: bool = False) -> int:
@@ -118,6 +132,7 @@ def start_node(skip_self_check: bool = False) -> int:
     print(f"本机地址: {snapshot['local_ip']}")
     print(f"中枢地址: {snapshot['network']['pc_ip'] or '未设置，等待自动发现'}")
     print(f"端口: {snapshot['network']['ws_port']}")
+    print(f"检测权重: {snapshot['detector']['weights_path']}")
     if not skip_self_check:
         runtime.run_pi_self_check()
     runtime.main()
@@ -136,6 +151,9 @@ def interactive_config_wizard() -> int:
     ws_port = input(f"WebSocket 端口 [{snapshot['network']['ws_port']}]: ").strip()
     wake_word = input(f"唤醒词 [{snapshot['voice']['wake_word']}]: ").strip()
     online_raw = input(f"在线识别 true/false [{'true' if snapshot['voice']['online_recognition'] else 'false'}]: ").strip()
+    weights_path = input(f"检测权重 [{snapshot['detector']['weights_path']}]: ").strip()
+    detector_conf = input(f"检测阈值 [{snapshot['detector']['conf']}]: ").strip()
+    detector_imgsz = input(f"检测尺寸 [{snapshot['detector']['imgsz']}]: ").strip()
 
     if pc_ip:
         set_pi_config("network.pc_ip", pc_ip)
@@ -145,6 +163,12 @@ def interactive_config_wizard() -> int:
         set_pi_config("voice.wake_word", wake_word)
     if online_raw:
         set_pi_config("voice.online_recognition", _parse_bool(online_raw))
+    if weights_path:
+        set_pi_config("detector.weights_path", weights_path)
+    if detector_conf:
+        set_pi_config("detector.conf", detector_conf)
+    if detector_imgsz:
+        set_pi_config("detector.imgsz", detector_imgsz)
 
     print("配置已保存。")
     return 0
@@ -202,6 +226,9 @@ def build_parser() -> argparse.ArgumentParser:
     start_parser.add_argument("--ws-port", help="覆盖 WebSocket 端口，并写入配置文件")
     start_parser.add_argument("--wake-word", help="覆盖唤醒词，并写入配置文件")
     start_parser.add_argument("--online-recognition", type=_parse_bool, help="覆盖在线识别开关，并写入配置文件")
+    start_parser.add_argument("--weights-path", help="覆盖检测权重路径，并写入配置文件")
+    start_parser.add_argument("--detector-conf", type=float, help="覆盖检测阈值，并写入配置文件")
+    start_parser.add_argument("--detector-imgsz", type=int, help="覆盖检测尺寸，并写入配置文件")
 
     subparsers.add_parser("version", help="输出版本号")
     return parser
@@ -221,7 +248,7 @@ def main(argv: list[str] | None = None) -> int:
                 return show_config(as_json=args.json)
             if args.config_command == "set":
                 return set_config_value(args.key, args.value)
-            parser.error("config 子命令缺失，可用 show/set")
+            parser.error("config 需要子命令 show 或 set")
         if args.command == "self-check":
             return run_self_check()
         if args.command == "start":
@@ -230,10 +257,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "version":
             print(APP_VERSION)
             return 0
+        parser.print_help()
+        return 0
     except KeyboardInterrupt:
-        print("\n已取消。")
+        print("已中断。")
         return 130
-    return 0
 
 
 if __name__ == "__main__":
