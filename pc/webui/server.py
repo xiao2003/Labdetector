@@ -41,6 +41,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/bootstrap":
             self._send_json(self.runtime.bootstrap())
             return
+        if parsed.path == "/api/experts":
+            self._send_json({"ok": True, "experts": self.runtime.get_expert_catalog()})
+            return
+        if parsed.path == "/api/knowledge-bases":
+            self._send_json({"ok": True, "knowledge_bases": self.runtime.get_knowledge_base_catalog()})
+            return
+        if parsed.path == "/api/cloud-backends":
+            self._send_json({"ok": True, "cloud_backends": self.runtime.get_cloud_backend_catalog()})
+            return
         if parsed.path == "/api/state":
             self._send_json(self.runtime.get_state())
             return
@@ -72,6 +81,61 @@ class DashboardHandler(BaseHTTPRequestHandler):
             state = self.runtime.stop_session()
             self._send_json({"ok": True, "state": state})
             return
+        if parsed.path == "/api/experts/import":
+            try:
+                summary = self.runtime.import_expert_assets(
+                    str(body.get("expert_code") or ""),
+                    self._paths_field(body.get("paths")),
+                )
+                self._send_json(
+                    {
+                        "ok": True,
+                        "summary": summary,
+                        "experts": self.runtime.get_expert_catalog(),
+                        "state": self.runtime.get_state(),
+                    }
+                )
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
+            return
+        if parsed.path == "/api/knowledge/import":
+            try:
+                summary = self.runtime.import_knowledge_paths(
+                    self._paths_field(body.get("paths")),
+                    scope_name=str(body.get("scope_name") or "common"),
+                    reset_index=bool(body.get("reset_index", False)),
+                    structured=bool(body.get("structured", True)),
+                )
+                self._send_json(
+                    {
+                        "ok": True,
+                        "summary": summary,
+                        "knowledge_bases": self.runtime.get_knowledge_base_catalog(),
+                        "state": self.runtime.get_state(),
+                    }
+                )
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
+            return
+        if parsed.path == "/api/cloud-backends/save":
+            try:
+                summary = self.runtime.save_cloud_backend_config(
+                    str(body.get("backend") or ""),
+                    api_key=str(body.get("api_key") or ""),
+                    base_url=str(body.get("base_url") or ""),
+                    model=str(body.get("model") or ""),
+                )
+                self._send_json(
+                    {
+                        "ok": True,
+                        "summary": summary,
+                        "cloud_backends": self.runtime.get_cloud_backend_catalog(),
+                        "state": self.runtime.get_state(),
+                    }
+                )
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
+            return
         self._send_json({"ok": False, "error": "Not found"}, status=404)
 
     def _read_json_body(self) -> Dict[str, Any]:
@@ -85,6 +149,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return json.loads(raw.decode("utf-8"))
         except json.JSONDecodeError:
             return {}
+
+    @staticmethod
+    def _paths_field(value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [value] if value.strip() else []
+        if isinstance(value, (list, tuple)):
+            return [str(item) for item in value if str(item).strip()]
+        return []
 
     def _send_json(self, payload: Dict[str, Any], status: int = 200) -> None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")

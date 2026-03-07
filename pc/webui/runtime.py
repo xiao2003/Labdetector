@@ -103,6 +103,7 @@ class DashboardMultiPiManager:
         self.ack_retries = self._base.ack_retries
         self.audit_log_dir = self._base.audit_log_dir
         self._write_audit = self._base._write_audit
+        self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.log_info = log_info
         self.log_error = log_error
         self.node_latest_results: Dict[str, Dict[str, Any]] = {
@@ -211,11 +212,6 @@ class DashboardMultiPiManager:
                                         )
                                         if not acked:
                                             self.log_error(f"节点 [{pi_id}] 对专家结论未确认 ACK: {event.event_id}")
-                                        try:
-                                            from pc.core.tts import speak_async
-                                            speak_async(f"节点 {pi_id} 安防提示：{tts_text}")
-                                        except Exception:
-                                            pass
                                 continue
 
                             arr = np.frombuffer(data, np.uint8)
@@ -238,21 +234,47 @@ class DashboardMultiPiManager:
     def _handle_remote_voice(self, pi_id: str, data: str) -> None:
         from pc.voice.voice_interaction import get_voice_interaction
 
-        cmd_text = data.replace("PI_VOICE_COMMAND:", "")
+        cmd_text = data.replace("PI_VOICE_COMMAND:", "", 1).strip()
         self.log_info(f"收到节点 {pi_id} 语音指令: {cmd_text}")
         agent = get_voice_interaction()
-        if agent:
-            threading.Thread(target=agent._route_command, args=(cmd_text,), daemon=True).start()
+        if not agent:
+            self.send_to_node(pi_id, "CMD:TTS:语音助手未就绪，请先检查 PC 端依赖。")
+            return
+
+        def _reply(answer: str) -> None:
+            message = str(answer or "").strip()
+            if not message:
+                return
+            self.node_latest_results[pi_id] = {
+                "text": message,
+                "event_name": "语音交互",
+                "timestamp": time.time(),
+            }
+            self._write_audit(f"node={pi_id} voice_command={cmd_text} reply={message}")
+            self.send_to_node(pi_id, f"CMD:TTS:{message}")
+
+        threading.Thread(
+            target=agent.process_remote_command,
+            args=(pi_id, cmd_text, _reply),
+            daemon=True,
+            name=f"PiVoiceRoute_{pi_id}",
+        ).start()
 
     async def start(self) -> None:
+        self.loop = asyncio.get_running_loop()
         self.running = True
         self._base.running = True
         tasks = [self._node_handler(pid, ip) for pid, ip in self.pi_dict.items()]
         await asyncio.gather(*tasks)
 
     def send_to_node(self, pi_id: str, text: str) -> None:
-        if pi_id in self.send_queues:
-            self.send_queues[pi_id].put_nowait(text)
+        queue_ref = self.send_queues.get(pi_id)
+        if queue_ref is None:
+            return
+        if self.loop is not None and self.loop.is_running():
+            self.loop.call_soon_threadsafe(queue_ref.put_nowait, text)
+        else:
+            queue_ref.put_nowait(text)
 
     def stop(self) -> None:
         self.running = False
@@ -692,7 +714,7 @@ class LabDetectorRuntime:
 
             self._configure_backend()
             self._ensure_scheduler()
-            self._ensure_voice_agent()
+            self._ensure_voice_agent(start_local_microphone=self.mode == "camera")
 
             if self.mode == "camera":
                 self._start_camera_session_locked()
@@ -831,7 +853,7 @@ class LabDetectorRuntime:
         except Exception as exc:
             self._log_error(f"定时任务引擎启动失败: {exc}")
 
-    def _ensure_voice_agent(self) -> None:
+    def _ensure_voice_agent(self, start_local_microphone: bool) -> None:
         try:
             from pc.voice.voice_interaction import get_voice_interaction
             agent = get_voice_interaction()
@@ -840,11 +862,21 @@ class LabDetectorRuntime:
                 return
             agent.set_ai_backend(self.ai_backend, self.selected_model)
             agent.get_latest_frame_callback = self._latest_frame_for_voice
-            if not agent.is_running:
-                if agent.start():
-                    self._log_info("语音助手已启动")
-                else:
-                    self._log_error("语音助手启动失败，可能未插入麦克风")
+            source = "pc_local" if start_local_microphone else "pi_cluster"
+            agent.open_runtime_session(
+                mode=self.mode or "idle",
+                source=source,
+                metadata={"expected_nodes": self.expected_nodes},
+            )
+            if start_local_microphone:
+                if not agent.is_running:
+                    if agent.start():
+                        self._log_info("语音助手已启动")
+                    else:
+                        self._log_error("语音助手启动失败，可能未插入麦克风")
+            elif agent.is_running:
+                agent.stop()
+                self._log_info("已切换到树莓派语音模式，PC 本地麦克风监听已关闭")
         except Exception as exc:
             self._log_error(f"语音助手初始化失败: {exc}")
 
@@ -971,9 +1003,13 @@ class LabDetectorRuntime:
         if self.capture is not None:
             self.capture.release()
             self.capture = None
-        if self.voice_agent and getattr(self.voice_agent, "is_running", False):
+        if self.voice_agent:
             try:
-                self.voice_agent.stop()
+                if getattr(self.voice_agent, "is_running", False):
+                    self.voice_agent.stop()
+                close_session = getattr(self.voice_agent, "close_runtime_session", None)
+                if callable(close_session):
+                    close_session()
             except Exception:
                 pass
 

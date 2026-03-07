@@ -8,7 +8,7 @@
   #define MyAppVersion "3.0.2"
 #endif
 #ifndef ReleaseDir
-  #define ReleaseDir "..\\release\\LabDetector\\pc"
+  #define ReleaseDir "..\\pc"
 #endif
 
 [Setup]
@@ -32,7 +32,7 @@ SetupIconFile=..\assets\branding\labdetector.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/max
 SolidCompression=yes
-OutputDir=..\release
+OutputDir=..
 OutputBaseFilename=LabDetector-Setup-v{#MyAppVersion}
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible

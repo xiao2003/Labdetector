@@ -1,4 +1,3 @@
-# pi/config.py
 import configparser
 import os
 

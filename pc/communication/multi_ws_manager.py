@@ -10,7 +10,6 @@ from pc.app_identity import resource_path
 from pc.core.logger import console_info, console_error
 from pc.core.config import get_config
 from pc.core.expert_manager import expert_manager
-from pc.core.tts import speak_async
 from pc.core.expert_closed_loop import (
     parse_pi_expert_packet,
     build_expert_result_command,
@@ -29,6 +28,7 @@ class MultiPiManager:
         # ★ 新增：独立跟踪每个节点的状态
         self.node_status = {pid: "connecting" for pid in pi_dict}
         self.node_caps = {pid: {"has_mic": False, "has_speaker": False} for pid in pi_dict}
+        self.loop = None
 
         num_nodes = len(pi_dict)
         self.target_fps = max(1.0, 30.0 / num_nodes) if num_nodes > 0 else 30.0
@@ -148,7 +148,6 @@ class MultiPiManager:
                                         )
                                         if not acked:
                                             console_error(f"节点 [{pi_id}] 对专家结论未确认 ACK: {event.event_id}")
-                                        speak_async(f"节点 {pi_id} 安防警告：{tts_text}")
                                 continue
 
                             # 处理常规预览视频流的渲染
@@ -175,17 +174,33 @@ class MultiPiManager:
         console_info(f"收到节点 {pi_id} 语音指令: {cmd_text}")
         from pc.voice.voice_interaction import get_voice_interaction
         agent = get_voice_interaction()
-        if agent:
-            import threading
-            threading.Thread(target=agent._route_command, args=(cmd_text,), daemon=True).start()
+        if not agent:
+            self.send_to_node(pi_id, "CMD:TTS:PC 端语音助手未就绪，请检查依赖环境。")
+            return
+
+        def _reply(answer: str):
+            message = str(answer or "").strip()
+            if not message:
+                return
+            self._write_audit(f"node={pi_id} voice_command={cmd_text} reply={message}")
+            self.send_to_node(pi_id, f"CMD:TTS:{message}")
+
+        import threading
+        threading.Thread(target=agent.process_remote_command, args=(pi_id, cmd_text, _reply), daemon=True).start()
 
     async def start(self):
+        self.loop = asyncio.get_running_loop()
         tasks = [self._node_handler(pid, ip) for pid, ip in self.pi_dict.items()]
         await asyncio.gather(*tasks)
 
     def send_to_node(self, pi_id, text):
-        if pi_id in self.send_queues:
-            self.send_queues[pi_id].put_nowait(text)
+        queue_ref = self.send_queues.get(pi_id)
+        if queue_ref is None:
+            return
+        if self.loop is not None and self.loop.is_running():
+            self.loop.call_soon_threadsafe(queue_ref.put_nowait, text)
+        else:
+            queue_ref.put_nowait(text)
 
     def stop(self):
         self.running = False

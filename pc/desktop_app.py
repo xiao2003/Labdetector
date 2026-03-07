@@ -61,6 +61,7 @@ class DesktopApp:
         self.photo_refs: Dict[str, ImageTk.PhotoImage] = {}
         self.stream_cards: Dict[str, Dict[str, Any]] = {}
         self.stream_frame_cache: Dict[str, Any] = {}
+        self.stream_state_cache: Dict[str, Dict[str, Any]] = {}
         self.window_refs: List[tk.Toplevel] = []
         self.logo_image: ImageTk.PhotoImage | None = None
         self.splash_logo_image: ImageTk.PhotoImage | None = None
@@ -91,6 +92,12 @@ class DesktopApp:
         self.cloud_base_url_entry: ttk.Entry | None = None
         self.cloud_model_entry: ttk.Entry | None = None
         self.cloud_status_var = tk.StringVar(value="等待配置云模型 API")
+        self.stream_viewer_window: tk.Toplevel | None = None
+        self.stream_viewer_label: tk.Label | None = None
+        self.stream_viewer_title_var = tk.StringVar(value="")
+        self.stream_viewer_meta_var = tk.StringVar(value="")
+        self.stream_viewer_photo: ImageTk.PhotoImage | None = None
+        self.stream_viewer_stream_id: str | None = None
         self.shell_frame: ttk.Frame | None = None
         self.left_panel: ttk.Frame | None = None
         self.left_canvas: tk.Canvas | None = None
@@ -346,7 +353,9 @@ class DesktopApp:
         self.session_badge.pack(anchor="e")
         ttk.Button(hero_right, text="\u6298\u53e0 / \u5c55\u5f00\u5de6\u680f", command=self._toggle_left_panel).pack(anchor="e", pady=(10, 0), fill="x")
         ttk.Button(hero_right, text="运行启动自检", command=self._run_self_check).pack(anchor="e", pady=(8, 0), fill="x")
+        ttk.Button(hero_right, text="专家模型管理", command=self._show_expert_window).pack(anchor="e", pady=(8, 0), fill="x")
         ttk.Button(hero_right, text="知识库管理", command=self._show_knowledge_base_window).pack(anchor="e", pady=(8, 0), fill="x")
+        ttk.Button(hero_right, text="云模型配置", command=self._show_cloud_backend_window).pack(anchor="e", pady=(8, 0), fill="x")
         ttk.Button(hero_right, text="软件说明", command=self._show_manual_window).pack(anchor="e", pady=(8, 0), fill="x")
         ttk.Button(hero_right, text="关于 / 版权", command=self._show_about_and_copyright).pack(anchor="e", pady=(8, 0), fill="x")
 
@@ -1051,6 +1060,8 @@ class DesktopApp:
         photo = ImageTk.PhotoImage(image)
         card["image_label"].configure(image=photo, width=self.stream_preview_width, height=self.stream_preview_height)
         self.photo_refs[stream_id] = photo
+        if self.stream_viewer_stream_id == stream_id:
+            self._refresh_stream_viewer(stream_id, source)
 
     def _refresh_cached_stream_images(self) -> None:
         for stream_id, card in self.stream_cards.items():
@@ -1085,6 +1096,8 @@ class DesktopApp:
                 child.destroy()
             self.stream_cards.clear()
             self.stream_frame_cache.clear()
+            self.stream_state_cache.clear()
+            self._close_stream_viewer()
             placeholder = ttk.Label(self.wall_inner, text="尚未启动监控。配置完成后点击“启动监控”。", style="Body.TLabel")
             placeholder.grid(row=0, column=0, padx=12, pady=18, sticky="w")
             return
@@ -1095,6 +1108,7 @@ class DesktopApp:
             self.stream_cards.clear()
 
         self._relayout_stream_cards(streams)
+        self.stream_state_cache = {stream["id"]: dict(stream) for stream in streams}
         existing_ids = set(self.stream_cards.keys())
         target_ids = {stream["id"] for stream in streams}
         for stale_id in existing_ids - target_ids:
@@ -1102,6 +1116,9 @@ class DesktopApp:
             card["frame"].destroy()
             self.photo_refs.pop(stale_id, None)
             self.stream_frame_cache.pop(stale_id, None)
+            self.stream_state_cache.pop(stale_id, None)
+            if self.stream_viewer_stream_id == stale_id:
+                self._close_stream_viewer()
 
         for idx, stream in enumerate(streams):
             card = self._ensure_stream_card(stream["id"])
@@ -1136,6 +1153,11 @@ class DesktopApp:
         self._attach_tooltip(title_label)
         self._attach_tooltip(hint_label)
         self._attach_tooltip(meta_label)
+        self._bind_stream_card(frame, stream_id)
+        self._bind_stream_card(image_label, stream_id)
+        self._bind_stream_card(title_label, stream_id)
+        self._bind_stream_card(hint_label, stream_id)
+        self._bind_stream_card(meta_label, stream_id)
 
         card = {
             "frame": frame,
@@ -1151,6 +1173,103 @@ class DesktopApp:
         }
         self.stream_cards[stream_id] = card
         return card
+
+    def _bind_stream_card(self, widget: tk.Misc, stream_id: str) -> None:
+        widget.bind("<Button-1>", lambda _event, sid=stream_id: self._open_stream_viewer(sid))
+        try:
+            widget.configure(cursor="hand2")
+        except Exception:
+            pass
+
+    def _open_stream_viewer(self, stream_id: str) -> None:
+        self.stream_viewer_stream_id = stream_id
+        if self.stream_viewer_window is not None and self.stream_viewer_window.winfo_exists():
+            self.stream_viewer_window.deiconify()
+            self.stream_viewer_window.lift()
+            self.stream_viewer_window.focus_force()
+            self._refresh_stream_viewer(stream_id)
+            return
+
+        window = tk.Toplevel(self.root)
+        window.title(f"{APP_DISPLAY_NAME} - 视频详情")
+        self._set_window_geometry(window, min(1320, int(self.window_width * 0.78)), min(900, int(self.window_height * 0.82)), 960, 640)
+        window.configure(bg="#0f1720")
+        window.transient(self.root)
+        self._apply_window_icon(window)
+        self.window_refs.append(window)
+        self.stream_viewer_window = window
+
+        def _close_window() -> None:
+            self._close_stream_viewer()
+
+        window.protocol("WM_DELETE_WINDOW", _close_window)
+
+        shell = ttk.Frame(window, style="Root.TFrame", padding=18)
+        shell.pack(fill="both", expand=True)
+        shell.columnconfigure(0, weight=1)
+        shell.rowconfigure(1, weight=1)
+
+        header = ttk.Frame(shell, style="Panel.TFrame", padding=16)
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(0, weight=1)
+        ttk.Label(header, textvariable=self.stream_viewer_title_var, style="Header.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(header, textvariable=self.stream_viewer_meta_var, style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
+
+        body = ttk.Frame(shell, style="Panel.TFrame", padding=16)
+        body.grid(row=1, column=0, sticky="nsew", pady=(16, 0))
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(0, weight=1)
+        self.stream_viewer_label = tk.Label(body, bg="#101820")
+        self.stream_viewer_label.grid(row=0, column=0, sticky="nsew")
+
+        footer = ttk.Frame(shell, style="Panel.TFrame", padding=(10, 12))
+        footer.grid(row=2, column=0, sticky="ew", pady=(16, 0))
+        footer.columnconfigure(0, weight=1)
+        ttk.Label(footer, text="点击右侧监控卡片可切换查看对象，画面将随实时流同步刷新。", style="Foot.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Button(footer, text="关闭", command=_close_window).grid(row=0, column=1, sticky="e")
+
+        self._refresh_stream_viewer(stream_id)
+
+    def _refresh_stream_viewer(self, stream_id: str, frame: Any | None = None) -> None:
+        if self.stream_viewer_window is None or not self.stream_viewer_window.winfo_exists():
+            return
+        source = frame if frame is not None else self.stream_frame_cache.get(stream_id)
+        if source is None or self.stream_viewer_label is None:
+            return
+
+        meta = self.stream_state_cache.get(stream_id, {})
+        title = str(meta.get("title") or stream_id)
+        subtitle = str(meta.get("subtitle") or "")
+        hint = str(meta.get("hint") or "")
+        address = str(meta.get("address") or "")
+        self.stream_viewer_title_var.set(title)
+        self.stream_viewer_meta_var.set(" | ".join(part for part in (address, subtitle, hint) if part))
+
+        max_width = max(self.stream_viewer_window.winfo_width() - 80, 960)
+        max_height = max(self.stream_viewer_window.winfo_height() - 220, 540)
+        src_h, src_w = source.shape[:2]
+        scale = min(max_width / max(src_w, 1), max_height / max(src_h, 1))
+        width = max(640, int(src_w * scale))
+        height = max(360, int(src_h * scale))
+        resized = cv2.resize(source, (width, height))
+        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+        photo = ImageTk.PhotoImage(Image.fromarray(rgb))
+        self.stream_viewer_label.configure(image=photo, width=width, height=height)
+        self.stream_viewer_photo = photo
+
+    def _close_stream_viewer(self) -> None:
+        window = self.stream_viewer_window
+        self.stream_viewer_window = None
+        self.stream_viewer_label = None
+        self.stream_viewer_photo = None
+        self.stream_viewer_stream_id = None
+        self.stream_viewer_title_var.set("")
+        self.stream_viewer_meta_var.set("")
+        if window is not None:
+            try:
+                window.destroy()
+            except Exception:
+                pass
 
     def _read_document(self, path: Path, fallback: str) -> str:
         try:

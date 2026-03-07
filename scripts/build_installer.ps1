@@ -7,10 +7,10 @@ param(
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $Version = (Get-Content -Path (Join-Path $ProjectRoot "VERSION") -Raw).Trim()
-$ReleaseRoot = Join-Path $ProjectRoot "release\LabDetector\pc"
+$ReleaseRoot = Join-Path $ProjectRoot "pc"
 $DesktopExe = Join-Path $ReleaseRoot "LabDetector.exe"
 $InstallerScript = Join-Path $ProjectRoot "installer\LabDetector.iss"
-$InstallerOutput = Join-Path $ProjectRoot ("release\LabDetector-Setup-v$Version.exe")
+$InstallerOutput = Join-Path $ProjectRoot ("LabDetector-Setup-v$Version.exe")
 
 if (!(Test-Path $InstallerScript)) {
   throw "Installer script not found: $InstallerScript"
@@ -24,7 +24,7 @@ if (!(Test-Path $DesktopExe)) {
 }
 
 if (!(Test-Path $ReleaseRoot)) {
-  throw "Release directory not found: $ReleaseRoot"
+  throw "Desktop directory not found: $ReleaseRoot"
 }
 
 if ([string]::IsNullOrWhiteSpace($InnoCompilerPath)) {
@@ -42,6 +42,10 @@ if ([string]::IsNullOrWhiteSpace($InnoCompilerPath)) {
 
 if ([string]::IsNullOrWhiteSpace($InnoCompilerPath) -or !(Test-Path $InnoCompilerPath)) {
   throw "ISCC.exe not found. Install Inno Setup 6.x first or pass -InnoCompilerPath. Download: https://jrsoftware.org/isdl.php"
+}
+
+if (Test-Path $InstallerOutput) {
+  Remove-Item -Force $InstallerOutput
 }
 
 Push-Location $ProjectRoot

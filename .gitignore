@@ -11,6 +11,8 @@ pc/log/
 # Knowledge base runtime artifacts
 pc/knowledge_base/faiss_index/
 pc/knowledge_base/docs/*.txt
+pc/knowledge_base/scopes/
+pc/knowledge_base/structured_kb.sqlite3
 
 # Local models and large assets
 models/
@@ -29,8 +31,14 @@ build/
 dist/
 .pyi_work/
 .pyi_dist/
+.bundle_stage/
 tmp/
 release/
+pc/APP/
+pc/LabDetector.exe
+pi/APP/
+LabDetector-Setup-v*.exe
+LabDetector-v*.zip
 
 # Generated caches
 scripts/__pycache__/

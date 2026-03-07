@@ -7,12 +7,14 @@ $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $Version = (Get-Content -Path (Join-Path $ProjectRoot 'VERSION') -Raw).Trim()
 $WorkRoot = Join-Path $ProjectRoot '.pyi_work'
 $DistRoot = Join-Path $ProjectRoot '.pyi_dist'
-$ReleaseRoot = Join-Path $ProjectRoot 'release\LabDetector'
-$PcReleaseRoot = Join-Path $ReleaseRoot 'pc'
-$PiReleaseRoot = Join-Path $ReleaseRoot 'pi'
-$PcAppRoot = Join-Path $PcReleaseRoot 'APP'
-$PiAppRoot = Join-Path $PiReleaseRoot 'APP'
-$ZipPath = Join-Path $ProjectRoot ("release\LabDetector-v$Version.zip")
+$BundleStageRoot = Join-Path $ProjectRoot '.bundle_stage'
+$BundleRoot = Join-Path $BundleStageRoot 'LabDetector'
+$PcRoot = Join-Path $ProjectRoot 'pc'
+$PiRoot = Join-Path $ProjectRoot 'pi'
+$PcExePath = Join-Path $PcRoot 'LabDetector.exe'
+$PcAppRoot = Join-Path $PcRoot 'APP'
+$PiAppRoot = Join-Path $PiRoot 'APP'
+$ZipPath = Join-Path $ProjectRoot ("LabDetector-v$Version.zip")
 $StageFolder = Join-Path $DistRoot 'LabDetector'
 
 if (!(Test-Path $PythonExe)) {
@@ -27,6 +29,7 @@ if ($LASTEXITCODE -ne 0) {
 if ($LASTEXITCODE -ne 0) {
   throw "Version resource generation failed."
 }
+
 $ConfigBootstrap = @"
 import sys
 sys.path.insert(0, r'$ProjectRoot')
@@ -38,12 +41,13 @@ PiConfig.init()
 if ($LASTEXITCODE -ne 0) {
   throw "Default config bootstrap failed."
 }
+
 & $PythonExe -m pip show pyinstaller | Out-Null
 if ($LASTEXITCODE -ne 0) {
   & $PythonExe -m pip install pyinstaller
 }
 
-foreach ($path in @($WorkRoot, $DistRoot)) {
+foreach ($path in @($WorkRoot, $DistRoot, $BundleStageRoot)) {
   if (Test-Path $path) {
     Remove-Item -Recurse -Force $path
   }
@@ -65,15 +69,15 @@ if (!(Test-Path $StageFolder)) {
   throw "Build output not found: $StageFolder"
 }
 
-if (Test-Path $ReleaseRoot) {
-  Remove-Item -Recurse -Force $ReleaseRoot
+foreach ($artifact in @($PcExePath, $PcAppRoot, $PiAppRoot, $BundleRoot, $ZipPath)) {
+  if (Test-Path $artifact) {
+    Remove-Item -Recurse -Force $artifact
+  }
 }
-New-Item -ItemType Directory -Force -Path $PcReleaseRoot | Out-Null
-New-Item -ItemType Directory -Force -Path $PiReleaseRoot | Out-Null
 
-Copy-Item -Path $StageFolder\* -Destination $PcReleaseRoot -Recurse -Force
+Copy-Item -Path (Join-Path $StageFolder 'LabDetector.exe') -Destination $PcExePath -Force
+Copy-Item -Path (Join-Path $StageFolder 'APP') -Destination $PcAppRoot -Recurse -Force
 
-$PiSourceRoot = Join-Path $ProjectRoot 'pi'
 $PiItems = @(
   'config.ini',
   'config.py',
@@ -86,39 +90,42 @@ $PiItems = @(
 )
 New-Item -ItemType Directory -Force -Path $PiAppRoot | Out-Null
 foreach ($item in $PiItems) {
-  $source = Join-Path $PiSourceRoot $item
+  $source = Join-Path $PiRoot $item
   if (Test-Path $source) {
     Copy-Item -Path $source -Destination (Join-Path $PiAppRoot $item) -Recurse -Force
   }
 }
 Copy-Item -Path (Join-Path $ProjectRoot 'VERSION') -Destination (Join-Path $PiAppRoot 'VERSION') -Force
 
-$PiLauncher = @'
-#!/usr/bin/env bash
-set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec python3 "$SCRIPT_DIR/APP/pi_cli.py" "$@"
-'@
-Set-Content -Path (Join-Path $PiReleaseRoot 'start_pi_node.sh') -Value $PiLauncher -Encoding UTF8
+Get-ChildItem -Path $PiAppRoot -Directory -Recurse -Force -Filter '__pycache__' | Remove-Item -Recurse -Force
+Get-ChildItem -Path $PiAppRoot -Recurse -Force -Include *.pyc,*.pyo | Remove-Item -Force
 
-Get-ChildItem -Path $PiReleaseRoot -Directory -Recurse -Force -Filter '__pycache__' | Remove-Item -Recurse -Force
-Get-ChildItem -Path $PiReleaseRoot -Recurse -Force -Include *.pyc,*.pyo | Remove-Item -Force
+$BundlePcRoot = Join-Path $BundleRoot 'pc'
+$BundlePiRoot = Join-Path $BundleRoot 'pi'
+New-Item -ItemType Directory -Force -Path $BundlePcRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $BundlePiRoot | Out-Null
+Copy-Item -Path $PcExePath -Destination (Join-Path $BundlePcRoot 'LabDetector.exe') -Force
+Copy-Item -Path $PcAppRoot -Destination (Join-Path $BundlePcRoot 'APP') -Recurse -Force
+Copy-Item -Path (Join-Path $PiRoot 'start_pi_node.sh') -Destination (Join-Path $BundlePiRoot 'start_pi_node.sh') -Force
+Copy-Item -Path $PiAppRoot -Destination (Join-Path $BundlePiRoot 'APP') -Recurse -Force
 
-if (Test-Path $ZipPath) {
-  Remove-Item -Force $ZipPath
-}
 Add-Type -AssemblyName System.IO.Compression.FileSystem
-[System.IO.Compression.ZipFile]::CreateFromDirectory($ReleaseRoot, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $true)
+[System.IO.Compression.ZipFile]::CreateFromDirectory($BundleRoot, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $true)
 
 if (Test-Path $PcAppRoot) {
   attrib +h +s $PcAppRoot | Out-Null
+}
+if (Test-Path $PiAppRoot) {
+  attrib +h +s $PiAppRoot | Out-Null
 }
 
 foreach ($artifact in @(
   $WorkRoot,
   $DistRoot,
+  $BundleStageRoot,
   (Join-Path $ProjectRoot 'build'),
-  (Join-Path $ProjectRoot 'dist')
+  (Join-Path $ProjectRoot 'dist'),
+  (Join-Path $ProjectRoot 'release')
 )) {
   if (Test-Path $artifact) {
     Remove-Item -Recurse -Force $artifact
@@ -126,13 +133,13 @@ foreach ($artifact in @(
 }
 
 Write-Host ''
-Write-Host 'PC release:' -ForegroundColor Green
-Write-Host $PcReleaseRoot -ForegroundColor Green
 Write-Host 'PC executable:' -ForegroundColor Green
-Write-Host (Join-Path $PcReleaseRoot 'LabDetector.exe') -ForegroundColor Green
-Write-Host 'PI release:' -ForegroundColor Green
-Write-Host $PiReleaseRoot -ForegroundColor Green
+Write-Host $PcExePath -ForegroundColor Green
+Write-Host 'PC runtime:' -ForegroundColor Green
+Write-Host $PcAppRoot -ForegroundColor Green
 Write-Host 'PI launcher:' -ForegroundColor Green
-Write-Host (Join-Path $PiReleaseRoot 'start_pi_node.sh') -ForegroundColor Green
+Write-Host (Join-Path $PiRoot 'start_pi_node.sh') -ForegroundColor Green
+Write-Host 'PI runtime:' -ForegroundColor Green
+Write-Host $PiAppRoot -ForegroundColor Green
 Write-Host 'Zip package:' -ForegroundColor Green
 Write-Host $ZipPath -ForegroundColor Green
