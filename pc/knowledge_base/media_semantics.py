@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import contextlib
 import wave
@@ -20,7 +20,7 @@ def describe_image(path: str | Path) -> Dict[str, str]:
     source = Path(path)
     summary = {
         "media_type": "image",
-        "semantic_summary": f"???? {source.name}",
+        "semantic_summary": f"图片资料 {source.name}",
         "keywords": "image,knowledge",
     }
     try:
@@ -31,7 +31,7 @@ def describe_image(path: str | Path) -> Dict[str, str]:
                     "width": str(width),
                     "height": str(height),
                     "mode": str(image.mode),
-                    "semantic_summary": f"???? {source.name}???? {width}x{height}????????????????",
+                    "semantic_summary": f"图片资料 {source.name}，尺寸 {width}x{height}，可作为实验场景、器具外观或流程截图素材。",
                     "keywords": f"image,{image.mode.lower()},visual",
                 }
             )
@@ -44,7 +44,7 @@ def describe_audio(path: str | Path) -> Dict[str, str]:
     source = Path(path)
     summary = {
         "media_type": "audio",
-        "semantic_summary": f"???? {source.name}",
+        "semantic_summary": f"音频资料 {source.name}",
         "keywords": "audio,voice,knowledge",
     }
     with contextlib.suppress(Exception):
@@ -57,7 +57,7 @@ def describe_audio(path: str | Path) -> Dict[str, str]:
                     "channels": str(handle.getnchannels()),
                     "sample_rate": str(rate),
                     "duration_seconds": _safe_float(duration),
-                    "semantic_summary": f"???? {source.name}???? {duration:.1f} ??????????????????????",
+                    "semantic_summary": f"音频资料 {source.name}，时长 {duration:.1f} 秒，可作为语音问答、播报或实验语音样本。",
                     "keywords": "audio,voice,speech,knowledge",
                 }
             )
@@ -68,7 +68,7 @@ def describe_video(path: str | Path) -> Dict[str, str]:
     source = Path(path)
     summary = {
         "media_type": "video",
-        "semantic_summary": f"???? {source.name}",
+        "semantic_summary": f"视频资料 {source.name}",
         "keywords": "video,frame,knowledge",
     }
     cap = cv2.VideoCapture(str(source))
@@ -86,7 +86,7 @@ def describe_video(path: str | Path) -> Dict[str, str]:
                     "width": str(width),
                     "height": str(height),
                     "duration_seconds": _safe_float(duration),
-                    "semantic_summary": f"???? {source.name}???? {width}x{height}?? {duration:.1f} ???????????????????????",
+                    "semantic_summary": f"视频资料 {source.name}，分辨率 {width}x{height}，时长 {duration:.1f} 秒，可用于流程复盘、关键帧抽取和行为分析。",
                     "keywords": "video,frame,timeline,procedure,knowledge",
                 }
             )
@@ -106,6 +106,6 @@ def describe_media(path: str | Path) -> Dict[str, str]:
         return describe_video(source)
     return {
         "media_type": "file",
-        "semantic_summary": f"???? {source.name}",
+        "semantic_summary": f"通用资料 {source.name}",
         "keywords": "file,knowledge",
     }

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import threading
@@ -94,19 +94,19 @@ class VoiceRoundArchive:
     @staticmethod
     def _write_session_markdown(path: Path, payload: Dict[str, Any]) -> None:
         lines = [
-            f"# ???? {payload.get('session_id', '')}",
+            f"# 语音会话 {payload.get('session_id', '')}",
             "",
-            f"- ??: {payload.get('mode', '')}",
-            f"- ??: {payload.get('source', '')}",
-            f"- ????: {payload.get('project_name', '')}",
-            f"- ????: {payload.get('experiment_name', '')}",
-            f"- ????: {payload.get('operator_name', '')}",
-            f"- ??: {', '.join(payload.get('tags') or [])}",
-            f"- AI ??: {payload.get('backend', '')}",
-            f"- ??: {payload.get('model', '')}",
-            f"- ????: {payload.get('opened_at', '')}",
-            f"- ????: {payload.get('closed_at', '')}",
-            f"- ???: {payload.get('round_count', '')}",
+            f"- 模式: {payload.get('mode', '')}",
+            f"- 来源: {payload.get('source', '')}",
+            f"- 实验项目: {payload.get('project_name', '')}",
+            f"- 实验名称: {payload.get('experiment_name', '')}",
+            f"- 实验人员: {payload.get('operator_name', '')}",
+            f"- 标签: {', '.join(payload.get('tags') or [])}",
+            f"- AI 后端: {payload.get('backend', '')}",
+            f"- 模型: {payload.get('model', '')}",
+            f"- 开始时间: {payload.get('opened_at', '')}",
+            f"- 结束时间: {payload.get('closed_at', '')}",
+            f"- 轮次数: {payload.get('round_count', '')}",
             "",
         ]
         path.write_text("\n".join(lines), encoding="utf-8")
@@ -114,21 +114,21 @@ class VoiceRoundArchive:
     @staticmethod
     def _write_markdown(path: Path, payload: Dict[str, Any]) -> None:
         lines = [
-            f"# ???? {int(payload.get('round_index', 0)):03d}",
+            f"# 语音轮次 {int(payload.get('round_index', 0)):03d}",
             "",
-            f"- ??: {payload.get('timestamp', '')}",
-            f"- ??: {payload.get('source', '')}",
-            f"- ????: {payload.get('mode', '')}",
-            f"- ??: {payload.get('node_id', '')}",
-            f"- ????: {payload.get('project_name', '')}",
-            f"- ????: {payload.get('experiment_name', '')}",
-            f"- ????: {payload.get('operator_name', '')}",
-            f"- ??: {', '.join(payload.get('tags') or [])}",
+            f"- 时间: {payload.get('timestamp', '')}",
+            f"- 来源: {payload.get('source', '')}",
+            f"- 运行模式: {payload.get('mode', '')}",
+            f"- 节点: {payload.get('node_id', '')}",
+            f"- 实验项目: {payload.get('project_name', '')}",
+            f"- 实验名称: {payload.get('experiment_name', '')}",
+            f"- 实验人员: {payload.get('operator_name', '')}",
+            f"- 标签: {', '.join(payload.get('tags') or [])}",
             "",
-            "## ????",
+            "## 用户提问",
             str(payload.get("prompt", "")).strip(),
             "",
-            "## ????",
+            "## 模型回答",
             str(payload.get("response", "")).strip(),
             "",
         ]
@@ -138,16 +138,16 @@ class VoiceRoundArchive:
     def _append_transcript(path: Path, payload: Dict[str, Any]) -> None:
         lines = [
             f"## Round {int(payload.get('round_index', 0)):03d}",
-            f"- ??: {payload.get('timestamp', '')}",
-            f"- ??: {payload.get('source', '')}",
-            f"- ??: {payload.get('project_name', '')}",
-            f"- ??: {payload.get('experiment_name', '')}",
-            f"- ??: {payload.get('operator_name', '')}",
+            f"- 时间: {payload.get('timestamp', '')}",
+            f"- 来源: {payload.get('source', '')}",
+            f"- 项目: {payload.get('project_name', '')}",
+            f"- 实验: {payload.get('experiment_name', '')}",
+            f"- 人员: {payload.get('operator_name', '')}",
             "",
-            "???",
+            "用户提问",
             str(payload.get("prompt", "")).strip(),
             "",
-            "???",
+            "模型回答",
             str(payload.get("response", "")).strip(),
             "",
         ]

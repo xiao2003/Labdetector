@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """pc/core/config.py - core configuration manager."""
 
@@ -52,7 +52,7 @@ _DEFAULT_CONFIG = {
         "base_url": "",
     },
     "voice_interaction": {
-        "wake_word": "????",
+        "wake_word": "小爱同学",
         "wake_timeout": "10.0",
         "wake_threshold": "0.01",
         "energy_threshold": "300",
@@ -78,10 +78,10 @@ _DEFAULT_CONFIG = {
         "demo_mode": "False",
     },
     "session_defaults": {
-        "project_name": "AI4S ???????",
-        "experiment_name": "??????",
+        "project_name": "AI4S 实验室智能监控",
+        "experiment_name": "实验监控任务",
         "operator_name": "",
-        "tags": "??,??,???",
+        "tags": "实验室,监控,AI4S",
     },
     "training": {
         "workspace_name": "labdetector_training",

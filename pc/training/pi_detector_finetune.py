@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import shutil
 from pathlib import Path
@@ -18,11 +18,18 @@ def run_pi_detector_finetune(
     try:
         from ultralytics import YOLO
     except Exception as exc:
-        raise RuntimeError(f"Pi ???????????: {exc}") from exc
+        raise RuntimeError(f"未安装 Pi 检测模型训练所需依赖: {exc}") from exc
+
+    if not str(base_weights or "").strip():
+        raise RuntimeError("请先配置 Pi 检测模型底座权重。")
+
+    yaml_path = Path(dataset_yaml)
+    if not yaml_path.exists():
+        raise FileNotFoundError(f"Pi 检测训练数据不存在: {yaml_path}")
 
     model = YOLO(base_weights)
     results = model.train(
-        data=dataset_yaml,
+        data=str(yaml_path),
         epochs=max(1, int(epochs)),
         imgsz=max(320, int(imgsz)),
         project=output_dir,

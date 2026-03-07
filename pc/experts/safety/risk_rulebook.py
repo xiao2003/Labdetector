@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -15,7 +15,7 @@ class RiskRuleBook:
     def _load_rules(self) -> Dict[str, Any]:
         if not self.rule_path.exists():
             return {"rules": [], "thresholds": {"high": 60, "medium": 30}}
-        return json.loads(self.rule_path.read_text(encoding="utf-8"))
+        return json.loads(self.rule_path.read_text(encoding="utf-8-sig"))
 
     def evaluate(self, semantics: Dict[str, Any]) -> Dict[str, Any]:
         score = 0
@@ -57,3 +57,4 @@ class RiskRuleBook:
 
 
 risk_rulebook = RiskRuleBook()
+

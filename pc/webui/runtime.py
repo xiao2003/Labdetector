@@ -219,7 +219,7 @@ class DashboardMultiPiManager:
                                                         "event_name": event.event_name,
                                                         "result_text": tts_text,
                                                     },
-                                                    title=f"???? {event.event_name}",
+                                                    title=f"专家结论 {event.event_name}",
                                                 )
                                             except Exception:
                                                 pass
@@ -424,10 +424,10 @@ class LabDetectorRuntime:
                     "selected_model": self.selected_model,
                     "mode": "camera",
                     "expected_nodes": 1,
-                    "project_name": str(get_config("session_defaults.project_name", "AI4S ???????")),
-                    "experiment_name": str(get_config("session_defaults.experiment_name", "??????")),
+                    "project_name": str(get_config("session_defaults.project_name", "AI4S 实验室智能监控")),
+                    "experiment_name": str(get_config("session_defaults.experiment_name", "实验监控任务")),
                     "operator_name": str(get_config("session_defaults.operator_name", "")),
-                    "tags": str(get_config("session_defaults.tags", "??,??,???")),
+                    "tags": str(get_config("session_defaults.tags", "实验室,监控,AI4S")),
                 },
             },
             "knowledge_bases": self.get_knowledge_base_catalog(),
@@ -692,20 +692,38 @@ class LabDetectorRuntime:
         return training_manager.overview()
 
     def build_training_workspace(self, workspace_name: str = "") -> Dict[str, Any]:
-        summary = training_manager.build_training_workspace(workspace_name=workspace_name or str(get_config("training.workspace_name", "labdetector_training")))
-        self._log_info(f"????????: {summary['workspace_dir']}")
+        summary = training_manager.build_training_workspace(
+            workspace_name=workspace_name or str(get_config("training.workspace_name", "labdetector_training"))
+        )
+        self._log_info(f"训练工作区已生成: {summary['workspace_dir']}")
+        return summary
+
+    def import_llm_training_data(self, paths: List[str]) -> Dict[str, Any]:
+        summary = training_manager.import_llm_dataset(paths)
+        self._log_info(
+            f"LLM 训练数据导入完成: 新增 {summary['sample_count']} 条，总计 {summary['total_sample_count']} 条"
+        )
+        return summary
+
+    def import_pi_training_data(self, paths: List[str]) -> Dict[str, Any]:
+        summary = training_manager.import_pi_dataset(paths)
+        self._log_info(f"Pi 训练数据导入完成: 样本 {summary['sample_count']}，配置 {summary['dataset_yaml']}")
         return summary
 
     def start_llm_finetune(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         job = training_manager.start_llm_job(payload)
-        self._log_info(f"??????????: {job['job_id']}")
+        self._log_info(f"LLM 微调任务已启动: {job['job_id']}")
         return job
 
     def start_pi_detector_finetune(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         job = training_manager.start_pi_job(payload)
-        self._log_info(f"??? Pi ????????: {job['job_id']}")
+        self._log_info(f"Pi 检测模型微调任务已启动: {job['job_id']}")
         return job
 
+    def start_full_training_pipeline(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        job = training_manager.start_full_pipeline_job(payload)
+        self._log_info(f"一键全流程训练任务已启动: {job['job_id']}")
+        return job
     @staticmethod
     def _parse_session_tags(raw: Any) -> List[str]:
         if isinstance(raw, list):
@@ -803,10 +821,10 @@ class LabDetectorRuntime:
             self.mode = str(payload.get("mode") or "camera")
             self.expected_nodes = max(1, int(payload.get("expected_nodes") or 1))
             self.session_metadata = {
-                "project_name": str(payload.get("project_name") or get_config("session_defaults.project_name", "AI4S ???????")).strip(),
-                "experiment_name": str(payload.get("experiment_name") or get_config("session_defaults.experiment_name", "??????")).strip(),
+                "project_name": str(payload.get("project_name") or get_config("session_defaults.project_name", "AI4S 实验室智能监控")).strip(),
+                "experiment_name": str(payload.get("experiment_name") or get_config("session_defaults.experiment_name", "实验监控任务")).strip(),
                 "operator_name": str(payload.get("operator_name") or get_config("session_defaults.operator_name", "")).strip(),
-                "tags": self._parse_session_tags(payload.get("tags") or get_config("session_defaults.tags", "??,??,???")),
+                "tags": self._parse_session_tags(payload.get("tags") or get_config("session_defaults.tags", "实验室,监控,AI4S")),
             }
             set_config("session_defaults.project_name", self.session_metadata["project_name"])
             set_config("session_defaults.experiment_name", self.session_metadata["experiment_name"])
@@ -814,7 +832,7 @@ class LabDetectorRuntime:
             set_config("session_defaults.tags", ",".join(self.session_metadata["tags"]))
             self.session_active = True
             self.session_phase = "starting"
-            self.status_message = "?????????"
+            self.status_message = "正在启动监控会话"
             self.started_at = time.time()
             self.stop_event = threading.Event()
             self.latest_inference_result = {"text": "", "timestamp": 0.0}
@@ -832,23 +850,23 @@ class LabDetectorRuntime:
 
                 if self.mode == "camera":
                     self._start_camera_session_locked()
-                    self.status_message = "??????????"
+                    self.status_message = "本机摄像头模式运行中"
                 else:
                     self._start_websocket_session_locked()
-                    self.status_message = f"?????????????? {self.expected_nodes}"
+                    self.status_message = f"树莓派集群模式运行中，预计节点数 {self.expected_nodes}"
 
                 if self.demo_mode_enabled:
                     self._start_shadow_demo_locked()
-                    self.status_message = f"??????????{self.status_message}"
+                    self.status_message = f"隐藏演示模式已接管，{self.status_message}"
 
                 self.session_phase = "running"
                 self._record_archive_event(
                     "session_start",
                     {"status_message": self.status_message, "expected_nodes": self.expected_nodes},
-                    title="????",
+                    title="会话启动",
                 )
                 self._log_info(
-                    f"???????: backend={self.ai_backend}, model={self.selected_model}, mode={self.mode}"
+                    f"监控会话已启动: backend={self.ai_backend}, model={self.selected_model}, mode={self.mode}"
                 )
             except Exception:
                 self._close_archive_session()
@@ -1078,8 +1096,8 @@ class LabDetectorRuntime:
                 result = expert_manager.route_and_analyze("Motion_Alert", frame, {})
                 if result:
                     self.latest_inference_result = {"text": result, "timestamp": time.time()}
-                    self._record_archive_event("local_inference", {"event_name": "Motion_Alert", "result_text": result}, title="??????", frame=frame)
-                    self._log_info(f"??????: {result}")
+                    self._record_archive_event("local_inference", {"event_name": "Motion_Alert", "result_text": result}, title="会话启动", frame=frame)
+                    self._log_info(f"本机推理结果: {result}")
                     if not (self.voice_agent and getattr(self.voice_agent, "is_active", False)):
                         try:
                             from pc.core.tts import speak_async
@@ -1311,4 +1329,5 @@ class LabDetectorRuntime:
         exported = self.export_logs()
         if exported:
             self._log_info(f"可视化运行时日志已导出: {exported}")
+
 

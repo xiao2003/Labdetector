@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """HTTP server for the LabDetector web console."""
 
@@ -147,6 +147,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc)}, status=400)
             return
+        if parsed.path == "/api/training/import-llm":
+            try:
+                summary = self.runtime.import_llm_training_data(self._paths_field(body.get("paths")))
+                self._send_json({"ok": True, "summary": summary, "training": self.runtime.get_training_overview()})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
+            return
+        if parsed.path == "/api/training/import-pi":
+            try:
+                summary = self.runtime.import_pi_training_data(self._paths_field(body.get("paths")))
+                self._send_json({"ok": True, "summary": summary, "training": self.runtime.get_training_overview()})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
+            return
         if parsed.path == "/api/training/llm":
             try:
                 job = self.runtime.start_llm_finetune(body)
@@ -157,6 +171,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/training/pi":
             try:
                 job = self.runtime.start_pi_detector_finetune(body)
+                self._send_json({"ok": True, "job": job, "training": self.runtime.get_training_overview()})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
+            return
+        if parsed.path == "/api/training/run-all":
+            try:
+                job = self.runtime.start_full_training_pipeline(body)
                 self._send_json({"ok": True, "job": job, "training": self.runtime.get_training_overview()})
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc)}, status=400)
@@ -227,7 +248,7 @@ def serve_dashboard(host: str = "127.0.0.1", port: int = 8765, open_browser: boo
     runtime.set_server_meta(host, port)
     server = DashboardServer(host, port, runtime)
     url = f"http://{host}:{port}"
-    runtime._log_info(f"LabDetector Web ??????: {url}")
+    runtime._log_info(f"LabDetector Web 控制台已启动: {url}")
 
     if open_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
@@ -239,3 +260,4 @@ def serve_dashboard(host: str = "127.0.0.1", port: int = 8765, open_browser: boo
     finally:
         server.server_close()
         runtime.shutdown()
+

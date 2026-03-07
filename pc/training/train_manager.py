@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import threading
 import time
@@ -8,6 +8,7 @@ from typing import Any, Dict
 
 from pc.core.config import get_config
 from pc.training.dataset_builder import dataset_builder
+from pc.training.dataset_importer import dataset_importer
 from pc.training.llm_finetune import run_llm_finetune
 from pc.training.pi_detector_finetune import run_pi_detector_finetune
 
@@ -24,15 +25,22 @@ class TrainingManager:
             "jobs": jobs,
             "job_count": len(jobs),
             "latest_workspace": self._latest_workspace(),
+            "assets": dataset_importer.asset_summary(),
         }
 
     def build_training_workspace(self, workspace_name: str = "") -> Dict[str, Any]:
         return dataset_builder.build_training_workspace(workspace_name=workspace_name)
 
+    def import_llm_dataset(self, paths: list[str]) -> Dict[str, Any]:
+        return dataset_importer.import_llm_dataset(paths)
+
+    def import_pi_dataset(self, paths: list[str]) -> Dict[str, Any]:
+        return dataset_importer.import_pi_dataset(paths)
+
     def start_llm_job(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         workspace_dir = Path(str(payload.get("workspace_dir") or "")).expanduser()
         if not workspace_dir.exists():
-            raise FileNotFoundError(f"????????: {workspace_dir}")
+            raise FileNotFoundError(f"训练工作区不存在: {workspace_dir}")
         output_dir = workspace_dir / "outputs" / "llm_adapter"
         output_dir.mkdir(parents=True, exist_ok=True)
         return self._start_job(
@@ -54,7 +62,7 @@ class TrainingManager:
     def start_pi_job(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         workspace_dir = Path(str(payload.get("workspace_dir") or "")).expanduser()
         if not workspace_dir.exists():
-            raise FileNotFoundError(f"????????: {workspace_dir}")
+            raise FileNotFoundError(f"训练工作区不存在: {workspace_dir}")
         dataset_yaml = Path(str(payload.get("dataset_yaml") or workspace_dir / "pi_detector" / "dataset.yaml"))
         output_dir = workspace_dir / "outputs" / "pi_detector"
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -70,6 +78,37 @@ class TrainingManager:
                 device=str(payload.get("device") or get_config("training.pi_device", "")),
                 deploy_to_pi=bool(payload.get("deploy_to_pi", True)),
             ),
+        )
+
+    def start_full_pipeline_job(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        workspace_dir = Path(str(payload.get("workspace_dir") or "")).expanduser()
+        if not workspace_dir.exists():
+            raise FileNotFoundError(f"训练工作区不存在: {workspace_dir}")
+        return self._start_job(
+            kind="full_training_pipeline",
+            payload=dict(payload),
+            runner=lambda: {
+                "llm": run_llm_finetune(
+                    train_path=str(payload.get("train_path") or workspace_dir / "llm_sft" / "train.jsonl"),
+                    eval_path=str(payload.get("eval_path") or workspace_dir / "llm_sft" / "eval.jsonl"),
+                    output_dir=str(workspace_dir / "outputs" / "llm_adapter"),
+                    base_model=str(payload.get("base_model") or get_config("training.llm_base_model", "")),
+                    epochs=int(payload.get("llm_epochs") or get_config("training.llm_epochs", 1)),
+                    batch_size=int(payload.get("llm_batch_size") or get_config("training.llm_batch_size", 1)),
+                    learning_rate=float(payload.get("llm_learning_rate") or get_config("training.llm_learning_rate", 2e-4)),
+                    lora_r=int(payload.get("llm_lora_r") or get_config("training.llm_lora_r", 8)),
+                    lora_alpha=int(payload.get("llm_lora_alpha") or get_config("training.llm_lora_alpha", 16)),
+                ),
+                "pi": run_pi_detector_finetune(
+                    dataset_yaml=str(payload.get("dataset_yaml") or workspace_dir / "pi_detector" / "dataset.yaml"),
+                    output_dir=str(workspace_dir / "outputs" / "pi_detector"),
+                    base_weights=str(payload.get("base_weights") or get_config("training.pi_base_weights", "yolov8n.pt")),
+                    epochs=int(payload.get("pi_epochs") or get_config("training.pi_epochs", 20)),
+                    imgsz=int(payload.get("pi_imgsz") or get_config("training.pi_imgsz", 640)),
+                    device=str(payload.get("pi_device") or get_config("training.pi_device", "")),
+                    deploy_to_pi=bool(payload.get("deploy_to_pi", True)),
+                ),
+            },
         )
 
     def _start_job(self, *, kind: str, payload: Dict[str, Any], runner) -> Dict[str, Any]:

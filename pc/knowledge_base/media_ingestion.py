@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import shutil
@@ -38,26 +38,26 @@ def _safe_copy(source: Path, target_dir: Path) -> Path:
 
 def _build_media_markdown(source: Path, scope_title: str, metadata: Dict[str, str]) -> str:
     lines = [
-        f"# {scope_title} ??????",
+        f"# {scope_title} 媒体资料",
         "",
-        f"- ???: {source.name}",
-        f"- ??: {metadata.get('media_type', 'file')}",
-        f"- ????: {metadata.get('semantic_summary', '')}",
-        f"- ???: {metadata.get('keywords', '')}",
+        f"- 文件名: {source.name}",
+        f"- 类型: {metadata.get('media_type', 'file')}",
+        f"- 语义摘要: {metadata.get('semantic_summary', '')}",
+        f"- 关键词: {metadata.get('keywords', '')}",
         "",
-        "## ??????",
+        "## 元数据",
         "",
     ]
     for key, value in metadata.items():
         lines.append(f"- {key}: {value}")
-    lines.extend(["", "## ????", "", "?????????? OCR?ASR?????????????????????", ""])
+    lines.extend(["", "## 后续建议", "", "后续可在此基础上继续补充 OCR、ASR、关键帧摘要和结构化知识抽取结果。", ""])
     return "\n".join(lines)
 
 
 def prepare_knowledge_asset(source_path: str, docs_dir: Path, scope_title: str) -> PreparedKnowledgeAsset:
     source = Path(source_path).expanduser().resolve()
     if not source.exists():
-        raise FileNotFoundError(f"???????: {source}")
+        raise FileNotFoundError(f"知识资料不存在: {source}")
 
     asset_root = docs_dir / "assets"
     asset_path = _safe_copy(source, asset_root)

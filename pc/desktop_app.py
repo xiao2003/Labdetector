@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Desktop visualization app for LabDetector."""
 
@@ -86,6 +86,16 @@ class DesktopApp:
         self.cloud_backend_catalog: List[Dict[str, Any]] = []
         self.archive_catalog: List[Dict[str, Any]] = []
         self.training_overview: Dict[str, Any] = {}
+        self.archive_window: tk.Toplevel | None = None
+        self.archive_tree: ttk.Treeview | None = None
+        self.archive_detail_text: tk.Text | None = None
+        self.archive_status_var = tk.StringVar(value="等待加载实验档案")
+        self.training_window: tk.Toplevel | None = None
+        self.training_detail_text: tk.Text | None = None
+        self.training_workspace_entry: ttk.Entry | None = None
+        self.training_base_model_entry: ttk.Entry | None = None
+        self.training_pi_weights_entry: ttk.Entry | None = None
+        self.training_status_var = tk.StringVar(value="等待导入训练数据")
         self.cloud_window: tk.Toplevel | None = None
         self.cloud_provider_combo: ttk.Combobox | None = None
         self.cloud_provider_map: Dict[str, str] = {}
@@ -1828,10 +1838,12 @@ class DesktopApp:
             activeforeground="#0f1720",
         )
         software_menu.add_command(label="运行启动自检", command=self._run_self_check)
-        software_menu.add_command(label="刷新模型清单", command=self._refresh_models)
+        software_menu.add_command(label="刷新模型目录", command=self._refresh_models)
         software_menu.add_command(label="专家模型管理", command=self._show_expert_window)
         software_menu.add_command(label="知识库管理", command=self._show_knowledge_base_window)
         software_menu.add_command(label="云模型配置", command=self._show_cloud_backend_window)
+        software_menu.add_command(label="实验档案中心", command=self._show_archive_window)
+        software_menu.add_command(label="训练工作台", command=self._show_training_window)
         software_menu.add_separator()
         software_menu.add_command(label="退出", command=self._on_close)
 
@@ -1862,7 +1874,6 @@ class DesktopApp:
         menubar.add_cascade(label="视图", menu=view_menu)
         menubar.add_cascade(label="帮助", menu=help_menu)
         self.root.configure(menu=menubar)
-
     def _load_bootstrap(self) -> None:
         payload = self.runtime.bootstrap()
         controls = payload["controls"]
@@ -2357,7 +2368,7 @@ class DesktopApp:
         self._refresh_expert_catalog()
 
     def _refresh_archive_catalog(self) -> None:
-        self.hero_var.set("????????")
+        self.hero_var.set("正在刷新实验档案")
         self._dispatch("archive_catalog", self.runtime.get_archive_catalog)
 
     def _render_archive_detail(self, row: Dict[str, Any]) -> None:
@@ -2366,29 +2377,29 @@ class DesktopApp:
         try:
             detail = self.runtime.get_archive_detail(str(row.get("session_id", "")))
         except Exception as exc:
-            body = f"??????: {exc}"
+            body = f"读取实验档案失败: {exc}"
         else:
             session = detail.get("session", {})
             events = detail.get("events", [])
             lines = [
-                f"?? ID: {session.get('session_id', '')}",
-                f"????: {session.get('project_name', '')}",
-                f"????: {session.get('experiment_name', '')}",
-                f"????: {session.get('operator_name', '')}",
-                f"??: {', '.join(session.get('tags') or [])}",
-                f"??: {session.get('mode', '')}",
-                f"????: {session.get('opened_at', '')}",
-                f"????: {session.get('closed_at', '')}",
-                f"???: {len(events)}",
+                f"会话 ID: {session.get('session_id', '')}",
+                f"实验项目: {session.get('project_name', '')}",
+                f"实验名称: {session.get('experiment_name', '')}",
+                f"实验人员: {session.get('operator_name', '')}",
+                f"标签: {', '.join(session.get('tags') or [])}",
+                f"模式: {session.get('mode', '')}",
+                f"开始时间: {session.get('opened_at', '')}",
+                f"结束时间: {session.get('closed_at', '')}",
+                f"事件数量: {len(events)}",
                 "",
-                "?????:",
+                "最近事件:",
             ]
             if events:
                 for item in events[-20:]:
                     payload = item.get("payload") or {}
                     lines.append(f"- [{item.get('timestamp', '')}] {item.get('title', item.get('event_type', ''))}: {json.dumps(payload, ensure_ascii=False)[:240]}")
             else:
-                lines.append("- ??????")
+                lines.append("- 当前会话暂无事件记录")
             body = "\n".join(lines)
         self.archive_detail_text.configure(state="normal")
         self.archive_detail_text.delete("1.0", tk.END)
@@ -2418,7 +2429,7 @@ class DesktopApp:
             first = str(self.archive_catalog[0].get("session_id", ""))
             self.archive_tree.selection_set(first)
             self._render_archive_detail(self.archive_catalog[0])
-        self.archive_status_var.set(f"??? {len(self.archive_catalog)} ?????")
+        self.archive_status_var.set(f"已加载 {len(self.archive_catalog)} 份实验档案")
 
     def _on_archive_tree_select(self, _event: tk.Event | None = None) -> None:
         if self.archive_tree is None:
@@ -2441,7 +2452,7 @@ class DesktopApp:
             return
 
         window = tk.Toplevel(self.root)
-        window.title(f"{APP_DISPLAY_NAME} - ??????")
+        window.title(f"{APP_DISPLAY_NAME} - 实验档案中心")
         self._set_window_geometry(window, min(1240, int(self.window_width * 0.78)), min(860, int(self.window_height * 0.84)), 960, 680)
         window.configure(bg="#0f1720")
         window.transient(self.root)
@@ -2462,8 +2473,8 @@ class DesktopApp:
         header = ttk.Frame(shell, style="Panel.TFrame", padding=16)
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="??????", style="Header.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(header, text="?????????????????????????????", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(header, text="实验档案中心", style="Header.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(header, text="按实验项目、实验名称、实验人员和时间检索运行归档。", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
 
         body = ttk.Frame(shell, style="Panel.TFrame", padding=16)
         body.grid(row=1, column=0, sticky="nsew", pady=(16, 0))
@@ -2476,7 +2487,7 @@ class DesktopApp:
         table_wrap.columnconfigure(0, weight=1)
         table_wrap.rowconfigure(0, weight=1)
         self.archive_tree = ttk.Treeview(table_wrap, columns=("id", "project", "experiment", "operator", "events", "opened"), show="headings")
-        for key, label, width in [("id", "?? ID", 180), ("project", "??", 180), ("experiment", "??", 180), ("operator", "??", 100), ("events", "???", 70), ("opened", "????", 150)]:
+        for key, label, width in [("id", "会话 ID", 180), ("project", "项目", 180), ("experiment", "实验", 180), ("operator", "人员", 100), ("events", "事件数", 70), ("opened", "开始时间", 150)]:
             self.archive_tree.heading(key, text=label)
             self.archive_tree.column(key, width=width, anchor="w" if key not in {"events"} else "center")
         self.archive_tree.grid(row=0, column=0, sticky="nsew")
@@ -2489,7 +2500,7 @@ class DesktopApp:
         detail_wrap.grid(row=0, column=1, sticky="nsew")
         detail_wrap.columnconfigure(0, weight=1)
         detail_wrap.rowconfigure(1, weight=1)
-        ttk.Label(detail_wrap, text="????", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(detail_wrap, text="档案详情", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
         self.archive_detail_text = tk.Text(detail_wrap, bg="#0f1720", fg="#dbe6f2", insertbackground="#dbe6f2", relief="flat", font=("Microsoft YaHei UI", 10), wrap="word")
         self.archive_detail_text.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
         self.archive_detail_text.configure(state="disabled")
@@ -2498,38 +2509,49 @@ class DesktopApp:
         footer.grid(row=2, column=0, sticky="ew", pady=(16, 0))
         footer.columnconfigure(0, weight=1)
         ttk.Label(footer, textvariable=self.archive_status_var, style="Foot.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Button(footer, text="????", command=self._refresh_archive_catalog).grid(row=0, column=1, sticky="e", padx=(0, 8))
-        ttk.Button(footer, text="??", command=_close_window).grid(row=0, column=2, sticky="e")
+        ttk.Button(footer, text="刷新列表", command=self._refresh_archive_catalog).grid(row=0, column=1, sticky="e", padx=(0, 8))
+        ttk.Button(footer, text="关闭", command=_close_window).grid(row=0, column=2, sticky="e")
 
         self._register_scroll_target(self.archive_tree, self.archive_tree)
         self._register_scroll_target(detail_wrap, self.archive_detail_text)
         self._register_scroll_target(self.archive_detail_text, self.archive_detail_text)
         self._refresh_archive_catalog()
 
+    def _pick_paths_for_import(self, title: str, filetypes: list[tuple[str, str]]) -> List[str]:
+        files = list(filedialog.askopenfilenames(parent=self.training_window or self.root, title=title, filetypes=filetypes))
+        if files:
+            return files
+        directory = filedialog.askdirectory(parent=self.training_window or self.root, title=f"{title}（也可选择目录）")
+        return [directory] if directory else []
+
     def _refresh_training_overview(self) -> None:
-        self.hero_var.set("?????????")
+        self.hero_var.set("正在刷新训练工作台")
         self._dispatch("training_overview", self.runtime.get_training_overview)
 
     def _render_training_overview(self) -> None:
         if self.training_detail_text is None:
             return
         overview = self.training_overview or {}
+        assets = overview.get("assets") or {}
         lines = [
-            f"?????: {overview.get('latest_workspace', '') or '-'}",
-            f"????: {overview.get('job_count', 0)}",
+            f"最近工作区: {overview.get('latest_workspace', '') or '-'}",
+            f"训练任务数: {overview.get('job_count', 0)}",
+            f"LLM 真实样本: {assets.get('llm_total_samples', 0)}",
+            f"Pi 数据集数: {assets.get('pi_dataset_count', 0)}",
+            f"Pi 样本数: {assets.get('pi_total_samples', 0)}",
             "",
-            "????:",
+            "最近任务:",
         ]
         jobs = overview.get("jobs") or []
         if jobs:
             for job in jobs[-20:]:
                 lines.append(f"- {job.get('job_id', '')} | {job.get('kind', '')} | {job.get('status', '')} | {job.get('created_at', '')}")
                 if job.get("result"):
-                    lines.append(f"  ??: {json.dumps(job.get('result'), ensure_ascii=False)[:300]}")
+                    lines.append(f"  结果: {json.dumps(job.get('result'), ensure_ascii=False)[:300]}")
                 if job.get("error"):
-                    lines.append(f"  ??: {str(job.get('error'))[:300]}")
+                    lines.append(f"  错误: {str(job.get('error'))[:300]}")
         else:
-            lines.append("- ??????")
+            lines.append("- 当前没有训练任务")
         self.training_detail_text.configure(state="normal")
         self.training_detail_text.delete("1.0", tk.END)
         self.training_detail_text.insert("1.0", "\n".join(lines))
@@ -2537,26 +2559,61 @@ class DesktopApp:
 
     def _build_training_workspace_from_form(self) -> None:
         workspace_name = self.training_workspace_entry.get().strip() if self.training_workspace_entry is not None else ""
-        self.training_status_var.set("?????????")
+        self.training_status_var.set("正在构建训练工作区")
         self._dispatch("training_workspace", lambda: self.runtime.build_training_workspace(workspace_name))
+
+    def _import_llm_dataset_from_dialog(self) -> None:
+        paths = self._pick_paths_for_import(
+            "导入 LLM 微调数据",
+            [("训练数据", "*.jsonl;*.json;*.csv;*.txt;*.md"), ("所有文件", "*.*")],
+        )
+        if not paths:
+            return
+        self.training_status_var.set("正在导入 LLM 微调数据")
+        self._dispatch("training_import_llm", lambda: self.runtime.import_llm_training_data(paths))
+
+    def _import_pi_dataset_from_dialog(self) -> None:
+        paths = self._pick_paths_for_import(
+            "导入 Pi 检测训练数据",
+            [("Pi 数据集", "*.zip;*.jpg;*.jpeg;*.png;*.bmp;*.webp"), ("所有文件", "*.*")],
+        )
+        if not paths:
+            return
+        self.training_status_var.set("正在导入 Pi 检测训练数据")
+        self._dispatch("training_import_pi", lambda: self.runtime.import_pi_training_data(paths))
 
     def _start_llm_training_from_form(self) -> None:
         workspace_dir = str((self.training_overview or {}).get("latest_workspace") or "").strip()
         if not workspace_dir:
-            messagebox.showwarning(APP_DISPLAY_NAME, "??????????", parent=self.training_window or self.root)
+            messagebox.showwarning(APP_DISPLAY_NAME, "请先构建训练工作区。", parent=self.training_window or self.root)
             return
         base_model = self.training_base_model_entry.get().strip() if self.training_base_model_entry is not None else ""
-        self.training_status_var.set("?????????")
+        self.training_status_var.set("正在启动 LLM 微调")
         self._dispatch("training_llm", lambda: self.runtime.start_llm_finetune({"workspace_dir": workspace_dir, "base_model": base_model}))
 
     def _start_pi_training_from_form(self) -> None:
         workspace_dir = str((self.training_overview or {}).get("latest_workspace") or "").strip()
         if not workspace_dir:
-            messagebox.showwarning(APP_DISPLAY_NAME, "??????????", parent=self.training_window or self.root)
+            messagebox.showwarning(APP_DISPLAY_NAME, "请先构建训练工作区。", parent=self.training_window or self.root)
             return
         base_weights = self.training_pi_weights_entry.get().strip() if self.training_pi_weights_entry is not None else ""
-        self.training_status_var.set("???? Pi ??????")
+        self.training_status_var.set("正在启动 Pi 检测模型微调")
         self._dispatch("training_pi", lambda: self.runtime.start_pi_detector_finetune({"workspace_dir": workspace_dir, "base_weights": base_weights}))
+
+    def _start_full_training_from_form(self) -> None:
+        workspace_dir = str((self.training_overview or {}).get("latest_workspace") or "").strip()
+        if not workspace_dir:
+            messagebox.showwarning(APP_DISPLAY_NAME, "请先构建训练工作区。", parent=self.training_window or self.root)
+            return
+        base_model = self.training_base_model_entry.get().strip() if self.training_base_model_entry is not None else ""
+        base_weights = self.training_pi_weights_entry.get().strip() if self.training_pi_weights_entry is not None else ""
+        self.training_status_var.set("正在启动一键全流程训练")
+        self._dispatch(
+            "training_all",
+            lambda: self.runtime.start_full_training_pipeline(
+                {"workspace_dir": workspace_dir, "base_model": base_model, "base_weights": base_weights}
+            ),
+        )
 
     def _show_training_window(self) -> None:
         if self.training_window is not None and self.training_window.winfo_exists():
@@ -2567,8 +2624,8 @@ class DesktopApp:
             return
 
         window = tk.Toplevel(self.root)
-        window.title(f"{APP_DISPLAY_NAME} - ?????")
-        self._set_window_geometry(window, 980, 760, 820, 620)
+        window.title(f"{APP_DISPLAY_NAME} - 训练工作台")
+        self._set_window_geometry(window, 1080, 780, 860, 640)
         window.configure(bg="#0f1720")
         window.transient(self.root)
         self._apply_window_icon(window)
@@ -2588,45 +2645,48 @@ class DesktopApp:
         header = ttk.Frame(shell, style="Panel.TFrame", padding=16)
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="?????", style="Header.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(header, text="???????????????????????????? Pi ???????", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(header, text="训练工作台", style="Header.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(header, text="导入真实训练数据后，可一键构建工作区并顺序运行 LLM 与 Pi 模型微调。", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
 
         body = ttk.Frame(shell, style="Panel.TFrame", padding=16)
         body.grid(row=1, column=0, sticky="nsew", pady=(16, 0))
         body.columnconfigure(0, weight=1)
-        body.rowconfigure(1, weight=1)
+        body.rowconfigure(2, weight=1)
 
         form = ttk.Frame(body, style="SoftPanel.TFrame", padding=12)
         form.grid(row=0, column=0, sticky="ew")
         form.columnconfigure(1, weight=1)
-        ttk.Label(form, text="?????", style="Body.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(form, text="工作区名称", style="Body.TLabel").grid(row=0, column=0, sticky="w")
         self.training_workspace_entry = ttk.Entry(form)
         self.training_workspace_entry.grid(row=0, column=1, sticky="ew", padx=(10, 0))
-        self.training_workspace_entry.insert(0, str(self.runtime.get_training_overview().get("latest_workspace") or get_config("training.workspace_name", "labdetector_training")))
-        ttk.Label(form, text="LLM ????", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(10, 0))
+        self.training_workspace_entry.insert(0, str(get_config("training.workspace_name", "labdetector_training")))
+        ttk.Label(form, text="LLM 底座模型", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(10, 0))
         self.training_base_model_entry = ttk.Entry(form)
         self.training_base_model_entry.grid(row=1, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
         self.training_base_model_entry.insert(0, str(get_config("training.llm_base_model", "")))
-        ttk.Label(form, text="Pi ????", style="Body.TLabel").grid(row=2, column=0, sticky="w", pady=(10, 0))
+        ttk.Label(form, text="Pi 底座权重", style="Body.TLabel").grid(row=2, column=0, sticky="w", pady=(10, 0))
         self.training_pi_weights_entry = ttk.Entry(form)
         self.training_pi_weights_entry.grid(row=2, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
         self.training_pi_weights_entry.insert(0, str(get_config("training.pi_base_weights", "yolov8n.pt")))
 
         actions = ttk.Frame(body, style="SoftPanel.TFrame", padding=12)
-        actions.grid(row=1, column=0, sticky="new", pady=(14, 0))
-        for idx in range(5):
+        actions.grid(row=1, column=0, sticky="ew", pady=(14, 0))
+        for idx in range(4):
             actions.columnconfigure(idx, weight=1)
-        ttk.Button(actions, text="???????", command=self._build_training_workspace_from_form).grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        ttk.Button(actions, text="?? LLM ??", command=self._start_llm_training_from_form).grid(row=0, column=1, sticky="ew", padx=6)
-        ttk.Button(actions, text="?? Pi ??", command=self._start_pi_training_from_form).grid(row=0, column=2, sticky="ew", padx=6)
-        ttk.Button(actions, text="??", command=self._refresh_training_overview).grid(row=0, column=3, sticky="ew", padx=6)
-        ttk.Button(actions, text="??", command=_close_window).grid(row=0, column=4, sticky="ew", padx=(6, 0))
+        ttk.Button(actions, text="导入 LLM 数据", command=self._import_llm_dataset_from_dialog).grid(row=0, column=0, sticky="ew", padx=(0, 6), pady=(0, 6))
+        ttk.Button(actions, text="导入 Pi 数据", command=self._import_pi_dataset_from_dialog).grid(row=0, column=1, sticky="ew", padx=6, pady=(0, 6))
+        ttk.Button(actions, text="构建工作区", command=self._build_training_workspace_from_form).grid(row=0, column=2, sticky="ew", padx=6, pady=(0, 6))
+        ttk.Button(actions, text="一键全流程训练", command=self._start_full_training_from_form).grid(row=0, column=3, sticky="ew", padx=(6, 0), pady=(0, 6))
+        ttk.Button(actions, text="启动 LLM 微调", command=self._start_llm_training_from_form).grid(row=1, column=0, sticky="ew", padx=(0, 6))
+        ttk.Button(actions, text="启动 Pi 微调", command=self._start_pi_training_from_form).grid(row=1, column=1, sticky="ew", padx=6)
+        ttk.Button(actions, text="刷新概览", command=self._refresh_training_overview).grid(row=1, column=2, sticky="ew", padx=6)
+        ttk.Button(actions, text="关闭", command=_close_window).grid(row=1, column=3, sticky="ew", padx=(6, 0))
 
         detail_wrap = ttk.Frame(body, style="SoftPanel.TFrame", padding=12)
         detail_wrap.grid(row=2, column=0, sticky="nsew", pady=(14, 0))
         detail_wrap.columnconfigure(0, weight=1)
         detail_wrap.rowconfigure(1, weight=1)
-        ttk.Label(detail_wrap, text="????", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(detail_wrap, text="训练概览", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
         self.training_detail_text = tk.Text(detail_wrap, bg="#0f1720", fg="#dbe6f2", insertbackground="#dbe6f2", relief="flat", font=("Microsoft YaHei UI", 10), wrap="word")
         self.training_detail_text.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
         self.training_detail_text.configure(state="disabled")
@@ -2639,7 +2699,6 @@ class DesktopApp:
         self._register_scroll_target(detail_wrap, self.training_detail_text)
         self._register_scroll_target(self.training_detail_text, self.training_detail_text)
         self._refresh_training_overview()
-
     def _selected_cloud_backend(self) -> str:
         if self.cloud_provider_combo is None:
             return "qwen"
@@ -2773,7 +2832,7 @@ class DesktopApp:
                 if name == "refresh_models":
                     self.model_catalog = payload
                     self._update_model_choices()
-                    self.hero_var.set("模型清单已刷新")
+                    self.hero_var.set("模型目录已刷新")
                 elif name == "kb_catalog":
                     self.knowledge_catalog = payload
                     self._sync_knowledge_scope_choices()
@@ -2781,7 +2840,7 @@ class DesktopApp:
                     self.hero_var.set("知识库目录已刷新")
                 elif name == "kb_import":
                     self.kb_status_var.set(
-                        f"导入完成: 作用域={payload['scope']}，成功 {payload['imported_count']} 项，失败 {payload['failed_count']} 项"
+                        f"导入完成: 作用域 {payload['scope']}，成功 {payload['imported_count']} 项，失败 {payload['failed_count']} 项"
                     )
                     self.hero_var.set("知识库导入已完成")
                     self._render_logs(self.runtime.get_state().get("logs", []))
@@ -2824,13 +2883,50 @@ class DesktopApp:
                     self._render_checks(payload)
                     self._render_logs(self.runtime.get_state().get("logs", []))
                     self.hero_var.set("启动自检已完成")
+                elif name == "archive_catalog":
+                    self.archive_catalog = list(payload)
+                    self._populate_archive_tree()
+                    self.hero_var.set("实验档案已刷新")
+                elif name == "training_overview":
+                    self.training_overview = dict(payload)
+                    self._render_training_overview()
+                    self.training_status_var.set("训练概览已刷新")
+                    self.hero_var.set("训练工作台已刷新")
+                elif name == "training_workspace":
+                    self.training_status_var.set(f"训练工作区已生成: {payload['workspace_dir']}")
+                    self.hero_var.set("训练工作区构建完成")
+                    self._refresh_training_overview()
+                elif name == "training_import_llm":
+                    self.training_status_var.set(
+                        f"LLM 数据导入完成: 新增 {payload['sample_count']} 条，总计 {payload['total_sample_count']} 条"
+                    )
+                    self.hero_var.set("LLM 训练数据导入完成")
+                    self._refresh_training_overview()
+                elif name == "training_import_pi":
+                    self.training_status_var.set(
+                        f"Pi 数据导入完成: 样本 {payload['sample_count']}，数据集文件 {payload['dataset_yaml']}"
+                    )
+                    self.hero_var.set("Pi 训练数据导入完成")
+                    self._refresh_training_overview()
+                elif name == "training_llm":
+                    self.training_status_var.set(f"LLM 微调任务已启动: {payload['job_id']}")
+                    self.hero_var.set("LLM 微调已启动")
+                    self._refresh_training_overview()
+                elif name == "training_pi":
+                    self.training_status_var.set(f"Pi 微调任务已启动: {payload['job_id']}")
+                    self.hero_var.set("Pi 微调已启动")
+                    self._refresh_training_overview()
+                elif name == "training_all":
+                    self.training_status_var.set(f"一键全流程训练任务已启动: {payload['job_id']}")
+                    self.hero_var.set("一键训练已启动")
+                    self._refresh_training_overview()
                 elif name in {"start_session", "stop_session"}:
                     self._render_state(payload)
-                    self._refresh_archive_catalog() if self.archive_window is not None else None
+                    if self.archive_window is not None:
+                        self._refresh_archive_catalog()
         except queue.Empty:
             pass
         self.root.after(250, self._process_queue)
-
     def _on_close(self) -> None:
         try:
             for window in list(self.window_refs):
@@ -2857,3 +2953,5 @@ def launch_desktop_app() -> int:
     app = DesktopApp()
     app.run()
     return 0
+
+

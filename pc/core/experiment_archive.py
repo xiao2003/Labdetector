@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import threading
@@ -114,7 +114,7 @@ class ExperimentArchive:
         session_dir = self.root_dir / session_id
         meta_path = session_dir / "session.json"
         if not meta_path.exists():
-            raise FileNotFoundError(f"???????: {session_id}")
+            raise FileNotFoundError(f"实验档案不存在: {session_id}")
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         events = []
         for item in sorted((session_dir / "events").glob("*.json")):
@@ -147,21 +147,21 @@ class ExperimentArchive:
     @staticmethod
     def _write_markdown(path: Path, meta: Dict[str, Any], events: List[Dict[str, Any]]) -> None:
         lines = [
-            f"# ???? {meta.get('session_id', '')}",
+            f"# 实验档案 {meta.get('session_id', '')}",
             "",
-            f"- ????: {meta.get('project_name', '')}",
-            f"- ????: {meta.get('experiment_name', '')}",
-            f"- ????: {meta.get('operator_name', '')}",
-            f"- ??: {', '.join(meta.get('tags') or [])}",
-            f"- ??: {meta.get('mode', '')}",
-            f"- ???: {meta.get('source', '')}",
-            f"- AI ??: {meta.get('backend', '')}",
-            f"- ??: {meta.get('model', '')}",
-            f"- ????: {meta.get('opened_at', '')}",
-            f"- ????: {meta.get('closed_at', '')}",
-            f"- ???: {meta.get('event_count', len(events))}",
+            f"- 实验项目: {meta.get('project_name', '')}",
+            f"- 实验名称: {meta.get('experiment_name', '')}",
+            f"- 实验人员: {meta.get('operator_name', '')}",
+            f"- 标签: {', '.join(meta.get('tags') or [])}",
+            f"- 模式: {meta.get('mode', '')}",
+            f"- 来源: {meta.get('source', '')}",
+            f"- AI 后端: {meta.get('backend', '')}",
+            f"- 模型: {meta.get('model', '')}",
+            f"- 开始时间: {meta.get('opened_at', '')}",
+            f"- 结束时间: {meta.get('closed_at', '')}",
+            f"- 事件数: {meta.get('event_count', len(events))}",
             "",
-            "## ?????",
+            "## 事件记录",
             "",
         ]
         if events:
@@ -169,13 +169,13 @@ class ExperimentArchive:
                 payload = item.get("payload") or {}
                 lines.extend([
                     f"### {int(item.get('event_index', 0)):04d} {item.get('title', item.get('event_type', ''))}",
-                    f"- ??: {item.get('timestamp', '')}",
-                    f"- ??: {item.get('event_type', '')}",
-                    f"- ??: {json.dumps(payload, ensure_ascii=False)}",
+                    f"- 时间: {item.get('timestamp', '')}",
+                    f"- 类型: {item.get('event_type', '')}",
+                    f"- 内容: {json.dumps(payload, ensure_ascii=False)}",
                     "",
                 ])
         else:
-            lines.append("???????")
+            lines.append("当前会话尚无事件记录。")
         path.write_text("\n".join(lines), encoding="utf-8")
 
 

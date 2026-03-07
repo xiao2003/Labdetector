@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import math
@@ -88,12 +88,12 @@ def map_semantic_risk(semantics: Dict[str, object]) -> SemanticRiskResult:
     ca = semantics.get("contact_angle_deg")
     if isinstance(ca, (int, float)) and (ca < 40 or ca > 140):
         score += 10
-        reasons.append("??????????????")
+        reasons.append("接触角异常，疑似存在润湿风险")
 
     bs = semantics.get("bubble_speed")
     if isinstance(bs, (int, float)) and bs > 20:
         score += 10
-        reasons.append("???????????????")
+        reasons.append("气泡速度过快，疑似存在流动失稳")
 
     interactions = semantics.get("hand_object_interactions", [])
     if isinstance(interactions, list):
@@ -104,10 +104,10 @@ def map_semantic_risk(semantics: Dict[str, object]) -> SemanticRiskResult:
             label = str(item.get("object_label", "")).lower()
             if action == "holding" and label in {"beaker", "bottle", "reagent bottle", "flask"}:
                 score += 10
-                reasons.append(f"???????{_localize_label(label)}")
+                reasons.append(f"检测到手持实验器具：{_localize_label(label)}")
             if action == "holding" and semantics.get("has_open_flame") and label in {"beaker", "flask", "bottle"}:
                 score += 15
-                reasons.append(f"???????????{_localize_label(label)}")
+                reasons.append(f"明火附近手持器具：{_localize_label(label)}")
 
     high = int(risk_rulebook.rules.get("thresholds", {}).get("high", 60))
     medium = int(risk_rulebook.rules.get("thresholds", {}).get("medium", 30))
@@ -394,3 +394,4 @@ def _force_list(payload: Any) -> List[Any]:
     if isinstance(payload, list):
         return payload
     return [payload]
+

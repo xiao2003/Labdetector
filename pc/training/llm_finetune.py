@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -20,15 +20,18 @@ def run_llm_finetune(
     try:
         import torch
         from datasets import Dataset
-        from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments
         from peft import LoraConfig, TaskType, get_peft_model
+        from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments
     except Exception as exc:
-        raise RuntimeError(f"??????????: {exc}") from exc
+        raise RuntimeError(f"未安装 LLM 微调所需依赖: {exc}") from exc
+
+    if not str(base_model or "").strip():
+        raise RuntimeError("请先配置 LLM 微调底座模型路径或模型名称。")
 
     train_file = Path(train_path)
     eval_file = Path(eval_path) if eval_path else None
     if not train_file.exists():
-        raise FileNotFoundError(f"??????: {train_file}")
+        raise FileNotFoundError(f"训练数据不存在: {train_file}")
 
     def load_jsonl(path: Path) -> list[dict[str, Any]]:
         rows = []
@@ -42,7 +45,7 @@ def run_llm_finetune(
     train_rows = load_jsonl(train_file)
     eval_rows = load_jsonl(eval_file) if eval_file and eval_file.exists() else []
     if not train_rows:
-        raise RuntimeError("????????????")
+        raise RuntimeError("训练数据为空，无法启动 LLM 微调。")
 
     tokenizer = AutoTokenizer.from_pretrained(base_model, trust_remote_code=True)
     if tokenizer.pad_token is None:
@@ -59,7 +62,7 @@ def run_llm_finetune(
     model = get_peft_model(model, peft_config)
 
     def render_example(row: Dict[str, Any]) -> Dict[str, Any]:
-        text = f"### ??\n{row.get('instruction', '')}\n\n### ??\n{row.get('output', '')}"
+        text = f"### 指令\n{row.get('instruction', '')}\n\n### 回答\n{row.get('output', '')}"
         tokenized = tokenizer(text, truncation=True, max_length=1024)
         tokenized["labels"] = list(tokenized["input_ids"])
         return tokenized

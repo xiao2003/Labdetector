@@ -1,11 +1,11 @@
-{
+﻿{
   "thresholds": {
     "high": 60,
     "medium": 30
   },
   "rules": [
     {
-      "reason": "???????????",
+      "reason": "明火与化学容器同时出现",
       "score": 45,
       "all": [
         {"field": "has_open_flame", "equals": true},
@@ -13,7 +13,7 @@
       ]
     },
     {
-      "reason": "???????????",
+      "reason": "检测到人员但未佩戴手套",
       "score": 20,
       "all": [
         {"field": "has_person", "equals": true},
@@ -21,7 +21,7 @@
       ]
     },
     {
-      "reason": "?????????????",
+      "reason": "检测到人员但未佩戴护目镜",
       "score": 15,
       "all": [
         {"field": "has_person", "equals": true},
