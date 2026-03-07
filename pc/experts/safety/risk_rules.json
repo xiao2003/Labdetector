@@ -1,0 +1,32 @@
+{
+  "thresholds": {
+    "high": 60,
+    "medium": 30
+  },
+  "rules": [
+    {
+      "reason": "???????????",
+      "score": 45,
+      "all": [
+        {"field": "has_open_flame", "equals": true},
+        {"field": "has_chemical_container", "equals": true}
+      ]
+    },
+    {
+      "reason": "???????????",
+      "score": 20,
+      "all": [
+        {"field": "has_person", "equals": true},
+        {"field": "has_ppe_gloves", "equals": false}
+      ]
+    },
+    {
+      "reason": "?????????????",
+      "score": 15,
+      "all": [
+        {"field": "has_person", "equals": true},
+        {"field": "has_ppe_eye", "equals": false}
+      ]
+    }
+  ]
+}

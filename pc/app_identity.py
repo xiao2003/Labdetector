@@ -7,7 +7,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-
 APP_NAME = "LabDetector"
 APP_DISPLAY_NAME = "LabDetector \u667a\u80fd\u5b9e\u9a8c\u5ba4\u76d1\u63a7\u8f6f\u4ef6"
 APP_SHORT_TAGLINE = "\u5b9e\u9a8c\u5ba4\u591a\u8282\u70b9\u76d1\u63a7\u4e0e\u4e13\u5bb6\u8054\u52a8\u5e73\u53f0"

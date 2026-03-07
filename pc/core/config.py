@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-pc/core/config.py - core configuration manager.
-"""
+"""pc/core/config.py - core configuration manager."""
 
 from __future__ import annotations
 
@@ -54,7 +52,7 @@ _DEFAULT_CONFIG = {
         "base_url": "",
     },
     "voice_interaction": {
-        "wake_word": "\u5c0f\u7231\u540c\u5b66",
+        "wake_word": "????",
         "wake_timeout": "10.0",
         "wake_threshold": "0.01",
         "energy_threshold": "300",
@@ -79,8 +77,26 @@ _DEFAULT_CONFIG = {
         "left_collapsed": "False",
         "demo_mode": "False",
     },
-    "experts": {
+    "session_defaults": {
+        "project_name": "AI4S ???????",
+        "experiment_name": "??????",
+        "operator_name": "",
+        "tags": "??,??,???",
     },
+    "training": {
+        "workspace_name": "labdetector_training",
+        "llm_base_model": "",
+        "llm_epochs": "1",
+        "llm_batch_size": "1",
+        "llm_learning_rate": "0.0002",
+        "llm_lora_r": "8",
+        "llm_lora_alpha": "16",
+        "pi_base_weights": "yolov8n.pt",
+        "pi_epochs": "20",
+        "pi_imgsz": "640",
+        "pi_device": "",
+    },
+    "experts": {},
 }
 
 
@@ -101,13 +117,11 @@ def _init_config() -> None:
         if not _config.has_section(section):
             _config.add_section(section)
             needs_save = True
-
         for key, value in options.items():
             if not _config.has_option(section, key):
                 _config.set(section, key, str(value))
                 needs_save = True
                 continue
-
             if key == "default_models":
                 existing_val = _config.get(section, key)
                 existing_list = [x.strip() for x in existing_val.split(",") if x.strip()]

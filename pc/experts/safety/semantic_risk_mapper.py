@@ -5,6 +5,8 @@ import math
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
 
+from pc.experts.safety.risk_rulebook import risk_rulebook
+
 
 LAB_INSTRUMENT_ALIASES = {
     "beaker": "烧杯",
@@ -79,30 +81,19 @@ def build_semantic_observation(
 
 
 def map_semantic_risk(semantics: Dict[str, object]) -> SemanticRiskResult:
-    score = 0
-    reasons: List[str] = []
-
-    if semantics.get("has_open_flame") and semantics.get("has_chemical_container"):
-        score += 45
-        reasons.append("明火与化学容器同时出现")
-
-    if semantics.get("has_person") and not semantics.get("has_ppe_gloves"):
-        score += 20
-        reasons.append("人员操作但未检测到手套")
-
-    if semantics.get("has_person") and not semantics.get("has_ppe_eye"):
-        score += 15
-        reasons.append("人员操作但未检测到眼部防护")
+    evaluated = risk_rulebook.evaluate(semantics)
+    score = int(evaluated.get("score", 0))
+    reasons: List[str] = list(evaluated.get("reasons") or [])
 
     ca = semantics.get("contact_angle_deg")
     if isinstance(ca, (int, float)) and (ca < 40 or ca > 140):
         score += 10
-        reasons.append("接触角异常，可能伴随操作风险")
+        reasons.append("??????????????")
 
     bs = semantics.get("bubble_speed")
     if isinstance(bs, (int, float)) and bs > 20:
         score += 10
-        reasons.append("气泡运动过快，建议复核驱动条件")
+        reasons.append("???????????????")
 
     interactions = semantics.get("hand_object_interactions", [])
     if isinstance(interactions, list):
@@ -113,20 +104,21 @@ def map_semantic_risk(semantics: Dict[str, object]) -> SemanticRiskResult:
             label = str(item.get("object_label", "")).lower()
             if action == "holding" and label in {"beaker", "bottle", "reagent bottle", "flask"}:
                 score += 10
-                reasons.append(f"检测到直接握持{_localize_label(label)}")
+                reasons.append(f"???????{_localize_label(label)}")
             if action == "holding" and semantics.get("has_open_flame") and label in {"beaker", "flask", "bottle"}:
                 score += 15
-                reasons.append(f"存在明火时正在直接握持{_localize_label(label)}")
+                reasons.append(f"???????????{_localize_label(label)}")
 
-    if score >= 60:
+    high = int(risk_rulebook.rules.get("thresholds", {}).get("high", 60))
+    medium = int(risk_rulebook.rules.get("thresholds", {}).get("medium", 30))
+    if score >= high:
         level = "high"
-    elif score >= 30:
+    elif score >= medium:
         level = "medium"
     else:
         level = "low"
 
     return SemanticRiskResult(risk_level=level, score=score, semantics=semantics, reasons=reasons)
-
 
 def _normalize_detected_classes(raw: List[str] | str | Iterable[str]) -> List[str]:
     if raw is None:

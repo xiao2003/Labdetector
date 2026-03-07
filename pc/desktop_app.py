@@ -84,6 +84,8 @@ class DesktopApp:
         self.expert_detail_text: tk.Text | None = None
         self.expert_status_var = tk.StringVar(value="等待加载专家模型目录")
         self.cloud_backend_catalog: List[Dict[str, Any]] = []
+        self.archive_catalog: List[Dict[str, Any]] = []
+        self.training_overview: Dict[str, Any] = {}
         self.cloud_window: tk.Toplevel | None = None
         self.cloud_provider_combo: ttk.Combobox | None = None
         self.cloud_provider_map: Dict[str, str] = {}
@@ -143,6 +145,10 @@ class DesktopApp:
         self.kb_structured_var = tk.BooleanVar(value=True)
         self.left_collapsed_var = tk.BooleanVar(value=False)
         self.demo_mode_var = tk.BooleanVar(value=False)
+        self.project_entry: ttk.Entry | None = None
+        self.experiment_entry: ttk.Entry | None = None
+        self.operator_entry: ttk.Entry | None = None
+        self.tags_entry: ttk.Entry | None = None
 
         self.summary_vars = {
             "mode": tk.StringVar(value="-"),
@@ -577,6 +583,18 @@ class DesktopApp:
         self.expected_nodes_var.set(str(controls["defaults"]["expected_nodes"]))
         self.expected_entry.delete(0, tk.END)
         self.expected_entry.insert(0, self.expected_nodes_var.get())
+        if self.project_entry is not None:
+            self.project_entry.delete(0, tk.END)
+            self.project_entry.insert(0, str(controls["defaults"].get("project_name", "")))
+        if self.experiment_entry is not None:
+            self.experiment_entry.delete(0, tk.END)
+            self.experiment_entry.insert(0, str(controls["defaults"].get("experiment_name", "")))
+        if self.operator_entry is not None:
+            self.operator_entry.delete(0, tk.END)
+            self.operator_entry.insert(0, str(controls["defaults"].get("operator_name", "")))
+        if self.tags_entry is not None:
+            self.tags_entry.delete(0, tk.END)
+            self.tags_entry.insert(0, str(controls["defaults"].get("tags", "")))
 
         self._update_model_choices(controls["defaults"]["selected_model"])
         self.current_state = payload["state"]
@@ -924,6 +942,7 @@ class DesktopApp:
                     self.hero_var.set("启动自检已完成")
                 elif name in {"start_session", "stop_session"}:
                     self._render_state(payload)
+                    self._refresh_archive_catalog() if self.archive_window is not None else None
         except queue.Empty:
             pass
         self.root.after(250, self._process_queue)
@@ -1857,6 +1876,7 @@ class DesktopApp:
         self.knowledge_catalog = payload.get("knowledge_bases", [])
         self.expert_catalog = payload.get("experts", [])
         self.cloud_backend_catalog = payload.get("cloud_backends", [])
+        self.training_overview = payload.get("training", {})
         self._sync_knowledge_scope_choices()
 
         self.backend_var.set(controls["defaults"]["ai_backend"])
@@ -1866,6 +1886,18 @@ class DesktopApp:
         self.expected_nodes_var.set(str(controls["defaults"]["expected_nodes"]))
         self.expected_entry.delete(0, tk.END)
         self.expected_entry.insert(0, self.expected_nodes_var.get())
+        if self.project_entry is not None:
+            self.project_entry.delete(0, tk.END)
+            self.project_entry.insert(0, str(controls["defaults"].get("project_name", "")))
+        if self.experiment_entry is not None:
+            self.experiment_entry.delete(0, tk.END)
+            self.experiment_entry.insert(0, str(controls["defaults"].get("experiment_name", "")))
+        if self.operator_entry is not None:
+            self.operator_entry.delete(0, tk.END)
+            self.operator_entry.insert(0, str(controls["defaults"].get("operator_name", "")))
+        if self.tags_entry is not None:
+            self.tags_entry.delete(0, tk.END)
+            self.tags_entry.insert(0, str(controls["defaults"].get("tags", "")))
 
         self._update_model_choices(controls["defaults"]["selected_model"])
         self.current_state = payload["state"]
@@ -2324,6 +2356,290 @@ class DesktopApp:
         self._populate_expert_tree()
         self._refresh_expert_catalog()
 
+    def _refresh_archive_catalog(self) -> None:
+        self.hero_var.set("????????")
+        self._dispatch("archive_catalog", self.runtime.get_archive_catalog)
+
+    def _render_archive_detail(self, row: Dict[str, Any]) -> None:
+        if self.archive_detail_text is None:
+            return
+        try:
+            detail = self.runtime.get_archive_detail(str(row.get("session_id", "")))
+        except Exception as exc:
+            body = f"??????: {exc}"
+        else:
+            session = detail.get("session", {})
+            events = detail.get("events", [])
+            lines = [
+                f"?? ID: {session.get('session_id', '')}",
+                f"????: {session.get('project_name', '')}",
+                f"????: {session.get('experiment_name', '')}",
+                f"????: {session.get('operator_name', '')}",
+                f"??: {', '.join(session.get('tags') or [])}",
+                f"??: {session.get('mode', '')}",
+                f"????: {session.get('opened_at', '')}",
+                f"????: {session.get('closed_at', '')}",
+                f"???: {len(events)}",
+                "",
+                "?????:",
+            ]
+            if events:
+                for item in events[-20:]:
+                    payload = item.get("payload") or {}
+                    lines.append(f"- [{item.get('timestamp', '')}] {item.get('title', item.get('event_type', ''))}: {json.dumps(payload, ensure_ascii=False)[:240]}")
+            else:
+                lines.append("- ??????")
+            body = "\n".join(lines)
+        self.archive_detail_text.configure(state="normal")
+        self.archive_detail_text.delete("1.0", tk.END)
+        self.archive_detail_text.insert("1.0", body)
+        self.archive_detail_text.configure(state="disabled")
+
+    def _populate_archive_tree(self) -> None:
+        if self.archive_tree is None:
+            return
+        self.archive_tree.delete(*self.archive_tree.get_children())
+        for row in self.archive_catalog:
+            session_id = str(row.get("session_id", ""))
+            self.archive_tree.insert(
+                "",
+                "end",
+                iid=session_id,
+                values=(
+                    session_id,
+                    row.get("project_name", ""),
+                    row.get("experiment_name", ""),
+                    row.get("operator_name", ""),
+                    row.get("event_count", 0),
+                    row.get("opened_at", ""),
+                ),
+            )
+        if self.archive_catalog:
+            first = str(self.archive_catalog[0].get("session_id", ""))
+            self.archive_tree.selection_set(first)
+            self._render_archive_detail(self.archive_catalog[0])
+        self.archive_status_var.set(f"??? {len(self.archive_catalog)} ?????")
+
+    def _on_archive_tree_select(self, _event: tk.Event | None = None) -> None:
+        if self.archive_tree is None:
+            return
+        selection = self.archive_tree.selection()
+        if not selection:
+            return
+        session_id = selection[0]
+        for row in self.archive_catalog:
+            if str(row.get("session_id", "")) == session_id:
+                self._render_archive_detail(row)
+                break
+
+    def _show_archive_window(self) -> None:
+        if self.archive_window is not None and self.archive_window.winfo_exists():
+            self.archive_window.deiconify()
+            self.archive_window.lift()
+            self.archive_window.focus_force()
+            self._refresh_archive_catalog()
+            return
+
+        window = tk.Toplevel(self.root)
+        window.title(f"{APP_DISPLAY_NAME} - ??????")
+        self._set_window_geometry(window, min(1240, int(self.window_width * 0.78)), min(860, int(self.window_height * 0.84)), 960, 680)
+        window.configure(bg="#0f1720")
+        window.transient(self.root)
+        self._apply_window_icon(window)
+        self.window_refs.append(window)
+        self.archive_window = window
+
+        def _close_window() -> None:
+            self.archive_window = None
+            window.destroy()
+
+        window.protocol("WM_DELETE_WINDOW", _close_window)
+        shell = ttk.Frame(window, style="Root.TFrame", padding=18)
+        shell.pack(fill="both", expand=True)
+        shell.columnconfigure(0, weight=1)
+        shell.rowconfigure(1, weight=1)
+
+        header = ttk.Frame(shell, style="Panel.TFrame", padding=16)
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(0, weight=1)
+        ttk.Label(header, text="??????", style="Header.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(header, text="?????????????????????????????", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
+
+        body = ttk.Frame(shell, style="Panel.TFrame", padding=16)
+        body.grid(row=1, column=0, sticky="nsew", pady=(16, 0))
+        body.columnconfigure(0, weight=3)
+        body.columnconfigure(1, weight=2)
+        body.rowconfigure(0, weight=1)
+
+        table_wrap = ttk.Frame(body, style="SoftPanel.TFrame", padding=12)
+        table_wrap.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        table_wrap.columnconfigure(0, weight=1)
+        table_wrap.rowconfigure(0, weight=1)
+        self.archive_tree = ttk.Treeview(table_wrap, columns=("id", "project", "experiment", "operator", "events", "opened"), show="headings")
+        for key, label, width in [("id", "?? ID", 180), ("project", "??", 180), ("experiment", "??", 180), ("operator", "??", 100), ("events", "???", 70), ("opened", "????", 150)]:
+            self.archive_tree.heading(key, text=label)
+            self.archive_tree.column(key, width=width, anchor="w" if key not in {"events"} else "center")
+        self.archive_tree.grid(row=0, column=0, sticky="nsew")
+        self.archive_tree.bind("<<TreeviewSelect>>", self._on_archive_tree_select)
+        tree_scroll = ttk.Scrollbar(table_wrap, orient="vertical", command=self.archive_tree.yview)
+        tree_scroll.grid(row=0, column=1, sticky="ns")
+        self.archive_tree.configure(yscrollcommand=tree_scroll.set)
+
+        detail_wrap = ttk.Frame(body, style="SoftPanel.TFrame", padding=12)
+        detail_wrap.grid(row=0, column=1, sticky="nsew")
+        detail_wrap.columnconfigure(0, weight=1)
+        detail_wrap.rowconfigure(1, weight=1)
+        ttk.Label(detail_wrap, text="????", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
+        self.archive_detail_text = tk.Text(detail_wrap, bg="#0f1720", fg="#dbe6f2", insertbackground="#dbe6f2", relief="flat", font=("Microsoft YaHei UI", 10), wrap="word")
+        self.archive_detail_text.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
+        self.archive_detail_text.configure(state="disabled")
+
+        footer = ttk.Frame(shell, style="Panel.TFrame", padding=(10, 12))
+        footer.grid(row=2, column=0, sticky="ew", pady=(16, 0))
+        footer.columnconfigure(0, weight=1)
+        ttk.Label(footer, textvariable=self.archive_status_var, style="Foot.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Button(footer, text="????", command=self._refresh_archive_catalog).grid(row=0, column=1, sticky="e", padx=(0, 8))
+        ttk.Button(footer, text="??", command=_close_window).grid(row=0, column=2, sticky="e")
+
+        self._register_scroll_target(self.archive_tree, self.archive_tree)
+        self._register_scroll_target(detail_wrap, self.archive_detail_text)
+        self._register_scroll_target(self.archive_detail_text, self.archive_detail_text)
+        self._refresh_archive_catalog()
+
+    def _refresh_training_overview(self) -> None:
+        self.hero_var.set("?????????")
+        self._dispatch("training_overview", self.runtime.get_training_overview)
+
+    def _render_training_overview(self) -> None:
+        if self.training_detail_text is None:
+            return
+        overview = self.training_overview or {}
+        lines = [
+            f"?????: {overview.get('latest_workspace', '') or '-'}",
+            f"????: {overview.get('job_count', 0)}",
+            "",
+            "????:",
+        ]
+        jobs = overview.get("jobs") or []
+        if jobs:
+            for job in jobs[-20:]:
+                lines.append(f"- {job.get('job_id', '')} | {job.get('kind', '')} | {job.get('status', '')} | {job.get('created_at', '')}")
+                if job.get("result"):
+                    lines.append(f"  ??: {json.dumps(job.get('result'), ensure_ascii=False)[:300]}")
+                if job.get("error"):
+                    lines.append(f"  ??: {str(job.get('error'))[:300]}")
+        else:
+            lines.append("- ??????")
+        self.training_detail_text.configure(state="normal")
+        self.training_detail_text.delete("1.0", tk.END)
+        self.training_detail_text.insert("1.0", "\n".join(lines))
+        self.training_detail_text.configure(state="disabled")
+
+    def _build_training_workspace_from_form(self) -> None:
+        workspace_name = self.training_workspace_entry.get().strip() if self.training_workspace_entry is not None else ""
+        self.training_status_var.set("?????????")
+        self._dispatch("training_workspace", lambda: self.runtime.build_training_workspace(workspace_name))
+
+    def _start_llm_training_from_form(self) -> None:
+        workspace_dir = str((self.training_overview or {}).get("latest_workspace") or "").strip()
+        if not workspace_dir:
+            messagebox.showwarning(APP_DISPLAY_NAME, "??????????", parent=self.training_window or self.root)
+            return
+        base_model = self.training_base_model_entry.get().strip() if self.training_base_model_entry is not None else ""
+        self.training_status_var.set("?????????")
+        self._dispatch("training_llm", lambda: self.runtime.start_llm_finetune({"workspace_dir": workspace_dir, "base_model": base_model}))
+
+    def _start_pi_training_from_form(self) -> None:
+        workspace_dir = str((self.training_overview or {}).get("latest_workspace") or "").strip()
+        if not workspace_dir:
+            messagebox.showwarning(APP_DISPLAY_NAME, "??????????", parent=self.training_window or self.root)
+            return
+        base_weights = self.training_pi_weights_entry.get().strip() if self.training_pi_weights_entry is not None else ""
+        self.training_status_var.set("???? Pi ??????")
+        self._dispatch("training_pi", lambda: self.runtime.start_pi_detector_finetune({"workspace_dir": workspace_dir, "base_weights": base_weights}))
+
+    def _show_training_window(self) -> None:
+        if self.training_window is not None and self.training_window.winfo_exists():
+            self.training_window.deiconify()
+            self.training_window.lift()
+            self.training_window.focus_force()
+            self._refresh_training_overview()
+            return
+
+        window = tk.Toplevel(self.root)
+        window.title(f"{APP_DISPLAY_NAME} - ?????")
+        self._set_window_geometry(window, 980, 760, 820, 620)
+        window.configure(bg="#0f1720")
+        window.transient(self.root)
+        self._apply_window_icon(window)
+        self.window_refs.append(window)
+        self.training_window = window
+
+        def _close_window() -> None:
+            self.training_window = None
+            window.destroy()
+
+        window.protocol("WM_DELETE_WINDOW", _close_window)
+        shell = ttk.Frame(window, style="Root.TFrame", padding=18)
+        shell.pack(fill="both", expand=True)
+        shell.columnconfigure(0, weight=1)
+        shell.rowconfigure(1, weight=1)
+
+        header = ttk.Frame(shell, style="Panel.TFrame", padding=16)
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(0, weight=1)
+        ttk.Label(header, text="?????", style="Header.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(header, text="???????????????????????????? Pi ???????", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
+
+        body = ttk.Frame(shell, style="Panel.TFrame", padding=16)
+        body.grid(row=1, column=0, sticky="nsew", pady=(16, 0))
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(1, weight=1)
+
+        form = ttk.Frame(body, style="SoftPanel.TFrame", padding=12)
+        form.grid(row=0, column=0, sticky="ew")
+        form.columnconfigure(1, weight=1)
+        ttk.Label(form, text="?????", style="Body.TLabel").grid(row=0, column=0, sticky="w")
+        self.training_workspace_entry = ttk.Entry(form)
+        self.training_workspace_entry.grid(row=0, column=1, sticky="ew", padx=(10, 0))
+        self.training_workspace_entry.insert(0, str(self.runtime.get_training_overview().get("latest_workspace") or get_config("training.workspace_name", "labdetector_training")))
+        ttk.Label(form, text="LLM ????", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(10, 0))
+        self.training_base_model_entry = ttk.Entry(form)
+        self.training_base_model_entry.grid(row=1, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
+        self.training_base_model_entry.insert(0, str(get_config("training.llm_base_model", "")))
+        ttk.Label(form, text="Pi ????", style="Body.TLabel").grid(row=2, column=0, sticky="w", pady=(10, 0))
+        self.training_pi_weights_entry = ttk.Entry(form)
+        self.training_pi_weights_entry.grid(row=2, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
+        self.training_pi_weights_entry.insert(0, str(get_config("training.pi_base_weights", "yolov8n.pt")))
+
+        actions = ttk.Frame(body, style="SoftPanel.TFrame", padding=12)
+        actions.grid(row=1, column=0, sticky="new", pady=(14, 0))
+        for idx in range(5):
+            actions.columnconfigure(idx, weight=1)
+        ttk.Button(actions, text="???????", command=self._build_training_workspace_from_form).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        ttk.Button(actions, text="?? LLM ??", command=self._start_llm_training_from_form).grid(row=0, column=1, sticky="ew", padx=6)
+        ttk.Button(actions, text="?? Pi ??", command=self._start_pi_training_from_form).grid(row=0, column=2, sticky="ew", padx=6)
+        ttk.Button(actions, text="??", command=self._refresh_training_overview).grid(row=0, column=3, sticky="ew", padx=6)
+        ttk.Button(actions, text="??", command=_close_window).grid(row=0, column=4, sticky="ew", padx=(6, 0))
+
+        detail_wrap = ttk.Frame(body, style="SoftPanel.TFrame", padding=12)
+        detail_wrap.grid(row=2, column=0, sticky="nsew", pady=(14, 0))
+        detail_wrap.columnconfigure(0, weight=1)
+        detail_wrap.rowconfigure(1, weight=1)
+        ttk.Label(detail_wrap, text="????", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
+        self.training_detail_text = tk.Text(detail_wrap, bg="#0f1720", fg="#dbe6f2", insertbackground="#dbe6f2", relief="flat", font=("Microsoft YaHei UI", 10), wrap="word")
+        self.training_detail_text.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
+        self.training_detail_text.configure(state="disabled")
+
+        footer = ttk.Frame(shell, style="Panel.TFrame", padding=(10, 12))
+        footer.grid(row=2, column=0, sticky="ew", pady=(16, 0))
+        footer.columnconfigure(0, weight=1)
+        ttk.Label(footer, textvariable=self.training_status_var, style="Foot.TLabel").grid(row=0, column=0, sticky="w")
+
+        self._register_scroll_target(detail_wrap, self.training_detail_text)
+        self._register_scroll_target(self.training_detail_text, self.training_detail_text)
+        self._refresh_training_overview()
+
     def _selected_cloud_backend(self) -> str:
         if self.cloud_provider_combo is None:
             return "qwen"
@@ -2510,6 +2826,7 @@ class DesktopApp:
                     self.hero_var.set("启动自检已完成")
                 elif name in {"start_session", "stop_session"}:
                     self._render_state(payload)
+                    self._refresh_archive_catalog() if self.archive_window is not None else None
         except queue.Empty:
             pass
         self.root.after(250, self._process_queue)

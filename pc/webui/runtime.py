@@ -41,6 +41,8 @@ from pc.core.ai_backend import (
     set_ai_backend,
 )
 from pc.core.config import get_config, set_config
+from pc.core.experiment_archive import get_experiment_archive
+from pc.training import training_manager
 from pc.core.expert_manager import expert_manager
 from pc.core.expert_closed_loop import (
     ExpertResult,
@@ -72,6 +74,11 @@ OPTIONAL_DEPENDENCY_MAP = {
     "langchain_huggingface": "langchain-huggingface",
     "sentence_transformers": "sentence-transformers",
     "faiss": "faiss-cpu",
+    "transformers": "transformers",
+    "accelerate": "accelerate",
+    "datasets": "datasets",
+    "peft": "peft",
+    "ultralytics": "ultralytics",
 }
 
 
@@ -85,6 +92,7 @@ class DashboardMultiPiManager:
         pi_dict: Dict[str, str],
         log_info: Callable[[str], None],
         log_error: Callable[[str], None],
+        archive_event: Optional[Callable[..., Any]] = None,
     ) -> None:
         from pc.communication.multi_ws_manager import MultiPiManager as BaseMultiPiManager
 
@@ -106,6 +114,7 @@ class DashboardMultiPiManager:
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.log_info = log_info
         self.log_error = log_error
+        self.archive_event = archive_event
         self.node_latest_results: Dict[str, Dict[str, Any]] = {
             pid: {"text": "", "event_name": "", "timestamp": 0.0}
             for pid in pi_dict
@@ -200,6 +209,20 @@ class DashboardMultiPiManager:
                                             "event_name": event.event_name,
                                             "timestamp": time.time(),
                                         }
+                                        if self.archive_event is not None:
+                                            try:
+                                                self.archive_event(
+                                                    "expert_result",
+                                                    {
+                                                        "node_id": pi_id,
+                                                        "event_id": event.event_id,
+                                                        "event_name": event.event_name,
+                                                        "result_text": tts_text,
+                                                    },
+                                                    title=f"???? {event.event_name}",
+                                                )
+                                            except Exception:
+                                                pass
                                         result = ExpertResult(
                                             event_id=event.event_id,
                                             text=tts_text,
@@ -319,6 +342,9 @@ class LabDetectorRuntime:
         self.demo_sequence: List[Dict[str, Any]] = []
         self.demo_index = 0
         self._refresh_shadow_demo_config()
+        self.experiment_archive = get_experiment_archive()
+        self.session_metadata: Dict[str, Any] = {}
+        self.archive_session_id = ""
 
     def set_server_meta(self, host: str, port: int) -> None:
         self.server_meta = {"host": host, "port": port}
@@ -398,11 +424,16 @@ class LabDetectorRuntime:
                     "selected_model": self.selected_model,
                     "mode": "camera",
                     "expected_nodes": 1,
+                    "project_name": str(get_config("session_defaults.project_name", "AI4S ???????")),
+                    "experiment_name": str(get_config("session_defaults.experiment_name", "??????")),
+                    "operator_name": str(get_config("session_defaults.operator_name", "")),
+                    "tags": str(get_config("session_defaults.tags", "??,??,???")),
                 },
             },
             "knowledge_bases": self.get_knowledge_base_catalog(),
             "experts": self.get_expert_catalog(),
             "cloud_backends": self.get_cloud_backend_catalog(),
+            "training": self.get_training_overview(),
             "state": self.get_state(),
         }
 
@@ -426,6 +457,8 @@ class LabDetectorRuntime:
                 "expected_nodes": self.expected_nodes,
                 "started_at": self.started_at,
                 "status_message": self.status_message,
+                "archive_session_id": self.archive_session_id,
+                "metadata": dict(self.session_metadata),
             },
             "summary": summary,
             "self_check": self.self_check_results,
@@ -649,6 +682,76 @@ class LabDetectorRuntime:
     def get_expert_catalog(self) -> List[Dict[str, Any]]:
         return expert_manager.list_expert_catalog()
 
+    def get_archive_catalog(self) -> List[Dict[str, Any]]:
+        return self.experiment_archive.list_sessions(limit=80)
+
+    def get_archive_detail(self, session_id: str) -> Dict[str, Any]:
+        return self.experiment_archive.get_session_detail(session_id)
+
+    def get_training_overview(self) -> Dict[str, Any]:
+        return training_manager.overview()
+
+    def build_training_workspace(self, workspace_name: str = "") -> Dict[str, Any]:
+        summary = training_manager.build_training_workspace(workspace_name=workspace_name or str(get_config("training.workspace_name", "labdetector_training")))
+        self._log_info(f"????????: {summary['workspace_dir']}")
+        return summary
+
+    def start_llm_finetune(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        job = training_manager.start_llm_job(payload)
+        self._log_info(f"??????????: {job['job_id']}")
+        return job
+
+    def start_pi_detector_finetune(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        job = training_manager.start_pi_job(payload)
+        self._log_info(f"??? Pi ????????: {job['job_id']}")
+        return job
+
+    @staticmethod
+    def _parse_session_tags(raw: Any) -> List[str]:
+        if isinstance(raw, list):
+            return [str(item).strip() for item in raw if str(item).strip()]
+        text = str(raw or "").replace(";", ",")
+        return [part.strip() for part in text.split(",") if part.strip()]
+
+    def _open_archive_session(self) -> str:
+        meta = dict(self.session_metadata)
+        meta.update(
+            {
+                "mode": self.mode,
+                "source": "pc_local" if self.mode == "camera" else "pi_cluster",
+                "backend": self.ai_backend,
+                "model": self.selected_model,
+            }
+        )
+        self.archive_session_id = self.experiment_archive.open_session(meta)
+        return self.archive_session_id
+
+    def _close_archive_session(self) -> None:
+        if self.archive_session_id:
+            try:
+                self.experiment_archive.close_session()
+            finally:
+                self.archive_session_id = ""
+
+    def _record_archive_event(self, event_type: str, payload: Dict[str, Any], title: str = "", frame: Optional[np.ndarray] = None) -> None:
+        if not self.archive_session_id:
+            return
+        enriched = dict(self.session_metadata)
+        enriched.update(payload)
+        enriched.setdefault("mode", self.mode)
+        enriched.setdefault("backend", self.ai_backend)
+        enriched.setdefault("model", self.selected_model)
+        if frame is not None:
+            try:
+                archive_root = Path(resource_path("pc/log/experiment_archives")) / self.archive_session_id / "frames"
+                archive_root.mkdir(parents=True, exist_ok=True)
+                frame_path = archive_root / f"{int(time.time() * 1000)}_{event_type}.jpg"
+                cv2.imwrite(str(frame_path), frame)
+                enriched["frame_path"] = str(frame_path)
+            except Exception:
+                pass
+        self.experiment_archive.record_event(event_type, enriched, title=title)
+
     def import_expert_assets(self, expert_code: str, paths: List[str]) -> Dict[str, Any]:
         summary = expert_manager.import_expert_assets(expert_code, paths)
         self._log_info(
@@ -699,9 +802,19 @@ class LabDetectorRuntime:
             self.selected_model = custom_model or selected_model or self._default_model_for(self.ai_backend)
             self.mode = str(payload.get("mode") or "camera")
             self.expected_nodes = max(1, int(payload.get("expected_nodes") or 1))
+            self.session_metadata = {
+                "project_name": str(payload.get("project_name") or get_config("session_defaults.project_name", "AI4S ???????")).strip(),
+                "experiment_name": str(payload.get("experiment_name") or get_config("session_defaults.experiment_name", "??????")).strip(),
+                "operator_name": str(payload.get("operator_name") or get_config("session_defaults.operator_name", "")).strip(),
+                "tags": self._parse_session_tags(payload.get("tags") or get_config("session_defaults.tags", "??,??,???")),
+            }
+            set_config("session_defaults.project_name", self.session_metadata["project_name"])
+            set_config("session_defaults.experiment_name", self.session_metadata["experiment_name"])
+            set_config("session_defaults.operator_name", self.session_metadata["operator_name"])
+            set_config("session_defaults.tags", ",".join(self.session_metadata["tags"]))
             self.session_active = True
             self.session_phase = "starting"
-            self.status_message = "正在初始化监控会话"
+            self.status_message = "?????????"
             self.started_at = time.time()
             self.stop_event = threading.Event()
             self.latest_inference_result = {"text": "", "timestamp": 0.0}
@@ -711,28 +824,37 @@ class LabDetectorRuntime:
             self.demo_sequence = []
             self.demo_index = 0
             self.demo_thread = None
+            self._open_archive_session()
+            try:
+                self._configure_backend()
+                self._ensure_scheduler()
+                self._ensure_voice_agent(start_local_microphone=self.mode == "camera")
 
-            self._configure_backend()
-            self._ensure_scheduler()
-            self._ensure_voice_agent(start_local_microphone=self.mode == "camera")
+                if self.mode == "camera":
+                    self._start_camera_session_locked()
+                    self.status_message = "??????????"
+                else:
+                    self._start_websocket_session_locked()
+                    self.status_message = f"?????????????? {self.expected_nodes}"
 
-            if self.mode == "camera":
-                self._start_camera_session_locked()
-                self.status_message = "本机摄像头监控已启动"
-            else:
-                self._start_websocket_session_locked()
-                self.status_message = f"多节点监控已启动，目标节点数 {self.expected_nodes}"
+                if self.demo_mode_enabled:
+                    self._start_shadow_demo_locked()
+                    self.status_message = f"??????????{self.status_message}"
 
-            if self.demo_mode_enabled:
-                self._start_shadow_demo_locked()
-                self.status_message = f"隐藏演示模式已激活：{self.status_message}"
-
-            self.session_phase = "running"
-            self._log_info(
-                f"监控会话已启动: backend={self.ai_backend}, model={self.selected_model}, mode={self.mode}"
-            )
+                self.session_phase = "running"
+                self._record_archive_event(
+                    "session_start",
+                    {"status_message": self.status_message, "expected_nodes": self.expected_nodes},
+                    title="????",
+                )
+                self._log_info(
+                    f"???????: backend={self.ai_backend}, model={self.selected_model}, mode={self.mode}"
+                )
+            except Exception:
+                self._close_archive_session()
+                self.session_metadata = {}
+                raise
         return self.get_state()
-
     def stop_session(self) -> Dict[str, Any]:
         with self.lock:
             self._stop_session_locked(announce=True)
@@ -866,7 +988,7 @@ class LabDetectorRuntime:
             agent.open_runtime_session(
                 mode=self.mode or "idle",
                 source=source,
-                metadata={"expected_nodes": self.expected_nodes},
+                metadata={"expected_nodes": self.expected_nodes, "archive_session_id": self.archive_session_id, **self.session_metadata},
             )
             if start_local_microphone:
                 if not agent.is_running:
@@ -956,7 +1078,8 @@ class LabDetectorRuntime:
                 result = expert_manager.route_and_analyze("Motion_Alert", frame, {})
                 if result:
                     self.latest_inference_result = {"text": result, "timestamp": time.time()}
-                    self._log_info(f"本机专家研判: {result}")
+                    self._record_archive_event("local_inference", {"event_name": "Motion_Alert", "result_text": result}, title="??????", frame=frame)
+                    self._log_info(f"??????: {result}")
                     if not (self.voice_agent and getattr(self.voice_agent, "is_active", False)):
                         try:
                             from pc.core.tts import speak_async
@@ -983,7 +1106,7 @@ class LabDetectorRuntime:
         else:
             self._log_info(f"已发现 {len(topology)} 个树莓派节点")
 
-        self.manager = DashboardMultiPiManager(topology, self._log_info, self._log_error)
+        self.manager = DashboardMultiPiManager(topology, self._log_info, self._log_error, archive_event=self._record_archive_event)
         self.manager_thread = threading.Thread(target=self._manager_loop, daemon=True, name="MultiNodeManager")
         self.manager_thread.start()
 
@@ -1012,6 +1135,7 @@ class LabDetectorRuntime:
                     close_session()
             except Exception:
                 pass
+        self._close_archive_session()
 
         self.local_frame = None
         self.latest_inference_result = {"text": "", "timestamp": 0.0}
