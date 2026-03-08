@@ -1,2 +1,1 @@
-def network_discovery():
-    return None
+﻿"""Core package for NeuroLab Hub runtime services."""
