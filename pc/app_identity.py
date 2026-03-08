@@ -1,34 +1,46 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Shared product identity metadata for desktop packaging and UI."""
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
-APP_NAME = "NeuroLabHub"
-APP_DISPLAY_NAME = "NeuroLab Hub"
-APP_SHORT_TAGLINE = "可编排专家模型的实验室多模态智能中枢"
-APP_DESCRIPTION = "面向科研实验室的多节点感知、专家编排、风险预警、语音交互、知识沉淀与训练闭环一体化桌面平台。"
-COMPANY_NAME = "NeuroLab Hub 软件研发组"
-COMPANY_NAME_EN = "NeuroLab Hub Software Team"
-COPYRIGHT_TEXT = "Copyright (C) 2026 NeuroLab Hub 软件研发组. All rights reserved."
-COPYRIGHT_TEXT_EN = "Copyright (C) 2026 NeuroLab Hub Software Team. All rights reserved."
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+IDENTITY_PATH = PROJECT_ROOT / "project_identity.json"
+IDENTITY = json.loads(IDENTITY_PATH.read_text(encoding="utf-8"))
+
+APP_NAME = IDENTITY["app_name"]
+APP_DISPLAY_NAME = IDENTITY["short_name"]
+APP_FORMAL_NAME = IDENTITY["formal_name"]
+APP_SOFTWARE_FULL_NAME = IDENTITY["software_full_name"]
+APP_SHORT_TAGLINE = IDENTITY["short_tagline"]
+APP_DESCRIPTION = IDENTITY["description"]
+COMPANY_NAME = IDENTITY["company_name_cn"]
+COMPANY_NAME_EN = IDENTITY["company_name_en"]
+COPYRIGHT_TEXT = IDENTITY["copyright_cn"]
+COPYRIGHT_TEXT_EN = IDENTITY["copyright_en"]
+DESKTOP_EXE_NAME = IDENTITY["desktop_exe"]
+LLM_EXE_NAME = IDENTITY["llm_exe"]
+VISION_EXE_NAME = IDENTITY["vision_exe"]
+RELEASE_PREFIX = IDENTITY["release_prefix"]
 LEGAL_NOTICE = (
-    "NeuroLab Hub：可编排专家模型的实验室多模态智能中枢\n\n"
-    "著作权人：NeuroLab Hub 软件研发组\n"
+    f"{APP_FORMAL_NAME}\n\n"
+    f"著作权人：{COMPANY_NAME}\n"
     "完成日期：2026 年 3 月\n"
     "本软件用于实验室多节点监控、专家辅助分析、语音交互、知识增强与模型训练。\n\n"
     "本软件的程序代码、界面设计、图标资源、说明文档及相关文字说明，\n"
-    "均由 NeuroLab Hub 软件研发组完成并享有相应著作权。\n\n"
+    f"均由 {COMPANY_NAME} 完成并享有相应著作权。\n\n"
     "第三方组件说明\n"
     "本软件在构建或运行过程中可能使用 Python、Tk、OpenCV、Pillow、PyInstaller、Transformers、PEFT、Ultralytics 等开源组件。"
 )
 
 
 def project_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    return PROJECT_ROOT
 
 
 def is_frozen_runtime() -> bool:
@@ -112,8 +124,8 @@ def logo_path() -> Path:
 
 
 def manual_path() -> Path:
-    return _existing_resource("docs/NeuroLab_Hub_用户手册.md")
+    return _existing_resource(IDENTITY["manual_doc"])
 
 
 def copyright_path() -> Path:
-    return _existing_resource("docs/NeuroLab_Hub_版权声明.md", "docs/NeuroLab_Hub_软件版权声明.md")
+    return _existing_resource(IDENTITY["copyright_doc"])
