@@ -59,6 +59,6 @@ jobs:
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
           files: |
-            LabDetector-Setup-v${{ steps.version.outputs.value }}.exe
-            LabDetector-v${{ steps.version.outputs.value }}.zip
-            LabDetector-Portable-v${{ steps.version.outputs.value }}.zip
+            NeuroLab-Hub-Setup-v${{ steps.version.outputs.value }}.exe
+            NeuroLab-Hub-v${{ steps.version.outputs.value }}.zip
+            NeuroLab-Hub-Portable-v${{ steps.version.outputs.value }}.zip

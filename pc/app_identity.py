@@ -104,11 +104,11 @@ def _existing_resource(*candidates: str) -> Path:
 
 
 def icon_path() -> Path:
-    return resource_path("assets/branding/labdetector.ico")
+    return resource_path("assets/branding/neurolab_hub.ico")
 
 
 def logo_path() -> Path:
-    return resource_path("assets/branding/labdetector_logo.png")
+    return resource_path("assets/branding/neurolab_hub_logo.png")
 
 
 def manual_path() -> Path:

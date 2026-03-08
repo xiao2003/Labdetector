@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""HTTP server for the LabDetector web console."""
+"""HTTP server for the NeuroLab Hub web console."""
 
 from __future__ import annotations
 

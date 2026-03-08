@@ -1,4 +1,4 @@
-#define MyAppId "{{A48DB687-BD0A-4F91-B7B3-6AFB0C2DCE41}}"
+﻿#define MyAppId "{{A48DB687-BD0A-4F91-B7B3-6AFB0C2DCE41}}"
 #define MyAppName "NeuroLab Hub"
 #define MyAppDisplayName "NeuroLab Hub Intelligent Laboratory Desktop Suite"
 #define MyAppPublisher "NeuroLab Hub Software Team"
@@ -30,7 +30,7 @@ DisableDirPage=no
 LicenseFile=LICENSE_zh_cn.txt
 InfoBeforeFile=INFO_zh_cn.txt
 WizardStyle=modern
-SetupIconFile=..\assets\branding\labdetector.ico
+SetupIconFile=..\assets\branding\neurolab_hub.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/max
 SolidCompression=yes
@@ -66,7 +66,7 @@ Source: "{#ReleaseDir}\APP\*"; DestDir: "{app}\APP"; Flags: ignoreversion recurs
 [Icons]
 Name: "{autoprograms}\NeuroLab Hub"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"
 Name: "{autoprograms}\NeuroLab Hub LLM 微调"; Filename: "{app}\{#MyLlmExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyLlmExeName}"
-Name: "{autoprograms}\NeuroLab Hub 识别模型训练"; Filename: "{app}\{#MyVisionExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyVisionExeName}"
+Name: "{autoprograms}\NeuroLab Hub Vision 训练"; Filename: "{app}\{#MyVisionExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyVisionExeName}"
 Name: "{autodesktop}\NeuroLab Hub"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]

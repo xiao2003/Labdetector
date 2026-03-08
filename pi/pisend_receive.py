@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 pisend_receive.py - 树莓派全双工收发器 (支持 QoS 动态帧率均衡版)
@@ -548,7 +548,7 @@ def run_pi_self_check(auto_install: Optional[bool] = None) -> bool:
         auto_install = bool(get_pi_config("self_check.auto_install_dependencies", True))
 
     print("\n" + "=" * 55)
-    print(f"[INFO] LabDetector V{APP_VERSION} (Pi 边缘端) - 节点自检")
+    print(f"[INFO] NeuroLab Hub V{APP_VERSION} (Pi 边缘端) - 节点自检")
     print("=" * 55)
 
     print("\n[INFO] [1/3] 检查 Python 依赖环境...")
@@ -629,3 +629,4 @@ if __name__ == '__main__':
         except KeyboardInterrupt:
             running = False
             print("\n[INFO] 正在关闭 Pi 边缘节点...")
+

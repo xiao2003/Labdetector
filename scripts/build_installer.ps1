@@ -25,7 +25,7 @@ try {
   $DesktopExe = Join-Path $ReleaseRoot "NeuroLab Hub.exe"
   $LlmExe = Join-Path $ReleaseRoot "NeuroLab Hub LLM.exe"
   $VisionExe = Join-Path $ReleaseRoot "NeuroLab Hub Vision.exe"
-  $InstallerScript = Join-Path $ProjectRoot "installer\LabDetector.iss"
+  $InstallerScript = Join-Path $ProjectRoot "installer\NeuroLab_Hub.iss"
   $InstallerOutput = Join-Path $ProjectRoot ("NeuroLab-Hub-Setup-v$Version.exe")
 
   if (!(Test-Path $InstallerScript)) {

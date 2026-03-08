@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Generate LabDetector desktop branding assets."""
+"""Generate NeuroLab Hub desktop branding assets."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from PIL import Image, ImageDraw, ImageFilter
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ASSET_DIR = PROJECT_ROOT / 'assets' / 'branding'
-PNG_PATH = ASSET_DIR / 'labdetector_logo.png'
-ICO_PATH = ASSET_DIR / 'labdetector.ico'
+PNG_PATH = ASSET_DIR / 'neurolab_hub_logo.png'
+ICO_PATH = ASSET_DIR / 'neurolab_hub.ico'
 
 
 def _draw_gradient(draw: ImageDraw.ImageDraw, size: int) -> None:

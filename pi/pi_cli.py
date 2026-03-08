@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""LabDetector Raspberry Pi CLI entrypoint."""
+"""NeuroLab Hub Raspberry Pi CLI entrypoint."""
 
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ def _config_snapshot() -> dict[str, Any]:
 
 
 def _print_block(data: dict[str, Any]) -> None:
-    print(f"LabDetector Pi CLI v{data['version']}")
+    print(f"NeuroLab Hub Pi CLI v{data['version']}")
     print(f"配置文件: {data['config_path']}")
     print(f"本机地址: {data['local_ip']}")
     print(f"中枢地址: {data['network']['pc_ip'] or '未设置'}")
@@ -128,7 +128,7 @@ def apply_start_overrides(args: argparse.Namespace) -> None:
 def start_node(skip_self_check: bool = False, auto_install_deps: Optional[bool] = None) -> int:
     runtime = _load_runtime()
     snapshot = _config_snapshot()
-    print("准备启动 LabDetector 树莓派边缘端")
+    print("准备启动 NeuroLab Hub 树莓派边缘端")
     print(f"本机地址: {snapshot['local_ip']}")
     print(f"中枢地址: {snapshot['network']['pc_ip'] or '未设置，等待自动发现'}")
     print(f"端口: {snapshot['network']['ws_port']}")
@@ -182,7 +182,7 @@ def interactive_config_wizard() -> int:
 
 def interactive_menu() -> int:
     while True:
-        print("\n=== LabDetector Pi 交互菜单 ===")
+        print("\n=== NeuroLab Hub Pi 交互菜单 ===")
         print("1. 查看状态")
         print("2. 运行自检")
         print("3. 查看配置")
@@ -208,7 +208,7 @@ def interactive_menu() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="labdetector-pi", description="LabDetector 树莓派边缘端交互工具")
+    parser = argparse.ArgumentParser(prog="labdetector-pi", description="NeuroLab Hub 树莓派边缘端交互工具")
     subparsers = parser.add_subparsers(dest="command")
 
     status_parser = subparsers.add_parser("status", help="查看当前配置与节点状态摘要")
@@ -280,3 +280,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

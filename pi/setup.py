@@ -9,7 +9,7 @@ VERSION = (ROOT.parent / "VERSION").read_text(encoding="utf-8").strip()
 setup(
     name="labdetector-pi",
     version=VERSION,
-    description="LabDetector Raspberry Pi edge node",
+    description="NeuroLab Hub Raspberry Pi edge node",
     packages=find_namespace_packages(where="."),
     py_modules=["pisend_receive", "config", "pi_cli"],
     include_package_data=True,

@@ -81,7 +81,7 @@ PiConfig.init()
 
   Push-Location $ProjectRoot
   try {
-    & $PythonExe -m PyInstaller --noconfirm --clean --workpath $WorkRoot --distpath $DistRoot labdetector.spec
+    & $PythonExe -m PyInstaller --noconfirm --clean --workpath $WorkRoot --distpath $DistRoot neurolab_hub.spec
     if ($LASTEXITCODE -ne 0) {
       throw "PyInstaller build failed."
     }

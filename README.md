@@ -139,7 +139,7 @@ D:\Labdetector
 ├─ LICENSE
 ├─ README.md
 ├─ launcher.py
-├─ labdetector.spec
+├─ neurolab_hub.spec
 ├─ requirements.txt
 ├─ setup.py
 ├─ assets/
