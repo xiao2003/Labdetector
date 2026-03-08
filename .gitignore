@@ -36,6 +36,8 @@ tmp/
 release/
 pc/APP/
 pc/LabDetector.exe
+pc/LabDetectorPanel.exe
+pc/LabDetectorTraining.exe
 pi/APP/
 LabDetector-Setup-v*.exe
 LabDetector-v*.zip
@@ -43,6 +45,7 @@ LabDetector-v*.zip
 # Generated caches
 scripts/__pycache__/
 pc/webui/__pycache__/
+
 # Training and runtime generated models
 pc/training_runs/
 pc/training_assets/

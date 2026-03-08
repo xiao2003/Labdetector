@@ -55,6 +55,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=f"{APP_NAME} Launcher")
     parser.add_argument("--cli", action="store_true", help="使用旧版控制台入口")
     parser.add_argument("--web", action="store_true", help="使用浏览器控制台")
+    parser.add_argument("--training-workbench", action="store_true", help="直接打开训练工作台")
     parser.add_argument("--host", default="127.0.0.1", help="Web 控制台监听地址")
     parser.add_argument("--port", default=8765, type=int, help="Web 控制台监听端口")
     parser.add_argument("--open-browser", action="store_true", help="启动 Web 模式后自动打开浏览器")
@@ -62,8 +63,19 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _infer_mode_from_exe_name() -> str:
+    exe_name = Path(sys.argv[0]).name.lower()
+    if "training" in exe_name:
+        return "training"
+    if "panel" in exe_name:
+        return "panel"
+    return "default"
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
+    inferred_mode = _infer_mode_from_exe_name()
+
     if args.smoke_test_file:
         return run_smoke_test(args.smoke_test_file)
     if args.cli:
@@ -76,12 +88,20 @@ def main(argv: list[str] | None = None) -> int:
         serve_dashboard(host=args.host, port=args.port, open_browser=args.open_browser)
         return 0
 
+    training_mode = bool(args.training_workbench or inferred_mode == "training")
+    panel_mode = inferred_mode == "panel"
+
     print("=" * 56)
     print(f"{APP_DISPLAY_NAME} v{APP_VERSION}")
     print(COMPANY_NAME)
     print("=" * 56)
-    print("正在启动桌面可视化软件...\n")
-    return launch_desktop_app()
+    if training_mode:
+        print("正在启动训练工作台...\n")
+    elif panel_mode:
+        print("正在启动控制面板...\n")
+    else:
+        print("正在启动桌面可视化软件...\n")
+    return launch_desktop_app(open_training_workbench=training_mode)
 
 
 if __name__ == "__main__":

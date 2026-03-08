@@ -1,30 +1,69 @@
-param(
+﻿param(
   [string]$PythonExe = 'C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe',
-  [switch]$SkipBuild
+  [switch]$SkipBuild,
+  [switch]$NoPause
 )
 
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$Version = (Get-Content -Path (Join-Path $ProjectRoot 'VERSION') -Raw).Trim()
-$PcExe = Join-Path $ProjectRoot 'pc\LabDetector.exe'
-$PiLauncher = Join-Path $ProjectRoot 'pi\start_pi_node.sh'
-$ZipPath = Join-Path $ProjectRoot ("LabDetector-v$Version.zip")
+$LogDir = Join-Path $ProjectRoot 'tmp\build_logs'
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+$LogFile = Join-Path $LogDir ("prepare_release_bundle_{0}.log" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+$TranscriptStarted = $false
+$CanPause = (-not $NoPause) -and ($Host.Name -eq "ConsoleHost") -and [string]::IsNullOrEmpty($env:CI) -and [string]::IsNullOrEmpty($env:GITHUB_ACTIONS)
 
-if (-not $SkipBuild) {
-  & (Join-Path $PSScriptRoot 'build_desktop_exe.ps1') -PythonExe $PythonExe
+try {
+  Start-Transcript -Path $LogFile -Force | Out-Null
+  $TranscriptStarted = $true
+} catch {
 }
 
-if (!(Test-Path $PcExe)) {
-  throw "Desktop executable not found: $PcExe"
+try {
+  $Version = (Get-Content -Path (Join-Path $ProjectRoot 'VERSION') -Raw).Trim()
+  $PcExe = Join-Path $ProjectRoot 'pc\LabDetector.exe'
+  $PanelExe = Join-Path $ProjectRoot 'pc\LabDetectorPanel.exe'
+  $TrainingExe = Join-Path $ProjectRoot 'pc\LabDetectorTraining.exe'
+  $PiLauncher = Join-Path $ProjectRoot 'pi\start_pi_node.sh'
+  $ZipPath = Join-Path $ProjectRoot ("LabDetector-v$Version.zip")
+
+  if (-not $SkipBuild) {
+    & (Join-Path $PSScriptRoot 'build_desktop_exe.ps1') -PythonExe $PythonExe -NoPause
+  }
+
+  if (!(Test-Path $PcExe) -or !(Test-Path $PanelExe) -or !(Test-Path $TrainingExe)) {
+    throw "Desktop executable set not found under pc/."
+  }
+  if (!(Test-Path $PiLauncher)) {
+    throw "Pi launcher not found: $PiLauncher"
+  }
+
+  Write-Host ''
+  Write-Host 'PC executable:' -ForegroundColor Green
+  Write-Host $PcExe -ForegroundColor Green
+  Write-Host 'Panel executable:' -ForegroundColor Green
+  Write-Host $PanelExe -ForegroundColor Green
+  Write-Host 'Training executable:' -ForegroundColor Green
+  Write-Host $TrainingExe -ForegroundColor Green
+  Write-Host 'PI launcher:' -ForegroundColor Green
+  Write-Host $PiLauncher -ForegroundColor Green
+  Write-Host 'Zip package:' -ForegroundColor Green
+  Write-Host $ZipPath -ForegroundColor Green
+  Write-Host 'Build log:' -ForegroundColor Green
+  Write-Host $LogFile -ForegroundColor Green
 }
-if (!(Test-Path $PiLauncher)) {
-  throw "Pi launcher not found: $PiLauncher"
+catch {
+  Write-Host ''
+  Write-Host "发布包准备失败: $($_.Exception.Message)" -ForegroundColor Red
+  Write-Host "日志文件: $LogFile" -ForegroundColor Yellow
+  if ($CanPause) {
+    Read-Host '按回车键退出'
+  }
+  exit 1
+}
+finally {
+  if ($TranscriptStarted) {
+    Stop-Transcript | Out-Null
+  }
 }
 
-Write-Host ''
-Write-Host 'PC executable:' -ForegroundColor Green
-Write-Host $PcExe -ForegroundColor Green
-Write-Host 'PI launcher:' -ForegroundColor Green
-Write-Host $PiLauncher -ForegroundColor Green
-Write-Host 'Zip package:' -ForegroundColor Green
-Write-Host $ZipPath -ForegroundColor Green
+

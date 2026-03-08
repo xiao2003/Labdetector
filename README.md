@@ -1,4 +1,4 @@
-﻿# LabDetector 3.0.2
+# LabDetector 3.0.2
 
 ## 1. 项目概述
 
@@ -227,12 +227,16 @@ cd D:\Labdetector
 ```text
 安装目录
 ├─ LabDetector.exe
+├─ LabDetectorPanel.exe
+├─ LabDetectorTraining.exe
 └─ APP
 ```
 
 其中：
 
-- `LabDetector.exe` 是用户双击启动的唯一主程序
+- `LabDetector.exe`：标准主程序入口
+- `LabDetectorPanel.exe`：控制面板快捷入口
+- `LabDetectorTraining.exe`：训练工作台快捷入口
 - `APP` 为隐藏运行时目录，包含程序依赖、文档和资源
 
 ### 7.4 一键训练
@@ -300,4 +304,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build_installer.ps1
 
 本项目当前已经超出“桌面软件演示原型”阶段，具备真实部署、知识导入、档案归档和训练微调能力，但最终效果仍取决于真实实验数据质量、标注规范和底座模型选择。
 
+
+
+### 7.6 本地构建防闪退启动方式
+
+- 双击 scripts/build_desktop_exe.cmd 构建桌面程序（窗口不会秒退）
+- 双击 scripts/build_installer.cmd 构建安装包（失败会显示日志路径）
+- 日志目录：`tmp/build_logs/`
 

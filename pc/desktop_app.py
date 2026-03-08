@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Desktop visualization app for LabDetector."""
 
@@ -2949,10 +2949,13 @@ class DesktopApp:
         self.root.mainloop()
 
 
-def launch_desktop_app() -> int:
+def launch_desktop_app(open_training_workbench: bool = False) -> int:
     app = DesktopApp()
+    if open_training_workbench:
+        app.root.after(1200, app._show_training_window)
     app.run()
     return 0
+
 
 
 

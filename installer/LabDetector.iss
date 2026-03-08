@@ -1,9 +1,11 @@
-#define MyAppId "{{A48DB687-BD0A-4F91-B7B3-6AFB0C2DCE41}}"
+﻿#define MyAppId "{{A48DB687-BD0A-4F91-B7B3-6AFB0C2DCE41}}"
 #define MyAppName "LabDetector"
 #define MyAppDisplayName "LabDetector Intelligent Laboratory Desktop Suite"
 #define MyAppPublisher "LabDetector Software Team"
 #define MyAppURL "https://github.com/xiao2003/Labdetector"
 #define MyAppExeName "LabDetector.exe"
+#define MyPanelExeName "LabDetectorPanel.exe"
+#define MyTrainingExeName "LabDetectorTraining.exe"
 #ifndef MyAppVersion
   #define MyAppVersion "3.0.2"
 #endif
@@ -57,10 +59,14 @@ Name: "{app}\APP"; Attribs: hidden system
 
 [Files]
 Source: "{#ReleaseDir}\LabDetector.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ReleaseDir}\LabDetectorPanel.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ReleaseDir}\LabDetectorTraining.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ReleaseDir}\APP\*"; DestDir: "{app}\APP"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\LabDetector"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"
+Name: "{autoprograms}\LabDetector 控制面板"; Filename: "{app}\{#MyPanelExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyPanelExeName}"
+Name: "{autoprograms}\LabDetector 训练工作台"; Filename: "{app}\{#MyTrainingExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyTrainingExeName}"
 Name: "{autodesktop}\LabDetector"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
