@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(3, 0, 4, 0),
-    prodvers=(3, 0, 4, 0),
+    filevers=(3, 0, 5, 0),
+    prodvers=(3, 0, 5, 0),
     mask=0x3F,
     flags=0x0,
     OS=0x40004,
@@ -14,14 +14,14 @@ VSVersionInfo(
       StringTable(
         u'080404B0',
         [
-          StringStruct(u'CompanyName', u'LabDetector Software Team'),
+          StringStruct(u'CompanyName', u'NeuroLab Hub Software Team'),
           StringStruct(u'FileDescription', u'LabDetector Intelligent Laboratory Desktop Suite'),
-          StringStruct(u'FileVersion', u'3.0.4'),
-          StringStruct(u'InternalName', u'LabDetector'),
-          StringStruct(u'LegalCopyright', u'Copyright (C) 2026 LabDetector Software Team. All rights reserved.'),
-          StringStruct(u'OriginalFilename', u'LabDetector.exe'),
-          StringStruct(u'ProductName', u'LabDetector'),
-          StringStruct(u'ProductVersion', u'3.0.4')
+          StringStruct(u'FileVersion', u'3.0.5'),
+          StringStruct(u'InternalName', u'NeuroLabHub'),
+          StringStruct(u'LegalCopyright', u'Copyright (C) 2026 NeuroLab Hub Software Team. All rights reserved.'),
+          StringStruct(u'OriginalFilename', u'NeuroLabHub.exe'),
+          StringStruct(u'ProductName', u'NeuroLabHub'),
+          StringStruct(u'ProductVersion', u'3.0.5')
         ]
       )
     ]),

@@ -1,30 +1,13 @@
-# 软件版权声明
+﻿# NeuroLab Hub 软件版权声明
 
-软件名称：LabDetector 智能实验室监控软件
-著作权人：LabDetector 软件研发组
-版本号：V3.0.4
+软件名称：NeuroLab Hub
+著作权人：NeuroLab Hub 软件研发组
 完成日期：2026 年 3 月
 
-## 1. 著作权声明
-LabDetector 智能实验室监控软件的程序代码、界面设计、图形图标、页面布局、软件文档及相关说明文字，均由 LabDetector 软件研发组完成并享有相应著作权。
+## 一、版权归属
 
-## 2. 使用范围
-本软件用于实验室多节点监控、事件提示、专家辅助分析、运行状态可视化与软件登记展示。
+NeuroLab Hub 的程序代码、界面设计、图形图标、页面布局、软件文档及相关说明文字，均由 NeuroLab Hub 软件研发组完成并享有相应著作权。
 
-## 3. 权利保留
-未经著作权人书面许可，任何组织和个人不得以复制、修改、分发、反向工程、二次售卖、冒用主体信息等方式侵犯本软件的合法权益。
+## 二、第三方组件说明
 
-## 4. 第三方组件说明
-本软件在构建或运行过程中可能使用 Python、Tk、OpenCV、Pillow、PyInstaller 等第三方开源组件。相关第三方组件的知识产权归其原始作者或开源组织所有，本软件仅在其许可范围内集成使用。
-
-## 5. 版本资源说明
-本软件 EXE 已写入以下版本资源：
-- ProductName：LabDetector
-- FileDescription：LabDetector Intelligent Laboratory Desktop Suite
-- CompanyName：LabDetector 软件研发组
-- LegalCopyright：Copyright (C) 2026 LabDetector 软件研发组. All rights reserved.
-- ProductVersion：V3.0.4
-
-## 6. 交付形态说明
-软件以 Windows 桌面 EXE 目录方式交付，同时提供一键启动器，便于直接双击运行。
-
+本软件在开发、构建或运行过程中可能使用 Python、Tk、OpenCV、Pillow、PyInstaller、Transformers、PEFT、Ultralytics 等第三方开源组件，其著作权归各自权利人所有。

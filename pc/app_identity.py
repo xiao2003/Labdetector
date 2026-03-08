@@ -7,23 +7,23 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-APP_NAME = "LabDetector"
-APP_DISPLAY_NAME = "LabDetector 智能实验室监控软件"
-APP_SHORT_TAGLINE = "实验室多节点监控与专家联动平台"
-APP_DESCRIPTION = "面向实验室场景的可视化监控、专家研判与知识增强桌面软件。"
-COMPANY_NAME = "LabDetector 软件研发组"
-COMPANY_NAME_EN = "LabDetector Software Team"
-COPYRIGHT_TEXT = "Copyright (C) 2026 LabDetector 软件研发组. All rights reserved."
-COPYRIGHT_TEXT_EN = "Copyright (C) 2026 LabDetector Software Team. All rights reserved."
+APP_NAME = "NeuroLabHub"
+APP_DISPLAY_NAME = "NeuroLab Hub"
+APP_SHORT_TAGLINE = "AI for Science 实验室多节点监控与智能交互平台"
+APP_DESCRIPTION = "面向科研实验室的多节点监控、风险研判、语音交互、知识沉淀与训练部署一体化桌面平台。"
+COMPANY_NAME = "NeuroLab Hub 软件研发组"
+COMPANY_NAME_EN = "NeuroLab Hub Software Team"
+COPYRIGHT_TEXT = "Copyright (C) 2026 NeuroLab Hub 软件研发组. All rights reserved."
+COPYRIGHT_TEXT_EN = "Copyright (C) 2026 NeuroLab Hub Software Team. All rights reserved."
 LEGAL_NOTICE = (
-    "LabDetector 智能实验室监控软件\n\n"
-    "著作权人：LabDetector 软件研发组\n"
+    "NeuroLab Hub\n\n"
+    "著作权人：NeuroLab Hub 软件研发组\n"
     "完成日期：2026 年 3 月\n"
-    "本软件用于实验室多节点监控、专家辅助分析与知识增强展示。\n\n"
+    "本软件用于实验室多节点监控、专家辅助分析、语音交互、知识增强与模型训练。\n\n"
     "本软件的程序代码、界面设计、图标资源、说明文档及相关文字说明，\n"
-    "均由 LabDetector 软件研发组完成并享有相应著作权。\n\n"
+    "均由 NeuroLab Hub 软件研发组完成并享有相应著作权。\n\n"
     "第三方组件说明\n"
-    "本软件在构建或运行过程中可能使用 Python、Tk、OpenCV、Pillow、PyInstaller 等开源组件。"
+    "本软件在构建或运行过程中可能使用 Python、Tk、OpenCV、Pillow、PyInstaller、Transformers、PEFT、Ultralytics 等开源组件。"
 )
 
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Desktop visualization app for LabDetector."""
+"""Desktop visualization app for NeuroLab Hub."""
 
 from __future__ import annotations
 
@@ -118,7 +118,11 @@ class DesktopApp:
         self.wall_canvas: tk.Canvas | None = None
         self.wall_inner: ttk.Frame | None = None
         self.wall_window: int | None = None
-        self.log_text: tk.Text | None = None
+        self.log_tree: ttk.Treeview | None = None
+        self.log_detail_text: tk.Text | None = None
+        self.log_status_var = tk.StringVar(value="等待系统事件")
+        self.log_row_keys: List[str] = []
+        self.log_rows: List[Dict[str, str]] = []
         self.session_badge: tk.Label | None = None
         self.hero_message_label: ttk.Label | None = None
         self.info_description_label: ttk.Label | None = None
@@ -145,12 +149,12 @@ class DesktopApp:
         self.custom_model_var = tk.StringVar()
         self.mode_var = tk.StringVar(value="camera")
         self.expected_nodes_var = tk.StringVar(value="1")
-        self.hero_var = tk.StringVar(value="正在初始化可视化界面")
+        self.hero_var = tk.StringVar(value="正在初始化 NeuroLab Hub 可视化界面")
         self.session_var = tk.StringVar(value="待机")
         self.brand_var = tk.StringVar(value=f"{COMPANY_NAME} | 版本 v{self.runtime.version}")
         self.footer_var = tk.StringVar(value=COPYRIGHT_TEXT)
-        self.splash_message_var = tk.StringVar(value="正在准备运行环境与监控界面…")
-        self.kb_status_var = tk.StringVar(value="等待载入知识库目录")
+        self.splash_message_var = tk.StringVar(value="正在准备运行环境与可视化面板")
+        self.kb_status_var = tk.StringVar(value="等待导入知识库目录")
         self.kb_reset_var = tk.BooleanVar(value=False)
         self.kb_structured_var = tk.BooleanVar(value=True)
         self.left_collapsed_var = tk.BooleanVar(value=False)
@@ -166,11 +170,11 @@ class DesktopApp:
             "offline": tk.StringVar(value="0"),
             "voice": tk.StringVar(value="OFF"),
         }
-        self.hero_var.set("正在初始化桌面可视化界面")
+        self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
         self.session_var.set("待机")
         self.brand_var.set(f"{COMPANY_NAME} | 版本 v{self.runtime.version}")
-        self.splash_message_var.set("正在准备运行环境与监控界面…")
-        self.kb_status_var.set("等待载入知识库目录")
+        self.splash_message_var.set("正在准备运行环境与可视化面板")
+        self.kb_status_var.set("等待导入知识库目录")
 
         self._build_style()
         self._apply_branding()
@@ -319,19 +323,51 @@ class DesktopApp:
             self.logo_image = None
 
     def _build_menu(self) -> None:
-        menubar = tk.Menu(self.root, tearoff=False, bg="#182330", fg="#f5f7fb", activebackground="#20c997", activeforeground="#0f1720")
-        software_menu = tk.Menu(menubar, tearoff=False, bg="#182330", fg="#f5f7fb", activebackground="#20c997", activeforeground="#0f1720")
+        menubar = tk.Menu(
+            self.root,
+            tearoff=False,
+            bg="#182330",
+            fg="#f5f7fb",
+            activebackground="#20c997",
+            activeforeground="#0f1720",
+        )
+        software_menu = tk.Menu(
+            menubar,
+            tearoff=False,
+            bg="#182330",
+            fg="#f5f7fb",
+            activebackground="#20c997",
+            activeforeground="#0f1720",
+        )
         software_menu.add_command(label="运行启动自检", command=self._run_self_check)
-        software_menu.add_command(label="刷新模型", command=self._refresh_models)
+        software_menu.add_command(label="刷新模型目录", command=self._refresh_models)
+        software_menu.add_command(label="专家模型管理", command=self._show_expert_window)
         software_menu.add_command(label="知识库管理", command=self._show_knowledge_base_window)
+        software_menu.add_command(label="模型服务配置", command=self._show_cloud_backend_window)
+        software_menu.add_command(label="实验档案中心", command=self._show_archive_window)
+        software_menu.add_command(label="训练工作台", command=self._show_training_window)
         software_menu.add_separator()
         software_menu.add_command(label="退出", command=self._on_close)
 
-        view_menu = tk.Menu(menubar, tearoff=False, bg="#182330", fg="#f5f7fb", activebackground="#20c997", activeforeground="#0f1720")
+        view_menu = tk.Menu(
+            menubar,
+            tearoff=False,
+            bg="#182330",
+            fg="#f5f7fb",
+            activebackground="#20c997",
+            activeforeground="#0f1720",
+        )
         view_menu.add_command(label="折叠 / 展开左栏", command=self._toggle_left_panel)
         view_menu.add_command(label="恢复默认布局", command=self._reset_window_layout)
 
-        help_menu = tk.Menu(menubar, tearoff=False, bg="#182330", fg="#f5f7fb", activebackground="#20c997", activeforeground="#0f1720")
+        help_menu = tk.Menu(
+            menubar,
+            tearoff=False,
+            bg="#182330",
+            fg="#f5f7fb",
+            activebackground="#20c997",
+            activeforeground="#0f1720",
+        )
         help_menu.add_command(label="软件说明", command=self._show_manual_window)
         help_menu.add_command(label="关于软件", command=self._show_about_window)
         help_menu.add_command(label="版权信息", command=self._show_copyright_window)
@@ -347,7 +383,6 @@ class DesktopApp:
         shell.columnconfigure(0, weight=0, minsize=self.left_panel_width)
         shell.columnconfigure(1, weight=1)
         shell.rowconfigure(1, weight=1)
-        shell.rowconfigure(2, weight=1)
         self.shell_frame = shell
 
         hero = ttk.Frame(shell, style="Panel.TFrame", padding=20)
@@ -356,7 +391,7 @@ class DesktopApp:
         hero.columnconfigure(1, weight=0)
 
         hero_left = ttk.Frame(hero, style="Panel.TFrame")
-        hero_left.grid(row=0, column=0, sticky="w")
+        hero_left.grid(row=0, column=0, sticky="nsew")
         ttk.Label(hero_left, text=APP_DISPLAY_NAME, style="Header.TLabel").pack(anchor="w")
         ttk.Label(hero_left, text=APP_SHORT_TAGLINE, style="Brand.TLabel").pack(anchor="w", pady=(6, 0))
         self.hero_message_label = ttk.Label(hero_left, textvariable=self.hero_var, style="Body.TLabel", wraplength=self.hero_wraplength)
@@ -364,19 +399,32 @@ class DesktopApp:
         ttk.Label(hero_left, textvariable=self.brand_var, style="Foot.TLabel").pack(anchor="w", pady=(10, 0))
 
         hero_right = ttk.Frame(hero, style="Panel.TFrame")
-        hero_right.grid(row=0, column=1, sticky="e")
+        hero_right.grid(row=0, column=1, sticky="ne", padx=(20, 0))
+        hero_right.columnconfigure(0, weight=1)
         self.session_badge = tk.Label(hero_right, textvariable=self.session_var, bg="#1fb68d", fg="#0f1720", font=("Microsoft YaHei UI", 11, "bold"), padx=14, pady=8)
-        self.session_badge.pack(anchor="e")
-        ttk.Button(hero_right, text="\u6298\u53e0 / \u5c55\u5f00\u5de6\u680f", command=self._toggle_left_panel).pack(anchor="e", pady=(10, 0), fill="x")
-        ttk.Button(hero_right, text="运行启动自检", command=self._run_self_check).pack(anchor="e", pady=(8, 0), fill="x")
-        ttk.Button(hero_right, text="专家模型管理", command=self._show_expert_window).pack(anchor="e", pady=(8, 0), fill="x")
-        ttk.Button(hero_right, text="知识库管理", command=self._show_knowledge_base_window).pack(anchor="e", pady=(8, 0), fill="x")
-        ttk.Button(hero_right, text="模型服务配置", command=self._show_cloud_backend_window).pack(anchor="e", pady=(8, 0), fill="x")
-        ttk.Button(hero_right, text="软件说明", command=self._show_manual_window).pack(anchor="e", pady=(8, 0), fill="x")
-        ttk.Button(hero_right, text="关于 / 版权", command=self._show_about_and_copyright).pack(anchor="e", pady=(8, 0), fill="x")
+        self.session_badge.grid(row=0, column=0, sticky="e")
+
+        action_strip = ttk.Frame(hero_right, style="Panel.TFrame")
+        action_strip.grid(row=1, column=0, sticky="e", pady=(12, 0))
+        for column in range(4):
+            action_strip.columnconfigure(column, weight=1)
+        actions = [
+            ("折叠侧栏", self._toggle_left_panel),
+            ("运行自检", self._run_self_check),
+            ("专家模型", self._show_expert_window),
+            ("知识库", self._show_knowledge_base_window),
+            ("模型服务", self._show_cloud_backend_window),
+            ("训练工作台", self._show_training_window),
+            ("软件说明", self._show_manual_window),
+            ("关于版权", self._show_about_and_copyright),
+        ]
+        for index, (label, command) in enumerate(actions):
+            row_index = index // 4
+            column_index = index % 4
+            ttk.Button(action_strip, text=label, command=command).grid(row=row_index, column=column_index, sticky="ew", padx=(0 if column_index == 0 else 8, 0), pady=(0 if row_index == 0 else 8, 0))
 
         left = ttk.Frame(shell, style="Panel.TFrame", padding=18)
-        left.grid(row=1, column=0, rowspan=2, sticky="nsew", padx=(0, 16))
+        left.grid(row=1, column=0, sticky="nsew", padx=(0, 16))
         left.configure(width=self.left_panel_width)
         left.grid_propagate(False)
         left.columnconfigure(0, weight=1)
@@ -402,7 +450,6 @@ class DesktopApp:
         self.form = ttk.Frame(config_panel, style="SoftPanel.TFrame")
         self.form.grid(row=1, column=0, sticky="ew", pady=(12, 0))
         self.form.columnconfigure(0, weight=1)
-
         self.backend_combo = self._add_labeled_combo(self.form, 0, "AI 后端")
         self.model_combo = self._add_labeled_combo(self.form, 1, "模型预设")
         self.custom_entry = self._add_labeled_entry(self.form, 2, "自定义模型")
@@ -413,13 +460,13 @@ class DesktopApp:
         btn_row.grid(row=2, column=0, sticky="ew", pady=(14, 0))
         btn_row.columnconfigure(0, weight=1)
         btn_row.columnconfigure(1, weight=1)
-        ttk.Button(btn_row, text="刷新模型", command=self._refresh_models).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        ttk.Button(btn_row, text="刷新模型目录", command=self._refresh_models).grid(row=0, column=0, sticky="ew", padx=(0, 6))
         ttk.Button(btn_row, text="启动监控", style="Accent.TButton", command=self._start_session).grid(row=0, column=1, sticky="ew", padx=(6, 0))
         ttk.Button(config_panel, text="停止监控", command=self._stop_session).grid(row=3, column=0, sticky="ew", pady=(10, 0))
 
         summary_panel = ttk.Frame(self.left_inner, style="SoftPanel.TFrame", padding=16)
         summary_panel.grid(row=1, column=0, sticky="ew", pady=(16, 0))
-        ttk.Label(summary_panel, text="运行概览", style="PanelTitle.TLabel").pack(anchor="w")
+        ttk.Label(summary_panel, text="系统概览", style="PanelTitle.TLabel").pack(anchor="w")
         self.summary_frame = ttk.Frame(summary_panel, style="SoftPanel.TFrame")
         self.summary_frame.pack(fill="x", pady=(12, 0))
 
@@ -428,7 +475,6 @@ class DesktopApp:
         checks_panel.columnconfigure(0, weight=1)
         checks_panel.rowconfigure(1, weight=1)
         ttk.Label(checks_panel, text="启动自检结果", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
-
         self.check_tree = ttk.Treeview(checks_panel, columns=("status", "summary"), show="headings", height=7)
         self.check_tree.heading("status", text="状态")
         self.check_tree.heading("summary", text="摘要")
@@ -444,35 +490,69 @@ class DesktopApp:
         self.info_copyright_label = ttk.Label(info_panel, text=COPYRIGHT_TEXT, style="Foot.TLabel", wraplength=self.info_wraplength)
         self.info_copyright_label.pack(anchor="w", pady=(10, 0))
 
-        right_top = ttk.Frame(shell, style="Panel.TFrame", padding=18)
-        right_top.grid(row=1, column=1, sticky="nsew")
-        right_top.columnconfigure(0, weight=1)
-        right_top.rowconfigure(1, weight=1)
-        ttk.Label(right_top, text="节点监控墙", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
+        right_panel = ttk.Frame(shell, style="Panel.TFrame", padding=18)
+        right_panel.grid(row=1, column=1, sticky="nsew")
+        right_panel.columnconfigure(0, weight=1)
+        right_panel.rowconfigure(1, weight=1)
 
-        self.wall_canvas = tk.Canvas(right_top, bg="#182330", highlightthickness=0)
+        header_row = ttk.Frame(right_panel, style="Panel.TFrame")
+        header_row.grid(row=0, column=0, sticky="ew")
+        header_row.columnconfigure(0, weight=1)
+        ttk.Label(header_row, text="节点监控与系统事件", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(header_row, textvariable=self.log_status_var, style="Foot.TLabel").grid(row=0, column=1, sticky="e")
+
+        content = ttk.Frame(right_panel, style="Panel.TFrame")
+        content.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
+        content.columnconfigure(0, weight=1)
+        content.rowconfigure(0, weight=3)
+        content.rowconfigure(1, weight=2)
+
+        wall_section = ttk.Frame(content, style="SoftPanel.TFrame", padding=14)
+        wall_section.grid(row=0, column=0, sticky="nsew")
+        wall_section.columnconfigure(0, weight=1)
+        wall_section.rowconfigure(1, weight=1)
+        ttk.Label(wall_section, text="多节点监控墙", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
+        self.wall_canvas = tk.Canvas(wall_section, bg="#182330", highlightthickness=0)
         self.wall_canvas.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
-        wall_scroll = ttk.Scrollbar(right_top, orient="vertical", command=self.wall_canvas.yview)
+        wall_scroll = ttk.Scrollbar(wall_section, orient="vertical", command=self.wall_canvas.yview)
         wall_scroll.grid(row=1, column=1, sticky="ns", pady=(12, 0))
         self.wall_canvas.configure(yscrollcommand=wall_scroll.set)
-
         self.wall_inner = ttk.Frame(self.wall_canvas, style="Panel.TFrame")
         self.wall_window = self.wall_canvas.create_window((0, 0), window=self.wall_inner, anchor="nw")
         self.wall_inner.bind("<Configure>", self._on_wall_configure)
         self.wall_canvas.bind("<Configure>", self._on_canvas_configure)
 
-        right_bottom = ttk.Frame(shell, style="Panel.TFrame", padding=18)
-        right_bottom.grid(row=2, column=1, sticky="nsew", pady=(16, 0))
-        right_bottom.columnconfigure(0, weight=1)
-        right_bottom.rowconfigure(1, weight=1)
-        ttk.Label(right_bottom, text="提示信息与运行日志", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
+        log_section = ttk.Frame(content, style="SoftPanel.TFrame", padding=14)
+        log_section.grid(row=1, column=0, sticky="nsew", pady=(16, 0))
+        log_section.columnconfigure(0, weight=1)
+        log_section.rowconfigure(1, weight=1)
+        ttk.Label(log_section, text="系统事件流", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
+        self.log_tree = ttk.Treeview(log_section, columns=("time", "level", "category", "summary"), show="headings", height=9)
+        self.log_tree.heading("time", text="时间")
+        self.log_tree.heading("level", text="级别")
+        self.log_tree.heading("category", text="模块")
+        self.log_tree.heading("summary", text="事件摘要")
+        self.log_tree.column("time", width=138, anchor="center", stretch=False)
+        self.log_tree.column("level", width=86, anchor="center", stretch=False)
+        self.log_tree.column("category", width=132, anchor="center", stretch=False)
+        self.log_tree.column("summary", width=520, anchor="w")
+        self.log_tree.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
+        log_scroll = ttk.Scrollbar(log_section, orient="vertical", command=self.log_tree.yview)
+        log_scroll.grid(row=1, column=1, sticky="ns", pady=(12, 0))
+        self.log_tree.configure(yscrollcommand=log_scroll.set)
+        self.log_tree.bind("<<TreeviewSelect>>", self._on_log_tree_select)
+        self.log_tree.tag_configure("INFO", foreground="#dbe6f2")
+        self.log_tree.tag_configure("WARN", foreground="#ffd166")
+        self.log_tree.tag_configure("WARNING", foreground="#ffd166")
+        self.log_tree.tag_configure("ERROR", foreground="#ff8f8f")
+        self.log_tree.tag_configure("SUCCESS", foreground="#6ce5b1")
 
-        self.log_text = tk.Text(right_bottom, height=10, bg="#0f1720", fg="#dbe6f2", insertbackground="#dbe6f2", relief="flat", font=("Consolas", 10), wrap="word")
-        self.log_text.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
-        self.log_text.configure(state="disabled")
+        self.log_detail_text = tk.Text(log_section, height=4, bg="#0f1720", fg="#dbe6f2", insertbackground="#dbe6f2", relief="flat", font=("Consolas", 10), wrap="word")
+        self.log_detail_text.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        self.log_detail_text.configure(state="disabled")
 
         footer = ttk.Frame(shell, style="Panel.TFrame", padding=(20, 10))
-        footer.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(16, 0))
+        footer.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(16, 0))
         footer.columnconfigure(0, weight=1)
         ttk.Label(footer, textvariable=self.footer_var, style="Foot.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(footer, text=f"{COMPANY_NAME} | v{self.runtime.version}", style="Foot.TLabel").grid(row=0, column=1, sticky="e")
@@ -481,7 +561,8 @@ class DesktopApp:
         self._register_scroll_target(self.left_inner, self.left_canvas)
         self._register_scroll_target(self.wall_canvas, self.wall_canvas)
         self._register_scroll_target(self.wall_inner, self.wall_canvas)
-        self._register_scroll_target(self.log_text, self.log_text)
+        self._register_scroll_target(self.log_tree, self.log_tree)
+        self._register_scroll_target(self.log_detail_text, self.log_detail_text)
         self._register_scroll_target(self.check_tree, self.check_tree)
 
     def _show_startup_splash(self) -> None:
@@ -612,7 +693,7 @@ class DesktopApp:
         self._render_checks(payload["state"]["self_check"])
         self._render_logs(payload["state"]["logs"])
         self._render_streams(payload["state"]["streams"])
-        self.splash_message_var.set("基础环境加载完成，正在进入主界面…")
+        self.splash_message_var.set("正在准备运行环境与可视化面板")
         self.root.after(450, self._finish_startup)
 
     def _update_model_choices(self, selected_model: str | None = None) -> None:
@@ -651,7 +732,7 @@ class DesktopApp:
         threading.Thread(target=runner, daemon=True, name=f"UI_{name}").start()
 
     def _refresh_models(self) -> None:
-        self.hero_var.set("正在刷新模型清单")
+        self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
         self._dispatch("refresh_models", self.runtime.refresh_model_catalog)
 
     def _sync_knowledge_scope_choices(self) -> None:
@@ -678,7 +759,7 @@ class DesktopApp:
         return self.kb_scope_map.get(self.kb_scope_combo.get(), "common")
 
     def _refresh_knowledge_bases(self) -> None:
-        self.hero_var.set("正在刷新知识库目录")
+        self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
         self._dispatch("kb_catalog", self.runtime.get_knowledge_base_catalog)
 
     def _import_knowledge_files(self) -> None:
@@ -696,8 +777,8 @@ class DesktopApp:
         if not paths:
             return
         scope = self._selected_kb_scope()
-        self.kb_status_var.set(f"正在导入 {len(paths)} 个知识文件到 {scope}")
-        self.hero_var.set("正在导入知识文件")
+        self.kb_status_var.set("等待导入知识库目录")
+        self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
         self._dispatch(
             "kb_import",
             lambda: self.runtime.import_knowledge_paths(
@@ -713,8 +794,8 @@ class DesktopApp:
         if not directory:
             return
         scope = self._selected_kb_scope()
-        self.kb_status_var.set(f"正在导入目录 {directory} 到 {scope}")
-        self.hero_var.set("正在导入知识目录")
+        self.kb_status_var.set("等待导入知识库目录")
+        self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
         self._dispatch(
             "kb_import",
             lambda: self.runtime.import_knowledge_paths(
@@ -785,7 +866,7 @@ class DesktopApp:
             self._render_kb_detail(self.knowledge_catalog[0])
             if self.kb_scope_combo is not None:
                 self.kb_scope_combo.set(self.kb_scope_reverse.get(first_scope, self.kb_scope_combo.get()))
-        self.kb_status_var.set(f"已加载 {len(self.knowledge_catalog)} 个知识库作用域")
+        self.kb_status_var.set("等待导入知识库目录")
 
     def _show_knowledge_base_window(self) -> None:
         if self.kb_window is not None and self.kb_window.winfo_exists():
@@ -886,7 +967,7 @@ class DesktopApp:
         self._refresh_knowledge_bases()
 
     def _run_self_check(self) -> None:
-        self.hero_var.set("正在执行 5 项启动自检")
+        self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
         self._dispatch("self_check", self.runtime.run_self_check)
 
     def _start_session(self) -> None:
@@ -907,11 +988,11 @@ class DesktopApp:
             "mode": mode_value,
             "expected_nodes": max(expected_nodes, 1),
         }
-        self.hero_var.set("正在启动监控会话")
+        self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
         self._dispatch("start_session", lambda: self.runtime.start_session(payload))
 
     def _stop_session(self) -> None:
-        self.hero_var.set("正在停止监控会话")
+        self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
         self._dispatch("stop_session", self.runtime.stop_session)
 
     def _process_queue(self) -> None:
@@ -965,8 +1046,8 @@ class DesktopApp:
 
     def _render_state(self, state: Dict[str, Any]) -> None:
         self.current_state = state
-        self.hero_var.set(state["session"].get("status_message") or "等待配置")
-        self.session_var.set("运行中" if state["session"].get("active") else "待机")
+        self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
+        self.session_var.set("待机")
         self._update_session_badge()
         self._render_summary(state)
         self._render_checks(state.get("self_check", []))
@@ -1016,20 +1097,95 @@ class DesktopApp:
         for item in checks:
             self.check_tree.insert("", "end", values=(item.get("status", "-"), item.get("summary", "")))
 
+    def _normalize_log_entry(self, row: Dict[str, Any]) -> Dict[str, str] | None:
+        raw_text = str(row.get("rendered") or row.get("text") or "").strip()
+        if not raw_text or re.fullmatch(r"[=\-]{8,}", raw_text):
+            return None
+        timestamp = str(row.get("timestamp") or "--:--:--")
+        level = str(row.get("level") or "INFO").upper()
+        text = raw_text
+        match = re.match(r"^\[(INFO|WARN|WARNING|ERROR|SUCCESS)\]\s*(.*)$", raw_text, re.I)
+        if match:
+            level = match.group(1).upper()
+            text = match.group(2).strip() or raw_text
+        lowered = text.lower()
+        if "自检" in text or "dependency" in lowered or "依赖" in text:
+            category = "启动自检"
+        elif "知识库" in text or "rag" in lowered:
+            category = "知识库"
+        elif "训练" in text or "微调" in text or "yolo" in lowered or "lora" in lowered:
+            category = "训练"
+        elif "语音" in text or "tts" in lowered or "asr" in lowered:
+            category = "语音交互"
+        elif "pi" in lowered or "节点" in text or "websocket" in lowered:
+            category = "节点通信"
+        elif "模型" in text or "ollama" in lowered or "qwen" in lowered or "deepseek" in lowered:
+            category = "模型服务"
+        else:
+            category = "运行状态"
+        summary = re.sub(r"\s+", " ", text).strip()
+        if len(summary) > 120:
+            summary = summary[:117].rstrip() + "..."
+        detail = f"时间：{timestamp}\n级别：{level}\n模块：{category}\n内容：{text}"
+        return {"key": f"{timestamp}|{level}|{category}|{text}", "time": timestamp, "level": level, "category": category, "summary": summary, "detail": detail}
+
+    def _append_log_row(self, item: Dict[str, str]) -> None:
+        if self.log_tree is None:
+            return
+        iid = f"log-{len(self.log_rows)}"
+        self.log_rows.append(item)
+        self.log_tree.insert("", "end", iid=iid, values=(item["time"], item["level"], item["category"], item["summary"]), tags=(item["level"],))
+
+    def _set_log_detail(self, detail: str) -> None:
+        if self.log_detail_text is None:
+            return
+        self.log_detail_text.configure(state="normal")
+        self.log_detail_text.delete("1.0", tk.END)
+        self.log_detail_text.insert("1.0", detail)
+        self.log_detail_text.configure(state="disabled")
+
+    def _on_log_tree_select(self, _event: tk.Event | None = None) -> None:
+        if self.log_tree is None:
+            return
+        selection = self.log_tree.selection()
+        if not selection:
+            if self.log_rows:
+                self._set_log_detail(self.log_rows[-1]["detail"])
+            return
+        iid = selection[0]
+        if iid.startswith("log-"):
+            index = int(iid.split("-", 1)[1])
+            if 0 <= index < len(self.log_rows):
+                self._set_log_detail(self.log_rows[index]["detail"])
+
     def _render_logs(self, logs: List[Dict[str, Any]]) -> None:
-        recent = logs[-120:]
-        lines = []
-        for row in recent:
-            rendered = row.get("rendered")
-            if rendered is not None:
-                lines.append(str(rendered))
-            else:
-                lines.append(f"[{row['timestamp']}] [{row['level']}] {row['text']}")
-        self.log_text.configure(state="normal")
-        self.log_text.delete("1.0", tk.END)
-        self.log_text.insert("1.0", "\n".join(lines))
-        self.log_text.see(tk.END)
-        self.log_text.configure(state="disabled")
+        if self.log_tree is None:
+            return
+        recent = [item for item in (self._normalize_log_entry(row) for row in logs[-160:]) if item is not None]
+        keys = [item["key"] for item in recent]
+        try:
+            was_at_bottom = self.log_tree.yview()[1] >= 0.97
+        except Exception:
+            was_at_bottom = True
+        if len(keys) >= len(self.log_row_keys) and keys[: len(self.log_row_keys)] == self.log_row_keys:
+            for item in recent[len(self.log_row_keys):]:
+                self._append_log_row(item)
+        elif keys != self.log_row_keys:
+            self.log_tree.delete(*self.log_tree.get_children())
+            self.log_rows = []
+            for item in recent:
+                self._append_log_row(item)
+        self.log_row_keys = keys
+        if recent:
+            latest = recent[-1]
+            self.log_status_var.set(f"最近事件 {len(recent)} 条 | 最新：{latest['category']} / {latest['level']}")
+            if was_at_bottom and self.log_rows:
+                self.log_tree.see(f"log-{len(self.log_rows) - 1}")
+            if not self.log_tree.selection():
+                self._set_log_detail(latest["detail"])
+        else:
+            self.log_status_var.set("系统事件流为空，等待运行数据")
+            self._set_log_detail("系统尚未产生可展示的事件。")
 
     def _effective_left_width(self) -> int:
         return 0 if self.left_collapsed_var.get() else self.left_panel_width
@@ -1874,6 +2030,7 @@ class DesktopApp:
         menubar.add_cascade(label="视图", menu=view_menu)
         menubar.add_cascade(label="帮助", menu=help_menu)
         self.root.configure(menu=menubar)
+
     def _load_bootstrap(self) -> None:
         payload = self.runtime.bootstrap()
         controls = payload["controls"]
@@ -1916,24 +2073,24 @@ class DesktopApp:
         self._render_checks(payload["state"]["self_check"])
         self._render_logs(payload["state"]["logs"])
         self._render_streams(payload["state"]["streams"])
-        self.splash_message_var.set("基础环境加载完成，正在进入主界面…")
+        self.splash_message_var.set("正在准备运行环境与可视化面板")
         self.root.after(450, self._finish_startup)
 
     def _refresh_models(self) -> None:
-        self.hero_var.set("正在刷新模型与后端配置")
+        self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
         self._dispatch("refresh_models", self.runtime.refresh_model_catalog)
         self._dispatch("cloud_catalog", self.runtime.get_cloud_backend_catalog)
 
     def _refresh_knowledge_bases(self) -> None:
-        self.hero_var.set("正在刷新知识库目录")
+        self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
         self._dispatch("kb_catalog", self.runtime.get_knowledge_base_catalog)
 
     def _refresh_expert_catalog(self) -> None:
-        self.hero_var.set("正在刷新专家模型目录")
+        self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
         self._dispatch("expert_catalog", self.runtime.get_expert_catalog)
 
     def _refresh_cloud_backend_catalog(self) -> None:
-        self.hero_var.set("正在刷新模型服务配置")
+        self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
         self._dispatch("cloud_catalog", self.runtime.get_cloud_backend_catalog)
 
     def _sync_knowledge_scope_choices(self) -> None:
@@ -1969,8 +2126,8 @@ class DesktopApp:
     def _dispatch_knowledge_import(self, paths: List[str], scope_name: str) -> None:
         if not paths:
             return
-        self.kb_status_var.set(f"正在导入 {len(paths)} 项知识资产到 {scope_name}")
-        self.hero_var.set("正在导入知识资产")
+        self.kb_status_var.set("等待导入知识库目录")
+        self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
         self._dispatch(
             "kb_import",
             lambda: self.runtime.import_knowledge_paths(
@@ -2079,7 +2236,7 @@ class DesktopApp:
             self._render_kb_detail(self.knowledge_catalog[0])
             if self.kb_scope_combo is not None:
                 self.kb_scope_combo.set(self.kb_scope_reverse.get(first_scope, self.kb_scope_combo.get()))
-        self.kb_status_var.set(f"已加载 {len(self.knowledge_catalog)} 个知识库作用域")
+        self.kb_status_var.set("等待导入知识库目录")
 
     def _show_knowledge_base_window(self) -> None:
         if self.kb_window is not None and self.kb_window.winfo_exists():
@@ -2368,7 +2525,7 @@ class DesktopApp:
         self._refresh_expert_catalog()
 
     def _refresh_archive_catalog(self) -> None:
-        self.hero_var.set("正在刷新实验档案")
+        self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
         self._dispatch("archive_catalog", self.runtime.get_archive_catalog)
 
     def _render_archive_detail(self, row: Dict[str, Any]) -> None:
@@ -2525,7 +2682,7 @@ class DesktopApp:
         return [directory] if directory else []
 
     def _refresh_training_overview(self) -> None:
-        self.hero_var.set("正在刷新训练工作台")
+        self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
         self._dispatch("training_overview", self.runtime.get_training_overview)
 
     def _render_training_overview(self) -> None:

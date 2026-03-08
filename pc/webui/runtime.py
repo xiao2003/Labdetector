@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Web runtime for the LabDetector dashboard."""
+"""Web runtime for the NeuroLab Hub dashboard."""
 
 from __future__ import annotations
 
@@ -495,7 +495,7 @@ class LabDetectorRuntime:
         results: List[Dict[str, Any]] = []
         self._log_raw_line("")
         self._log_raw_line("=" * 55)
-        self._log_raw_line(f"[INFO] LabDetector V{self.version} (PC 智算中枢) - 系统启动自检")
+        self._log_raw_line(f"[INFO] NeuroLab Hub V{self.version} (PC 智算中枢) - 系统启动自检")
         self._log_raw_line("=" * 55)
 
         for index, (key, title, runner) in enumerate(checks, start=1):
@@ -1576,3 +1576,4 @@ class LabDetectorRuntime:
         exported = self.export_logs()
         if exported:
             self._log_info(f"可视化运行时日志已导出: {exported}")
+

@@ -26,7 +26,7 @@ class DashboardServer(ThreadingHTTPServer):
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
-    server_version = "LabDetectorDashboard/1.0"
+    server_version = "NeuroLabHubDashboard/1.0"
 
     @property
     def runtime(self) -> LabDetectorRuntime:
@@ -262,7 +262,7 @@ def serve_dashboard(host: str = "127.0.0.1", port: int = 8765, open_browser: boo
     runtime.set_server_meta(host, port)
     server = DashboardServer(host, port, runtime)
     url = f"http://{host}:{port}"
-    runtime._log_info(f"LabDetector Web 控制台已启动: {url}")
+    runtime._log_info(f"NeuroLab Hub Web 控制台已启动: {url}")
 
     if open_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
@@ -274,5 +274,6 @@ def serve_dashboard(host: str = "127.0.0.1", port: int = 8765, open_browser: boo
     finally:
         server.server_close()
         runtime.shutdown()
+
 
 

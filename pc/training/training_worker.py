@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -45,7 +45,7 @@ def _write_json(path: Path, payload: Dict[str, Any]) -> None:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="LabDetector training worker")
+    parser = argparse.ArgumentParser(description="NeuroLab Hub training worker")
     parser.add_argument("--kind", choices=["llm", "pi"], required=True)
     parser.add_argument("--payload-json", required=True)
     parser.add_argument("--result-json", required=True)
@@ -98,3 +98,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

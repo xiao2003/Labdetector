@@ -1,7 +1,7 @@
-#define MyAppId "{{A48DB687-BD0A-4F91-B7B3-6AFB0C2DCE41}}"
-#define MyAppName "LabDetector"
-#define MyAppDisplayName "LabDetector Intelligent Laboratory Desktop Suite"
-#define MyAppPublisher "LabDetector Software Team"
+﻿#define MyAppId "{{A48DB687-BD0A-4F91-B7B3-6AFB0C2DCE41}}"
+#define MyAppName "NeuroLab Hub"
+#define MyAppDisplayName "NeuroLab Hub Intelligent Laboratory Desktop Suite"
+#define MyAppPublisher "NeuroLab Hub Software Team"
 #define MyAppURL "https://github.com/xiao2003/Labdetector"
 #define MyAppExeName "LabDetector.exe"
 #define MyPanelExeName "LabDetectorPanel.exe"
@@ -10,7 +10,7 @@
 #define MyAliasPanelExeName "LabPanel.exe"
 #define MyAliasTrainingExeName "LabTraining.exe"
 #ifndef MyAppVersion
-  #define MyAppVersion "3.0.4"
+  #define MyAppVersion "3.0.5"
 #endif
 #ifndef ReleaseDir
   #define ReleaseDir "..\\pc"
@@ -25,9 +25,9 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-AppCopyright=Copyright (C) 2026 LabDetector Software Team. All rights reserved.
-DefaultDirName={autopf}\LabDetector
-DefaultGroupName=LabDetector
+AppCopyright=Copyright (C) 2026 NeuroLab Hub Software Team. All rights reserved.
+DefaultDirName={autopf}\NeuroLab Hub
+DefaultGroupName=NeuroLab Hub
 DisableProgramGroupPage=yes
 DisableDirPage=no
 LicenseFile=LICENSE_zh_cn.txt
@@ -70,10 +70,10 @@ Source: "{#ReleaseDir}\LabTraining.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ReleaseDir}\APP\*"; DestDir: "{app}\APP"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\LabDetector"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"
-Name: "{autoprograms}\LabDetector 控制面板"; Filename: "{app}\{#MyPanelExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyPanelExeName}"
-Name: "{autoprograms}\LabDetector 训练工作台"; Filename: "{app}\{#MyTrainingExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyTrainingExeName}"
-Name: "{autodesktop}\LabDetector"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autoprograms}\NeuroLab Hub"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"
+Name: "{autoprograms}\NeuroLab Hub 控制面板"; Filename: "{app}\{#MyPanelExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyPanelExeName}"
+Name: "{autoprograms}\NeuroLab Hub 训练工作台"; Filename: "{app}\{#MyTrainingExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyTrainingExeName}"
+Name: "{autodesktop}\NeuroLab Hub"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch LabDetector now"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch NeuroLab Hub now"; Flags: nowait postinstall skipifsilent

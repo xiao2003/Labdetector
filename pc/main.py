@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 main.py - PC端主程序 (多节点独立重连 + 本机专家统合优化版)
@@ -242,7 +242,7 @@ def select_ai_backend():
         try:
             print("\n" + "=" * 60)
             from pc.tools.version_manager import get_app_version
-            print(f"LabDetector 智能多模态实验室管家 V{get_app_version()}")
+            print(f"NeuroLab Hub 智能多模态实验室管家 V{get_app_version()}")
             print("=" * 60)
             print("\n===== AI后端选择 =====")
             print("[1]. Ollama (本地私有化大模型)")

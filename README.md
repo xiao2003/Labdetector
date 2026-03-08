@@ -1,356 +1,80 @@
-# LabDetector 3.0.4
+﻿# NeuroLab Hub 3.0.5
 
 ## 1. 项目概述
 
-### 1.1 产品定位
+NeuroLab Hub 是一套面向科研实验室的 AI for Science 桌面软件系统，围绕“视觉智能监控 + 语音智能交互 + 知识沉淀 + 模型训练”构建完整闭环。项目按 `pc/` 与 `pi/` 双端拆分：
 
-LabDetector 是一个面向实验室场景的 AI for Science 智能监控与语音交互系统，代码按 `pc/` 与 `pi/` 双端拆分：
+- `pc/` 负责桌面可视化、专家路由、知识库、实验档案、语音理解、训练工作台与安装交付。
+- `pi/` 负责树莓派侧摄像头采集、边缘识别、关键帧回传、语音播报与本地命令行控制。
+- PC 与 Pi 通过 WebSocket 协同，实现多节点实验室实时监控、语义分析、风险播报与记录归档。
 
-- `pc/` 负责桌面可视化、专家模型调度、知识库检索、训练工作台与安装打包。
-- `pi/` 负责树莓派侧视频采集、边缘识别、语音交互与本地控制。
-- PC 与 Pi 通过 WebSocket 协同，实现多节点监控、风险预警、语音问答与知识沉淀。
+## 2. 软件定位
 
-### 1.2 核心能力
+NeuroLab Hub 是一个面向实验室场景的软件化平台：
 
-当前版本已具备以下核心能力：
+- 多节点可视化监控
+- 实验风险语义分析与告警反馈
+- 语音智能咨询与流程提示
+- 知识库构建、档案沉淀和训练再利用
+- LLM 微调与 YOLO 检测模型训练工作台
 
-- 多树莓派节点扫描、接入与可视化监控墙展示
-- 本机摄像头模式与树莓派集群 WebSocket 模式
-- 多专家模型路由、中文专家名称展示、专家资产导入
-- 公共知识库 `common` 与专家专属知识库 `expert.*`
-- 语音识别、语音合成、风险事件回传播报
-- 实验档案中心、语音轮次归档、训练工作台
-- 本地 Ollama、本地微调适配器、LM Studio / vLLM / SGLang / LMDeploy / Xinference / llama.cpp 本地服务与多种云端大模型接入
+## 3. 当前交付形态
 
-### 1.3 主闭环
+普通用户在 GitHub Releases 中只需关注三类文件：
 
-系统支持以下主业务闭环：
-
-1. PC 扫描 Pi 节点并建立连接。
-2. PC 向 Pi 下发专家策略与运行配置。
-3. Pi 采集视频流并在边缘侧截取关键帧或触发事件。
-4. PC 接收关键帧与事件，调用专家模型分析并生成结论。
-5. PC 将语音/文字结论回传给 Pi，由 Pi 端进行播报。
-
-### 1.4 知识库与专家模型
-
-系统内置多知识库架构：
-
-- 公共背景知识库：`common`
-- 专家专属知识库：`expert.<expert_code>`
-- 支持通过界面和 HTTP 接口直接导入文本、图片、音频、视频等资料
-- 图片、音频、视频导入时会生成结构化摘要与 sidecar 元数据，便于后续检索和训练
-
-### 1.5 语音交互
-
-语音能力覆盖两种模式：
-
-- Pi 端 WebSocket 语音交互：Pi 采集语音，PC 理解与生成回答，再回传 Pi 播报
-- PC 本机摄像头模式语音交互：PC 端直接完成本地语音采集、理解与播报
-- 单轮对话按轮次归档至 `pc/log/voice_rounds/`
-- 风险事件可自动转为语音播报，形成“视觉感知 -> 语音响应”的闭环
-
-## 2. 版本说明
-
-- `3.0.4` 为当前桌面软件化版本，仓库结构以 `pc/` 和 `pi/` 为主。
-- 本版本补齐了实验档案中心、训练工作台、训练依赖自检自动安装、GitHub Release 发布流程，以及 PC/Pi 双目录便携交付。
-
-## 3. 目录结构
-
-### 3.1 源码结构
-
-```text
-D:\Labdetector
-├─ pc/
-├─ pi/
-├─ docs/
-├─ assets/
-├─ installer/
-├─ scripts/
-├─ launcher.py
-├─ labdetector.spec
-├─ requirements.txt
-└─ README.md
-```
-
-### 3.2 关键目录
-
-- `pc/desktop_app.py`：桌面软件主界面
-- `pc/webui/runtime.py`：运行时主控、监控链路、训练接口
-- `pc/webui/server.py`：本地 HTTP 接口
-- `pc/core/experiment_archive.py`：实验档案中心
-- `pc/core/voice_round_archive.py`：语音轮次归档
-- `pc/training/`：训练数据构建、数据导入、LLM 微调、Pi 检测模型微调
-- `pc/knowledge_base/`：知识库导入、媒体语义摘要
-- `pi/pisend_receive.py`：Pi 端视频/控制链路
-- `pi/pi_cli.py`：Pi 端命令行工具
-
-### 3.3 运行时数据
-
-运行后会生成以下目录：
-
-- `pc/log/experiment_archives/`：实验档案
-- `pc/log/voice_rounds/`：语音轮次归档
-- `pc/training_runs/`：训练工作区
-- `pc/training_assets/`：导入的真实训练数据
-- `pc/models/llm_adapters/`：已注册的本地 LLM 微调适配器
-- `pc/models/registry/`：训练部署清单与激活状态
-- `pc/knowledge_base/scopes/`：知识库作用域
-- `pi/models/detectors/`：Pi 端检测模型权重
-
-## 4. 专家模型与知识库
-
-### 4.1 专家模型
-
-专家模型通过 `pc/core/expert_registry.py` 管理，界面与接口均显示中文名称而非 `xxx.py` 文件名。
-
-### 4.2 知识库作用域
-
-- 公共背景知识库
-- 安全合规专家知识库
-- 仪器操作专家知识库
-- 实验流程专家知识库
-- 视觉语义与风险分析相关知识库
-
-### 4.3 导入方式
-
-支持两种导入方式：
-
-- 桌面端界面导入
-- HTTP 接口导入
-
-### 4.4 媒体资料导入
-
-- 图片：生成尺寸、模式、语义摘要与关键词
-- 音频：生成时长、采样率、语义摘要与关键词
-- 视频：生成分辨率、帧数、时长、语义摘要与关键词
-
-### 4.5 训练数据导入与生产联动
-
-- LLM 微调数据：支持 `jsonl / json / csv / txt / md`
-- Pi 检测模型数据：支持 YOLO 数据集目录、压缩包或带标注图片目录
-- 导入后统一收敛到 `pc/training_assets/`
-- 训练工作区会自动合并“真实导入数据 + 运行归档样本”
-- LLM 微调基于 `Transformers + Datasets + PEFT(LoRA)`
-- Pi 检测模型微调基于 `Ultralytics YOLO`
-- 微调成功后，系统会自动将 LLM 适配器注册到 `pc/models/llm_adapters/`，并可作为“本地微调适配器”后端投入语音问答与知识检索场景
-- Pi 检测模型训练成功后，系统会自动将权重部署到 `pi/models/detectors/`，并写入 Pi 配置作为默认检测权重
-
-### 4.6 导入接口
-
-- `POST /api/experts/import`
-- `POST /api/knowledge/import`
-- `POST /api/training/import-llm`
-- `POST /api/training/import-pi`
-
-## 5. 运行机制与接口
-
-### 5.1 Pi 监控链路
-
-PC 扫描到树莓派后，会通过 `CMD:SYNC_POLICY` 下发专家策略，再等待 Pi 回传关键帧事件与语音指令。
-
-### 5.2 事件通道
-
-系统当前使用的核心报文包括：
-
-- `PI_CAPS`
-- `PI_EXPERT_EVENT`
-- `PI_YOLO_EVENT`
-- `PI_VOICE_COMMAND`
-- `PI_EXPERT_ACK`
-- `CMD:TTS`
-- `CMD:SYNC_POLICY`
-
-### 5.3 档案与训练接口
-
-- `GET /api/archives`
-- `GET /api/archives/<session_id>`
-- `GET /api/training`
-- `POST /api/training/workspace`
-- `POST /api/training/import-llm`
-- `POST /api/training/import-pi`
-- `POST /api/training/activate-llm`
-- `POST /api/training/activate-pi`
-- `POST /api/training/llm`
-- `POST /api/training/pi`
-- `POST /api/training/run-all`
-
-## 6. 环境要求
-
-### 6.1 PC 端
-
-- Windows 10/11
-- 普通用户使用安装包或便携版时，无需额外预装 Python
-- 开发者构建安装包/EXE 时需要 Python 3.11
-- 建议具备 NVIDIA GPU
-- 建议具备麦克风与扬声器
-
-### 6.2 Raspberry Pi 端
-
-- Raspberry Pi 4/5
-- 摄像头
-- 麦克风 / 扬声器
-- 可用的局域网环境
-
-### 6.3 关键依赖
-
-- `numpy`
-- `opencv-python`
-- `pillow`
-- `websockets`
-- `SpeechRecognition`
-- `vosk`
-- `pyttsx3`
-- 训练依赖如 `transformers`、`peft`、`datasets`、`ultralytics` 可在软件自检阶段自动安装到 `pc/APP` 运行时目录
-
-## 7. 使用说明
-
-### 7.1 开发者获取源码
-
-```powershell
-git clone https://github.com/xiao2003/Labdetector.git D:\Labdetector
-cd D:\Labdetector
-```
-
-开发者主要使用源码仓库进行调试、训练与二次开发。
-
-### 7.2 普通用户下载方式
-
-普通用户不要下载源码压缩包，直接进入 GitHub Releases 页面按用途选择产物：
-
-- Release 页面：<https://github.com/xiao2003/Labdetector/releases>
-- Windows 安装版：`LabDetector-Setup-vX.Y.Z.exe`
-- PC + Pi 完整发布包：`LabDetector-vX.Y.Z.zip`
-- 便携解压版：`LabDetector-Portable-vX.Y.Z.zip`
-
-### 7.3 安装后的目录形态
-
-安装完成后，用户电脑上的软件结构是：
-
-```text
-安装目录
-├─ LabDetector.exe
-├─ Lab.exe
-├─ LabDetectorPanel.exe
-├─ LabPanel.exe
-├─ LabDetectorTraining.exe
-├─ LabTraining.exe
-└─ APP
-```
-
-其中：
-
-- `LabDetector.exe` / `Lab.exe`：标准主程序入口
-- `LabDetectorPanel.exe` / `LabPanel.exe`：控制面板快捷入口
-- `LabDetectorTraining.exe` / `LabTraining.exe`：训练工作台快捷入口
-- `APP` 为隐藏运行时目录，包含运行时依赖、文档、模型资源、`python_runtime` 与 `training_runtime`
-
-### 7.4 一键训练
-
-桌面端“训练工作台”支持：
-
-1. 通过 `LabTraining.exe` 或主程序中的训练工作台入口启动
-2. 导入真实语料与标注数据
-3. 构建统一训练工作区
-4. 启动 LLM LoRA 微调
-5. 启动 Pi 检测模型微调
-6. 一键顺序执行全流程训练
-7. 缺失训练依赖时自动安装到 `pc/APP`
-8. 自动注册并激活最新训练产物
-
-### 7.5 模型服务接入
-
-除 Ollama 外，桌面端“模型服务配置”已预置以下本地或云端接入项：
-
-- 通义千问、OpenAI、DeepSeek、Kimi
-- 自定义 OpenAI 兼容服务
-- LM Studio、vLLM、SGLang、LMDeploy、Xinference、llama.cpp Server
-
-建议优先将 Qwen3 / DeepSeek 文本模型，或 Qwen2.5-VL 等视觉模型，部署为本地 OpenAI 兼容服务，再在软件内填写 Base URL 与模型名。
-
-详见 [docs/本地模型服务接入指南.md](docs/本地模型服务接入指南.md)。
-
-### 7.6 生成 EXE 与安装包
-
-详见 [docs/EXE与安装包生成教程.md](docs/EXE与安装包生成教程.md)。
-
-常用命令：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build_desktop_exe.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\build_installer.ps1
-```
-
-### 7.7 GitHub Release 发布
-
-仓库已提供 GitHub Actions 自动发布工作流。推荐发布方式：
-
-1. 提交并推送代码到 `master`
-2. 打版本标签，例如 `v3.0.4`
-3. 推送标签到 GitHub
-4. GitHub Actions 自动构建：
-   - `pc/LabDetector.exe`
-   - `LabDetector-vX.Y.Z.zip`
-   - `LabDetector-Setup-vX.Y.Z.exe`
-5. GitHub 自动创建 Release，普通用户只需下载安装器
-
-### 7.8 用户手册
-
-- [docs/LabDetector_Manual.md](docs/LabDetector_Manual.md)
-- [docs/LabDetector软件说明书.md](docs/LabDetector软件说明书.md)
-
-## 8. AI for Science 对照与当前状态
-
-### 8.1 已对齐能力
-
-- PC-Pi 视觉闭环
-- 语音交互闭环
-- 多知识库与专家模型
-- 桌面可视化监控墙
-- 云/本地模型接入
-- 实验档案与语音轮次归档
-- 一键训练工作台
-
-### 8.2 重点研究方向
-
-当前版本已具备研究平台基础，后续重点可继续深化：
-
-- 更高质量的实验室专用数据集采集与标注
-- 行为识别与实验步骤时序建模
-- 图片/音频/视频到知识条目的深层语义抽取
-- 面向科研场景的机理分析、实验解释与研究辅助能力
-
-### 8.3 说明
-
-本项目当前已经超出“桌面软件演示原型”阶段，具备真实部署、知识导入、档案归档和训练微调能力，但最终效果仍取决于真实实验数据质量、标注规范和底座模型选择。
-
-
-
-## 9. 本地构建与便携交付
-
-### 9.1 本地构建防闪退启动方式
-
-- 双击 scripts/build_desktop_exe.cmd 构建桌面程序（窗口不会秒退）
-- 双击 scripts/build_installer.cmd 构建安装包（失败会显示日志路径）
-- 日志目录：`tmp/build_logs/`
-
-### 9.2 便携版 ZIP 交付
-
-如果你希望给用户发一个“解压即用”包（不走安装流程），可执行：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build_portable_zip.ps1
-```
-
-产物：
-
+- `LabDetector-Setup-vX.Y.Z.exe`
+- `LabDetector-vX.Y.Z.zip`
 - `LabDetector-Portable-vX.Y.Z.zip`
-- ZIP 内包含：`pc/`、`pi/`、`README_PORTABLE.txt`
-- `pc/` 下提供 `Lab.exe`、`LabTraining.exe`、`LabDetector.exe` 与 `APP/`
-- `pi/` 下提供 `start_pi_node.sh` 与 `APP/`
 
-说明：
+说明：当前发布文件名沿用历史兼容命名，但软件界面、安装向导和快捷方式展示名统一为 `NeuroLab Hub`。
 
-- 启动入口 `Lab.exe` 当前为轻量 EXE，训练与扩展依赖按需安装
-- `pc/APP/python_runtime` 用于打包后训练与依赖自检
-- 总 ZIP 体积取决于 `APP` 依赖与模型资源，通常显著大于 EXE 本体
+## 4. 核心闭环
+
+1. PC 扫描并接入 Pi 节点。
+2. PC 下发运行策略、专家策略与采集参数。
+3. Pi 截取关键帧或推送视频流。
+4. PC 完成专家分析、语义提炼与风险判断。
+5. 分析结论回传 Pi，以语音或文字方式播报。
+
+## 5. 功能范围
+
+### 5.1 PC 端
+
+- 桌面主界面
+- 多 Pi 监控墙与单路视频放大查看
+- 专家模型管理
+- 多知识库管理
+- 云端 / 本地大模型服务配置
+- 实验档案中心
+- 训练工作台
+- 运行自检与依赖自动补齐
+- 系统事件流与状态概览
+
+### 5.2 Pi 端
+
+- `start_pi_node.sh` 一键启动
+- `pi_cli.py` 命令行自检与启动
+- 摄像头采集与关键帧发送
+- 与 PC 间的 WebSocket 联动
+- 语音采集与播报
+- 依赖自检与自动安装
+
+### 5.3 模型与知识能力
+
+- 本地 Ollama 接入
+- OpenAI 兼容 API 接入
+- LM Studio、vLLM、SGLang、LMDeploy、Xinference、llama.cpp 等本地服务对接
+- Qwen、DeepSeek 等国产模型的本地部署与 API 接入路径
+- 文本、图片、音频、视频资料导入知识库
+- 实验数据导入训练工作台
+
+## 6. 文档索引
+
+- [用户手册](docs/LabDetector_Manual.md)
+- [软件说明书](docs/LabDetector软件说明书.md)
+- [软件版权声明](docs/LabDetector_Copyright.md)
+- [安装包与 EXE 生成教程](docs/EXE与安装包生成教程.md)
+- [本地模型服务接入指南](docs/本地模型服务接入指南.md)
+- [实验数据集构建规范](docs/实验数据集构建规范.md)
+- [GitHub 发布与普通用户下载说明](docs/GitHub发布与普通用户下载说明.md)
+
