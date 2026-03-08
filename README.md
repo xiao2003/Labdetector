@@ -509,6 +509,7 @@ AI 后端主入口位于 `pc/core/ai_backend.py`。当前支持：
 - `docs/GitHub发布与普通用户下载说明.md`：发布与下载说明
 - `docs/项目规划对照整改表.md`：项目规划对照整改表
 - `docs/系统环境问题与手动修复指南.md`：系统环境问题与手动修复指南
+- `docs/System_Environment_Troubleshooting.md`：ASCII 路径版系统环境问题与手动修复指南
 
 ## 14. 开源协议与版权说明
 
@@ -524,6 +525,7 @@ AI 后端主入口位于 `pc/core/ai_backend.py`。当前支持：
 ## 15. 致谢
 
 感谢实验室场景中长期沉淀的业务需求、真实实验数据与测试反馈，也感谢 Python、Ollama、OpenCV、PyInstaller、Transformers、Ultralytics 及相关开源社区提供的基础能力支持。
+
 
 
 
