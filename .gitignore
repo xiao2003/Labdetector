@@ -52,3 +52,5 @@ pc/training_assets/
 pc/models/llm_adapters/
 pc/models/registry/
 pi/models/detectors/
+LabDetector-Portable-v*.zip
+

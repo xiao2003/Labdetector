@@ -1,4 +1,4 @@
-# LabDetector 3.0.2
+﻿# LabDetector 3.0.2
 
 ## 1. 项目概述
 
@@ -312,3 +312,20 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build_installer.ps1
 - 双击 scripts/build_installer.cmd 构建安装包（失败会显示日志路径）
 - 日志目录：`tmp/build_logs/`
 
+### 7.8 便携版 ZIP 交付
+
+如果你希望给用户发一个“解压即用”包（不走安装流程），可执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build_portable_zip.ps1
+```
+
+产物：
+
+- `LabDetector-Portable-vX.Y.Z.zip`
+- ZIP 内仅包含：`LabDetector.exe`、`APP/`、`README_PORTABLE.txt`
+
+说明：
+
+- 启动入口 `LabDetector.exe` 当前约几十 MB（与 Python 运行时打包方式有关）
+- 总 ZIP 体积取决于 `APP` 依赖与模型资源，通常显著大于 EXE 本体
