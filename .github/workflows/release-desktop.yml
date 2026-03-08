@@ -1,4 +1,4 @@
-﻿name: release-desktop
+name: release-desktop
 
 on:
   push:
@@ -61,3 +61,4 @@ jobs:
           files: |
             LabDetector-Setup-v${{ steps.version.outputs.value }}.exe
             LabDetector-v${{ steps.version.outputs.value }}.zip
+            LabDetector-Portable-v${{ steps.version.outputs.value }}.zip

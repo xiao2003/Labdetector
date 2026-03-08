@@ -1,4 +1,4 @@
-﻿#define MyAppId "{{A48DB687-BD0A-4F91-B7B3-6AFB0C2DCE41}}"
+#define MyAppId "{{A48DB687-BD0A-4F91-B7B3-6AFB0C2DCE41}}"
 #define MyAppName "LabDetector"
 #define MyAppDisplayName "LabDetector Intelligent Laboratory Desktop Suite"
 #define MyAppPublisher "LabDetector Software Team"
@@ -10,7 +10,7 @@
 #define MyAliasPanelExeName "LabPanel.exe"
 #define MyAliasTrainingExeName "LabTraining.exe"
 #ifndef MyAppVersion
-  #define MyAppVersion "3.0.2"
+  #define MyAppVersion "3.0.3"
 #endif
 #ifndef ReleaseDir
   #define ReleaseDir "..\\pc"
