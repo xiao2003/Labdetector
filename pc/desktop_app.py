@@ -655,7 +655,7 @@ class DesktopApp:
         self._bind_global_scroll_support()
 
     def _load_bootstrap(self) -> None:
-        payload = self.runtime.bootstrap()
+        payload = self.runtime.bootstrap(include_self_check=False)
         controls = payload["controls"]
         self.backend_combo["values"] = [item["label"] for item in controls["backends"]]
         self.backend_map = {item["label"]: item["value"] for item in controls["backends"]}
@@ -695,6 +695,7 @@ class DesktopApp:
         self._render_streams(payload["state"]["streams"])
         self.splash_message_var.set("正在准备运行环境与可视化面板")
         self.root.after(450, self._finish_startup)
+        self.root.after(900, self._run_self_check)
 
     def _update_model_choices(self, selected_model: str | None = None) -> None:
         backend_value = self.backend_map.get(self.backend_combo.get(), self.backend_var.get() or "ollama")
@@ -2032,7 +2033,7 @@ class DesktopApp:
         self.root.configure(menu=menubar)
 
     def _load_bootstrap(self) -> None:
-        payload = self.runtime.bootstrap()
+        payload = self.runtime.bootstrap(include_self_check=False)
         controls = payload["controls"]
         self.backend_combo["values"] = [item["label"] for item in controls["backends"]]
         self.backend_map = {item["label"]: item["value"] for item in controls["backends"]}
@@ -2075,6 +2076,7 @@ class DesktopApp:
         self._render_streams(payload["state"]["streams"])
         self.splash_message_var.set("正在准备运行环境与可视化面板")
         self.root.after(450, self._finish_startup)
+        self.root.after(900, self._run_self_check)
 
     def _refresh_models(self) -> None:
         self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
@@ -2772,12 +2774,26 @@ class DesktopApp:
             ),
         )
 
-    def _show_training_window(self) -> None:
+    def _focus_training_section(self, focus: str = "") -> None:
+        focus_key = (focus or "").strip().lower()
+        if focus_key == "llm" and self.training_base_model_entry is not None:
+            self.training_base_model_entry.focus_set()
+            self.training_status_var.set("当前入口：LLM 微调工作台")
+            self.hero_var.set("已进入 LLM 微调工作台")
+        elif focus_key == "vision" and self.training_pi_weights_entry is not None:
+            self.training_pi_weights_entry.focus_set()
+            self.training_status_var.set("当前入口：识别模型训练工作台")
+            self.hero_var.set("已进入识别模型训练工作台")
+        else:
+            self.training_status_var.set("训练工作台已就绪")
+
+    def _show_training_window(self, focus: str = "") -> None:
         if self.training_window is not None and self.training_window.winfo_exists():
             self.training_window.deiconify()
             self.training_window.lift()
             self.training_window.focus_force()
             self._refresh_training_overview()
+            self._focus_training_section(focus)
             return
 
         window = tk.Toplevel(self.root)
@@ -2803,7 +2819,7 @@ class DesktopApp:
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
         ttk.Label(header, text="训练工作台", style="Header.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(header, text="导入真实训练数据后，可一键构建工作区并顺序运行 LLM 与 Pi 模型微调。", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(header, text="导入真实训练数据后，可一键构建工作区并顺序运行 LLM 与识别模型微调。", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
 
         body = ttk.Frame(shell, style="Panel.TFrame", padding=16)
         body.grid(row=1, column=0, sticky="nsew", pady=(16, 0))
@@ -2816,12 +2832,12 @@ class DesktopApp:
         ttk.Label(form, text="工作区名称", style="Body.TLabel").grid(row=0, column=0, sticky="w")
         self.training_workspace_entry = ttk.Entry(form)
         self.training_workspace_entry.grid(row=0, column=1, sticky="ew", padx=(10, 0))
-        self.training_workspace_entry.insert(0, str(get_config("training.workspace_name", "labdetector_training")))
+        self.training_workspace_entry.insert(0, str(get_config("training.workspace_name", "neurolab_hub_training")))
         ttk.Label(form, text="LLM 底座模型", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(10, 0))
         self.training_base_model_entry = ttk.Entry(form)
         self.training_base_model_entry.grid(row=1, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
         self.training_base_model_entry.insert(0, str(get_config("training.llm_base_model", "")))
-        ttk.Label(form, text="Pi 底座权重", style="Body.TLabel").grid(row=2, column=0, sticky="w", pady=(10, 0))
+        ttk.Label(form, text="识别模型底座权重", style="Body.TLabel").grid(row=2, column=0, sticky="w", pady=(10, 0))
         self.training_pi_weights_entry = ttk.Entry(form)
         self.training_pi_weights_entry.grid(row=2, column=1, sticky="ew", padx=(10, 0), pady=(10, 0))
         self.training_pi_weights_entry.insert(0, str(get_config("training.pi_base_weights", "yolov8n.pt")))
@@ -2831,11 +2847,11 @@ class DesktopApp:
         for idx in range(4):
             actions.columnconfigure(idx, weight=1)
         ttk.Button(actions, text="导入 LLM 数据", command=self._import_llm_dataset_from_dialog).grid(row=0, column=0, sticky="ew", padx=(0, 6), pady=(0, 6))
-        ttk.Button(actions, text="导入 Pi 数据", command=self._import_pi_dataset_from_dialog).grid(row=0, column=1, sticky="ew", padx=6, pady=(0, 6))
+        ttk.Button(actions, text="导入识别模型数据", command=self._import_pi_dataset_from_dialog).grid(row=0, column=1, sticky="ew", padx=6, pady=(0, 6))
         ttk.Button(actions, text="构建工作区", command=self._build_training_workspace_from_form).grid(row=0, column=2, sticky="ew", padx=6, pady=(0, 6))
         ttk.Button(actions, text="一键全流程训练", command=self._start_full_training_from_form).grid(row=0, column=3, sticky="ew", padx=(6, 0), pady=(0, 6))
         ttk.Button(actions, text="启动 LLM 微调", command=self._start_llm_training_from_form).grid(row=1, column=0, sticky="ew", padx=(0, 6))
-        ttk.Button(actions, text="启动 Pi 微调", command=self._start_pi_training_from_form).grid(row=1, column=1, sticky="ew", padx=6)
+        ttk.Button(actions, text="启动识别模型微调", command=self._start_pi_training_from_form).grid(row=1, column=1, sticky="ew", padx=6)
         ttk.Button(actions, text="刷新概览", command=self._refresh_training_overview).grid(row=1, column=2, sticky="ew", padx=6)
         ttk.Button(actions, text="关闭", command=_close_window).grid(row=1, column=3, sticky="ew", padx=(6, 0))
 
@@ -2856,6 +2872,7 @@ class DesktopApp:
         self._register_scroll_target(detail_wrap, self.training_detail_text)
         self._register_scroll_target(self.training_detail_text, self.training_detail_text)
         self._refresh_training_overview()
+        self._focus_training_section(focus)
     def _selected_cloud_backend(self) -> str:
         if self.cloud_provider_combo is None:
             return "qwen"
@@ -3106,9 +3123,9 @@ class DesktopApp:
         self.root.mainloop()
 
 
-def launch_desktop_app(open_training_workbench: bool = False) -> int:
+def launch_desktop_app(open_training_workbench: bool = False, training_focus: str = "") -> int:
     app = DesktopApp()
     if open_training_workbench:
-        app.root.after(1200, app._show_training_window)
+        app.root.after(1200, lambda: app._show_training_window(training_focus))
     app.run()
     return 0

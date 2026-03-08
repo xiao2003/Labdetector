@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Shared product identity metadata for desktop packaging and UI."""
 
@@ -112,8 +112,8 @@ def logo_path() -> Path:
 
 
 def manual_path() -> Path:
-    return _existing_resource("docs/LabDetector_Manual.md")
+    return _existing_resource("docs/NeuroLab_Hub_用户手册.md")
 
 
 def copyright_path() -> Path:
-    return _existing_resource("docs/LabDetector_Copyright.md")
+    return _existing_resource("docs/NeuroLab_Hub_版权声明.md", "docs/NeuroLab_Hub_软件版权声明.md")

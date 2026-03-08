@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Write the Windows version resource file used by PyInstaller."""
 
@@ -12,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from pc.app_identity import APP_NAME, COMPANY_NAME_EN, COPYRIGHT_TEXT_EN
+from pc.app_identity import APP_DISPLAY_NAME, APP_NAME, COMPANY_NAME_EN, COPYRIGHT_TEXT_EN
 from pc.tools.version_manager import get_app_version
 
 OUTPUT_PATH = PROJECT_ROOT / 'scripts' / 'version_info.txt'
@@ -48,12 +48,12 @@ def main() -> None:
         u'080404B0',
         [
           StringStruct(u'CompanyName', u'{COMPANY_NAME_EN}'),
-          StringStruct(u'FileDescription', u'LabDetector Intelligent Laboratory Desktop Suite'),
+          StringStruct(u'FileDescription', u'{APP_DISPLAY_NAME} Intelligent Laboratory Desktop Suite'),
           StringStruct(u'FileVersion', u'{version}'),
           StringStruct(u'InternalName', u'{APP_NAME}'),
           StringStruct(u'LegalCopyright', u'{COPYRIGHT_TEXT_EN}'),
-          StringStruct(u'OriginalFilename', u'{APP_NAME}.exe'),
-          StringStruct(u'ProductName', u'{APP_NAME}'),
+          StringStruct(u'OriginalFilename', u'{APP_DISPLAY_NAME}.exe'),
+          StringStruct(u'ProductName', u'{APP_DISPLAY_NAME}'),
           StringStruct(u'ProductVersion', u'{version}')
         ]
       )

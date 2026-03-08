@@ -22,21 +22,18 @@ try {
   $WorkRoot = Join-Path $ProjectRoot '.pyi_work'
   $DistRoot = Join-Path $ProjectRoot '.pyi_dist'
   $BundleStageRoot = Join-Path $ProjectRoot '.bundle_stage'
-  $BundleRoot = Join-Path $BundleStageRoot 'LabDetector'
+  $BundleRoot = Join-Path $BundleStageRoot 'NeuroLab Hub'
   $PcRoot = Join-Path $ProjectRoot 'pc'
   $PiRoot = Join-Path $ProjectRoot 'pi'
-  $PcExePath = Join-Path $PcRoot 'LabDetector.exe'
-  $PcPanelExePath = Join-Path $PcRoot 'LabDetectorPanel.exe'
-  $PcTrainingExePath = Join-Path $PcRoot 'LabDetectorTraining.exe'
-  $PcAliasExePath = Join-Path $PcRoot 'Lab.exe'
-  $PcPanelAliasExePath = Join-Path $PcRoot 'LabPanel.exe'
-  $PcTrainingAliasExePath = Join-Path $PcRoot 'LabTraining.exe'
+  $PcExePath = Join-Path $PcRoot 'NeuroLab Hub.exe'
+  $PcLlmExePath = Join-Path $PcRoot 'NeuroLab Hub LLM.exe'
+  $PcVisionExePath = Join-Path $PcRoot 'NeuroLab Hub Vision.exe'
   $PcAppRoot = Join-Path $PcRoot 'APP'
   $PcPythonRuntimeRoot = Join-Path $PcAppRoot 'python_runtime'
   $PcTrainingRuntimeRoot = Join-Path $PcAppRoot 'training_runtime'
   $PiAppRoot = Join-Path $PiRoot 'APP'
-  $ZipPath = Join-Path $ProjectRoot ("LabDetector-v$Version.zip")
-  $StageFolder = Join-Path $DistRoot 'LabDetector'
+  $ZipPath = Join-Path $ProjectRoot ("NeuroLab-Hub-v$Version.zip")
+  $StageFolder = Join-Path $DistRoot 'NeuroLab Hub'
 
   if (!(Test-Path $PythonExe)) {
     $resolvedPython = Get-Command $PythonExe -ErrorAction SilentlyContinue
@@ -97,18 +94,21 @@ PiConfig.init()
     throw "Build output not found: $StageFolder"
   }
 
-  foreach ($artifact in @($PcExePath, $PcPanelExePath, $PcTrainingExePath, $PcAliasExePath, $PcPanelAliasExePath, $PcTrainingAliasExePath, $PcAppRoot, $PiAppRoot, $BundleRoot, $ZipPath)) {
+  foreach ($artifact in @($PcExePath, $PcLlmExePath, $PcVisionExePath, $PcAppRoot, $PiAppRoot, $BundleRoot, $ZipPath)) {
     if (Test-Path $artifact) {
       Remove-Item -Recurse -Force $artifact
     }
   }
+  foreach ($legacy in @('LabDetector.exe', 'LabDetectorPanel.exe', 'LabDetectorTraining.exe', 'Lab.exe', 'LabPanel.exe', 'LabTraining.exe')) {
+    $legacyPath = Join-Path $PcRoot $legacy
+    if (Test-Path $legacyPath) {
+      Remove-Item -Force $legacyPath
+    }
+  }
 
-  Copy-Item -Path (Join-Path $StageFolder 'LabDetector.exe') -Destination $PcExePath -Force
-  Copy-Item -Path $PcExePath -Destination $PcPanelExePath -Force
-  Copy-Item -Path $PcExePath -Destination $PcTrainingExePath -Force
-  Copy-Item -Path $PcExePath -Destination $PcAliasExePath -Force
-  Copy-Item -Path $PcPanelExePath -Destination $PcPanelAliasExePath -Force
-  Copy-Item -Path $PcTrainingExePath -Destination $PcTrainingAliasExePath -Force
+  Copy-Item -Path (Join-Path $StageFolder 'NeuroLab Hub.exe') -Destination $PcExePath -Force
+  Copy-Item -Path $PcExePath -Destination $PcLlmExePath -Force
+  Copy-Item -Path $PcExePath -Destination $PcVisionExePath -Force
   Copy-Item -Path (Join-Path $StageFolder 'APP') -Destination $PcAppRoot -Recurse -Force
 
   New-Item -ItemType Directory -Force -Path $PcPythonRuntimeRoot | Out-Null
@@ -171,7 +171,7 @@ PiConfig.init()
   $BundlePiRoot = Join-Path $BundleRoot 'pi'
   New-Item -ItemType Directory -Force -Path $BundlePcRoot | Out-Null
   New-Item -ItemType Directory -Force -Path $BundlePiRoot | Out-Null
-  foreach ($launcher in @('LabDetector.exe', 'LabDetectorPanel.exe', 'LabDetectorTraining.exe', 'Lab.exe', 'LabPanel.exe', 'LabTraining.exe')) {
+  foreach ($launcher in @('NeuroLab Hub.exe', 'NeuroLab Hub LLM.exe', 'NeuroLab Hub Vision.exe')) {
     $source = Join-Path $PcRoot $launcher
     if (Test-Path $source) {
       Copy-Item -Path $source -Destination (Join-Path $BundlePcRoot $launcher) -Force
@@ -182,17 +182,18 @@ PiConfig.init()
   Copy-Item -Path $PiAppRoot -Destination (Join-Path $BundlePiRoot 'APP') -Recurse -Force
 
   $quickStartLines = @(
-    'LabDetector Quick Start',
-    '=======================',
-    '1. PC 端使用 pc\\Lab.exe 或 pc\\LabDetector.exe 启动主程序。',
-    '2. 训练工作台使用 pc\\LabTraining.exe 或 pc\\LabDetectorTraining.exe 启动。',
-    '3. 树莓派端将 pi 目录复制到设备后，执行 pi/start_pi_node.sh start。',
-    '4. 首次运行时先执行软件自检，按需自动安装依赖。',
+    'NeuroLab Hub Quick Start',
+    '========================',
+    '1. PC 端使用 pc\\NeuroLab Hub.exe 启动主程序。',
+    '2. LLM 微调入口使用 pc\\NeuroLab Hub LLM.exe。',
+    '3. 识别模型训练入口使用 pc\\NeuroLab Hub Vision.exe。',
+    '4. 树莓派端将 pi 目录复制到设备后，执行 pi/start_pi_node.sh start。',
+    '5. 首次运行时先执行软件自检，按需自动安装依赖。',
     '',
     '目录说明：',
     '- pc\\APP 为隐藏运行时目录，请勿删除。',
     '- pi\\APP 为树莓派运行时目录。',
-    '- 如需安装到 Windows，请使用 LabDetector-Setup-v*.exe。'
+    '- 如需安装到 Windows，请使用 NeuroLab-Hub-Setup-v*.exe。'
   )
   Set-Content -Path (Join-Path $BundleRoot 'README_QUICKSTART.txt') -Value $quickStartLines -Encoding UTF8
 
@@ -220,14 +221,12 @@ PiConfig.init()
   }
 
   Write-Host ''
-  Write-Host 'PC executable:' -ForegroundColor Green
+  Write-Host 'Main executable:' -ForegroundColor Green
   Write-Host $PcExePath -ForegroundColor Green
-  Write-Host 'PC alias executable:' -ForegroundColor Green
-  Write-Host $PcAliasExePath -ForegroundColor Green
-  Write-Host 'Training executable:' -ForegroundColor Green
-  Write-Host $PcTrainingExePath -ForegroundColor Green
-  Write-Host 'Training alias executable:' -ForegroundColor Green
-  Write-Host $PcTrainingAliasExePath -ForegroundColor Green
+  Write-Host 'LLM executable:' -ForegroundColor Green
+  Write-Host $PcLlmExePath -ForegroundColor Green
+  Write-Host 'Vision executable:' -ForegroundColor Green
+  Write-Host $PcVisionExePath -ForegroundColor Green
   Write-Host 'PC runtime:' -ForegroundColor Green
   Write-Host $PcAppRoot -ForegroundColor Green
   Write-Host 'PI launcher:' -ForegroundColor Green

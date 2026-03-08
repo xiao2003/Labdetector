@@ -20,17 +20,17 @@ try {
 
 try {
   $Version = (Get-Content -Path (Join-Path $ProjectRoot 'VERSION') -Raw).Trim()
-  $PcExe = Join-Path $ProjectRoot 'pc\LabDetector.exe'
-  $PanelExe = Join-Path $ProjectRoot 'pc\LabDetectorPanel.exe'
-  $TrainingExe = Join-Path $ProjectRoot 'pc\LabDetectorTraining.exe'
+  $PcExe = Join-Path $ProjectRoot 'pc\NeuroLab Hub.exe'
+  $LlmExe = Join-Path $ProjectRoot 'pc\NeuroLab Hub LLM.exe'
+  $VisionExe = Join-Path $ProjectRoot 'pc\NeuroLab Hub Vision.exe'
   $PiLauncher = Join-Path $ProjectRoot 'pi\start_pi_node.sh'
-  $ZipPath = Join-Path $ProjectRoot ("LabDetector-v$Version.zip")
+  $ZipPath = Join-Path $ProjectRoot ("NeuroLab-Hub-v$Version.zip")
 
   if (-not $SkipBuild) {
     & (Join-Path $PSScriptRoot 'build_desktop_exe.ps1') -PythonExe $PythonExe -NoPause
   }
 
-  if (!(Test-Path $PcExe) -or !(Test-Path $PanelExe) -or !(Test-Path $TrainingExe)) {
+  if (!(Test-Path $PcExe) -or !(Test-Path $LlmExe) -or !(Test-Path $VisionExe)) {
     throw "Desktop executable set not found under pc/."
   }
   if (!(Test-Path $PiLauncher)) {
@@ -38,12 +38,12 @@ try {
   }
 
   Write-Host ''
-  Write-Host 'PC executable:' -ForegroundColor Green
+  Write-Host 'Main executable:' -ForegroundColor Green
   Write-Host $PcExe -ForegroundColor Green
-  Write-Host 'Panel executable:' -ForegroundColor Green
-  Write-Host $PanelExe -ForegroundColor Green
-  Write-Host 'Training executable:' -ForegroundColor Green
-  Write-Host $TrainingExe -ForegroundColor Green
+  Write-Host 'LLM executable:' -ForegroundColor Green
+  Write-Host $LlmExe -ForegroundColor Green
+  Write-Host 'Vision executable:' -ForegroundColor Green
+  Write-Host $VisionExe -ForegroundColor Green
   Write-Host 'PI launcher:' -ForegroundColor Green
   Write-Host $PiLauncher -ForegroundColor Green
   Write-Host 'Zip package:' -ForegroundColor Green
@@ -65,5 +65,3 @@ finally {
     Stop-Transcript | Out-Null
   }
 }
-
-

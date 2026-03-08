@@ -25,16 +25,15 @@ try {
   $PcApp = Join-Path $PcRoot 'APP'
   $PiApp = Join-Path $PiRoot 'APP'
   $StageRoot = Join-Path $ProjectRoot '.portable_stage'
-  $PortableRoot = Join-Path $StageRoot 'LabDetector'
+  $PortableRoot = Join-Path $StageRoot 'NeuroLab Hub'
   $PortablePcRoot = Join-Path $PortableRoot 'pc'
   $PortablePiRoot = Join-Path $PortableRoot 'pi'
-  $PortableZip = Join-Path $ProjectRoot ("LabDetector-Portable-v$Version.zip")
+  $PortableZip = Join-Path $ProjectRoot ("NeuroLab-Hub-Portable-v$Version.zip")
 
   $RequiredPcFiles = @(
-    (Join-Path $PcRoot 'LabDetector.exe'),
-    (Join-Path $PcRoot 'LabDetectorTraining.exe'),
-    (Join-Path $PcRoot 'Lab.exe'),
-    (Join-Path $PcRoot 'LabTraining.exe')
+    (Join-Path $PcRoot 'NeuroLab Hub.exe'),
+    (Join-Path $PcRoot 'NeuroLab Hub LLM.exe'),
+    (Join-Path $PcRoot 'NeuroLab Hub Vision.exe')
   )
   $NeedBuild = $false
   foreach ($file in $RequiredPcFiles) {
@@ -66,7 +65,7 @@ try {
   New-Item -ItemType Directory -Force -Path $PortablePcRoot | Out-Null
   New-Item -ItemType Directory -Force -Path $PortablePiRoot | Out-Null
 
-  foreach ($launcher in @('LabDetector.exe', 'LabDetectorPanel.exe', 'LabDetectorTraining.exe', 'Lab.exe', 'LabPanel.exe', 'LabTraining.exe')) {
+  foreach ($launcher in @('NeuroLab Hub.exe', 'NeuroLab Hub LLM.exe', 'NeuroLab Hub Vision.exe')) {
     $source = Join-Path $PcRoot $launcher
     if (Test-Path $source) {
       Copy-Item -Path $source -Destination (Join-Path $PortablePcRoot $launcher) -Force
@@ -77,17 +76,18 @@ try {
   Copy-Item -Path $PiApp -Destination (Join-Path $PortablePiRoot 'APP') -Recurse -Force
 
   $quickStartLines = @(
-    'LabDetector Portable Usage',
-    '==========================',
-    '1. 解压后，PC 端运行 pc\\Lab.exe 或 pc\\LabDetector.exe。',
-    '2. 训练工作台运行 pc\\LabTraining.exe。',
-    '3. 树莓派端复制 pi 目录后运行 pi/start_pi_node.sh start。',
-    '4. 首次运行时建议先执行软件自检，按需自动安装依赖。',
+    'NeuroLab Hub Portable Usage',
+    '============================',
+    '1. 解压后，PC 端运行 pc\\NeuroLab Hub.exe。',
+    '2. LLM 微调运行 pc\\NeuroLab Hub LLM.exe。',
+    '3. 识别模型训练运行 pc\\NeuroLab Hub Vision.exe。',
+    '4. 树莓派端复制 pi 目录后运行 pi/start_pi_node.sh start。',
+    '5. 首次运行时建议先执行软件自检，按需自动安装依赖。',
     '',
     '注意：',
     '- pc\\APP 与 pi\\APP 为运行时目录，请勿删除。',
     '- 本包为解压即用版，不包含 Windows 安装流程。',
-    '- 如需安装向导，请使用 LabDetector-Setup-v*.exe。'
+    '- 如需安装向导，请使用 NeuroLab-Hub-Setup-v*.exe。'
   )
   Set-Content -Path (Join-Path $PortableRoot 'README_PORTABLE.txt') -Value $quickStartLines -Encoding UTF8
 
@@ -98,12 +98,12 @@ try {
     Remove-Item -Recurse -Force $StageRoot
   }
 
-  $ExeSizeMB = [math]::Round(((Get-Item (Join-Path $PcRoot 'Lab.exe')).Length / 1MB), 2)
+  $ExeSizeMB = [math]::Round(((Get-Item (Join-Path $PcRoot 'NeuroLab Hub.exe')).Length / 1MB), 2)
   $ZipSizeMB = [math]::Round(((Get-Item $PortableZip).Length / 1MB), 2)
 
   Write-Host ''
   Write-Host 'Portable launcher EXE:' -ForegroundColor Green
-  Write-Host (Join-Path $PcRoot 'Lab.exe') -ForegroundColor Green
+  Write-Host (Join-Path $PcRoot 'NeuroLab Hub.exe') -ForegroundColor Green
   Write-Host ("EXE size: {0} MB" -f $ExeSizeMB) -ForegroundColor Green
   Write-Host 'Portable zip package:' -ForegroundColor Green
   Write-Host $PortableZip -ForegroundColor Green

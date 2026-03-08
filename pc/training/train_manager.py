@@ -10,6 +10,7 @@ from typing import Any, Dict
 
 from pc.core.config import get_config
 from pc.training.dataset_builder import dataset_builder
+from pc.core.subprocess_utils import run_hidden
 from pc.training.dataset_importer import dataset_importer
 from pc.training.model_linker import model_linker
 from pc.training.runtime_env import (
@@ -171,7 +172,7 @@ class TrainingManager:
             "--result-json",
             str(result_path),
         ]
-        proc = subprocess.run(
+        proc = run_hidden(
             command,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

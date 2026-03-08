@@ -22,17 +22,17 @@ try {
 try {
   $Version = (Get-Content -Path (Join-Path $ProjectRoot "VERSION") -Raw).Trim()
   $ReleaseRoot = Join-Path $ProjectRoot "pc"
-  $DesktopExe = Join-Path $ReleaseRoot "LabDetector.exe"
-  $PanelExe = Join-Path $ReleaseRoot "LabDetectorPanel.exe"
-  $TrainingExe = Join-Path $ReleaseRoot "LabDetectorTraining.exe"
+  $DesktopExe = Join-Path $ReleaseRoot "NeuroLab Hub.exe"
+  $LlmExe = Join-Path $ReleaseRoot "NeuroLab Hub LLM.exe"
+  $VisionExe = Join-Path $ReleaseRoot "NeuroLab Hub Vision.exe"
   $InstallerScript = Join-Path $ProjectRoot "installer\LabDetector.iss"
-  $InstallerOutput = Join-Path $ProjectRoot ("LabDetector-Setup-v$Version.exe")
+  $InstallerOutput = Join-Path $ProjectRoot ("NeuroLab-Hub-Setup-v$Version.exe")
 
   if (!(Test-Path $InstallerScript)) {
     throw "Installer script not found: $InstallerScript"
   }
 
-  if (!(Test-Path $DesktopExe) -or !(Test-Path $PanelExe) -or !(Test-Path $TrainingExe)) {
+  if (!(Test-Path $DesktopExe) -or !(Test-Path $LlmExe) -or !(Test-Path $VisionExe)) {
     if ($SkipDesktopBuild) {
       throw "Desktop EXE set not found under: $ReleaseRoot"
     }
@@ -98,5 +98,3 @@ finally {
     Stop-Transcript | Out-Null
   }
 }
-
-

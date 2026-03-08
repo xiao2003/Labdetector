@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
 from pc.app_identity import external_app_root, is_frozen_runtime, project_root
+from pc.core.subprocess_utils import run_hidden
 
 
 _COMMON_PYTHON_CANDIDATES = [
@@ -151,7 +152,7 @@ def probe_modules_with_training_python(module_names: Iterable[str]) -> Dict[str,
         ),
         *module_list,
     ]
-    proc = subprocess.run(
+    proc = run_hidden(
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

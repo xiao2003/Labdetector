@@ -11,6 +11,7 @@ import requests
 
 from pc.core.config import get_config, set_config
 from pc.core.logger import console_error, console_info
+from pc.core.subprocess_utils import run_hidden
 from pc.training.model_linker import model_linker
 
 PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
@@ -240,7 +241,7 @@ def list_ollama_models() -> List[str]:
         if default_path and os.path.exists(default_path):
             ollama_exe = default_path
 
-        result = subprocess.run(
+        result = run_hidden(
             [ollama_exe, "list"],
             capture_output=True,
             text=True,

@@ -1,14 +1,14 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="labdetector",
-    version="2.3.0",
-    description="智能多模态实验室管家 (RAG + 边缘计算版)",
-    author="Xiao",
+    name="neurolab-hub",
+    version="3.0.6",
+    description="NeuroLab Hub intelligent laboratory desktop suite",
+    author="NeuroLab Hub Software Team",
     packages=find_packages(),
     install_requires=[
-        line.strip() for line in open("requirements.txt").readlines()
+        line.strip() for line in open("requirements.txt", encoding="utf-8").readlines()
         if line.strip() and not line.startswith("#")
     ],
-    python_requires=">=3.9",
+    python_requires=">=3.11",
 )

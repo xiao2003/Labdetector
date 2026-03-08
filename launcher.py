@@ -1,6 +1,6 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Unified launcher for LabDetector desktop/web/cli modes."""
+"""Unified launcher for NeuroLab Hub desktop and workbench modes."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import json
 import sys
 from pathlib import Path
 
-from pc.app_identity import APP_DISPLAY_NAME, APP_NAME, COMPANY_NAME
+from pc.app_identity import APP_NAME
 from pc.desktop_app import launch_desktop_app
 from pc.tools.version_manager import get_app_version
 from pc.webui.runtime import LabDetectorRuntime
@@ -55,7 +55,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=f"{APP_NAME} Launcher")
     parser.add_argument("--cli", action="store_true", help="使用旧版控制台入口")
     parser.add_argument("--web", action="store_true", help="使用浏览器控制台")
-    parser.add_argument("--training-workbench", action="store_true", help="直接打开训练工作台")
+    parser.add_argument("--training-workbench", action="store_true", help="直接打开综合训练工作台")
+    parser.add_argument("--llm-workbench", action="store_true", help="直接打开 LLM 微调工作台")
+    parser.add_argument("--vision-workbench", action="store_true", help="直接打开识别模型训练工作台")
     parser.add_argument("--host", default="127.0.0.1", help="Web 控制台监听地址")
     parser.add_argument("--port", default=8765, type=int, help="Web 控制台监听端口")
     parser.add_argument("--open-browser", action="store_true", help="启动 Web 模式后自动打开浏览器")
@@ -65,10 +67,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def _infer_mode_from_exe_name() -> str:
     exe_name = Path(sys.argv[0]).name.lower()
+    if "llm" in exe_name:
+        return "llm"
+    if "vision" in exe_name or "detector" in exe_name:
+        return "vision"
     if "training" in exe_name:
         return "training"
-    if "panel" in exe_name:
-        return "panel"
     return "default"
 
 
@@ -81,27 +85,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.cli:
         return run_cli_entry()
     if args.web:
-        print("=" * 56)
-        print(f"{APP_NAME} v{APP_VERSION} Web 控制台")
-        print("=" * 56)
-        print(f"访问地址: http://{args.host}:{args.port}\n")
         serve_dashboard(host=args.host, port=args.port, open_browser=args.open_browser)
         return 0
 
-    training_mode = bool(args.training_workbench or inferred_mode == "training")
-    panel_mode = inferred_mode == "panel"
-
-    print("=" * 56)
-    print(f"{APP_DISPLAY_NAME} v{APP_VERSION}")
-    print(COMPANY_NAME)
-    print("=" * 56)
-    if training_mode:
-        print("正在启动训练工作台...\n")
-    elif panel_mode:
-        print("正在启动控制面板...\n")
+    if args.llm_workbench or inferred_mode == "llm":
+        training_focus = "llm"
+    elif args.vision_workbench or inferred_mode == "vision":
+        training_focus = "vision"
+    elif args.training_workbench or inferred_mode == "training":
+        training_focus = "all"
     else:
-        print("正在启动桌面可视化软件...\n")
-    return launch_desktop_app(open_training_workbench=training_mode)
+        training_focus = ""
+
+    return launch_desktop_app(
+        open_training_workbench=bool(training_focus),
+        training_focus=training_focus,
+    )
 
 
 if __name__ == "__main__":

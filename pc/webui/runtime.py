@@ -32,6 +32,7 @@ except ImportError:
     HAS_PIL = False
 
 from pc.app_identity import resource_path
+from pc.core.subprocess_utils import popen_hidden, run_hidden
 from pc.core import logger as core_logger
 from pc.core.ai_backend import (
     configured_model_catalog,
@@ -570,7 +571,7 @@ class LabDetectorRuntime:
 
         runtime_env = env or build_training_python_env(Path(target_python))
         check_cmd = [str(target_python), "-m", "pip", "--version"]
-        check = subprocess.run(check_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=runtime_env)
+        check = run_hidden(check_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=runtime_env)
         if check.returncode == 0:
             output = self._decode_subprocess_output(check.stdout).strip()
             if output:
@@ -579,12 +580,12 @@ class LabDetectorRuntime:
 
         logs.append("[WARN] pip 不可用，尝试通过 ensurepip 自动补齐。")
         ensure_cmd = [str(target_python), "-m", "ensurepip", "--upgrade"]
-        ensure = subprocess.run(ensure_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=runtime_env)
+        ensure = run_hidden(ensure_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=runtime_env)
         ensure_output = self._decode_subprocess_output(ensure.stdout).strip()
         if ensure_output:
             logs.extend([f"[INFO] {line}" for line in ensure_output.splitlines()[-12:]])
 
-        recheck = subprocess.run(check_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=runtime_env)
+        recheck = run_hidden(check_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=runtime_env)
         if recheck.returncode == 0:
             output = self._decode_subprocess_output(recheck.stdout).strip()
             if output:
@@ -637,7 +638,7 @@ class LabDetectorRuntime:
             cmd = [str(target_python), "-m", "pip", "install", "--upgrade", "--no-warn-script-location", package_name]
             if install_root is not None:
                 cmd.extend(["--target", str(install_root)])
-            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=runtime_env)
+            proc = run_hidden(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=runtime_env)
             output = self._decode_subprocess_output(proc.stdout)
             tail_lines = [line for line in output.splitlines() if line.strip()][-12:]
             if proc.returncode == 0:
@@ -1219,7 +1220,7 @@ class LabDetectorRuntime:
             ollama_exe = str(default_path)
         creation_flags = 0x08000000 if os.name == "nt" else 0
         try:
-            subprocess.Popen(
+            popen_hidden(
                 [ollama_exe, "serve"],
                 creationflags=creation_flags,
                 stdout=subprocess.DEVNULL,

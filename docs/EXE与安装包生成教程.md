@@ -2,11 +2,11 @@
 
 ## 1. 目标产物
 
-- `pc/Lab.exe`
-- `pc/LabTraining.exe`
-- `LabDetector-v<版本号>.zip`
-- `LabDetector-Portable-v<版本号>.zip`
-- `LabDetector-Setup-v<版本号>.exe`
+- `pc/NeuroLab Hub.exe`
+- `pc/NeuroLab Hub LLM.exe`
+- `NeuroLab-Hub-v<版本号>.zip`
+- `NeuroLab-Hub-Portable-v<版本号>.zip`
+- `NeuroLab-Hub-Setup-v<版本号>.exe`
 
 ## 2. 生成命令
 

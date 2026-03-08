@@ -55,6 +55,7 @@ if current_dir not in sys.path:
 
 try:
     from pc.core.config import get_config, set_config
+    from pc.core.subprocess_utils import popen_hidden, run_hidden
     from pc.core.logger import console_info, console_error, console_prompt
     from pc.core.tts import speak_async
     from pc.core.ai_backend import list_ollama_models, analyze_image
@@ -358,9 +359,9 @@ def main() -> None:
         return
 
     if _STATE["ai_backend"] == "ollama":
-        subprocess.run('taskkill /f /im ollama.exe >NUL 2>&1', shell=True)
+        run_hidden('taskkill /f /im ollama.exe >NUL 2>&1', shell=True)
         CREATE_NO_WINDOW = 0x08000000
-        subprocess.Popen(
+        popen_hidden(
             ["ollama", "serve"],
             creationflags=CREATE_NO_WINDOW if os.name == 'nt' else 0,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
@@ -511,7 +512,7 @@ def main() -> None:
 
     if voice_agent:
         voice_agent.stop()
-    subprocess.run('taskkill /f /im ollama.exe >NUL 2>&1', shell=True)
+    run_hidden('taskkill /f /im ollama.exe >NUL 2>&1', shell=True)
     sys.stdout = getattr(sys.stdout, 'original_stream', sys.stdout)
     sys.stderr = getattr(sys.stderr, 'original_stream', sys.stderr)
 
