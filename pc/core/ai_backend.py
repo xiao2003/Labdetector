@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import base64
 import os
@@ -13,13 +13,14 @@ from pc.core.config import get_config, set_config
 from pc.core.logger import console_error, console_info
 from pc.training.model_linker import model_linker
 
-PROVIDER_PRESETS: Dict[str, Dict[str, str]] = {
+PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
     "ollama": {
         "label": "Ollama（本地私有化模型）",
         "section": "ollama",
         "model_key": "default_model",
         "default_model": "llava:7b-v1.5-q4_K_M",
         "base_url": "http://127.0.0.1:11434",
+        "kind": "local_builtin",
     },
     "local_adapter": {
         "label": "本地微调适配器（Transformers + PEFT）",
@@ -27,6 +28,7 @@ PROVIDER_PRESETS: Dict[str, Dict[str, str]] = {
         "model_key": "active_model",
         "default_model": "",
         "base_url": "",
+        "kind": "local_builtin",
     },
     "qwen": {
         "label": "通义千问（阿里云）",
@@ -34,6 +36,8 @@ PROVIDER_PRESETS: Dict[str, Dict[str, str]] = {
         "model_key": "model",
         "default_model": "qwen-vl-max",
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "kind": "cloud",
+        "requires_api_key": True,
     },
     "openai": {
         "label": "OpenAI 云模型",
@@ -41,6 +45,8 @@ PROVIDER_PRESETS: Dict[str, Dict[str, str]] = {
         "model_key": "model",
         "default_model": "gpt-4.1-mini",
         "base_url": "https://api.openai.com/v1",
+        "kind": "cloud",
+        "requires_api_key": True,
     },
     "deepseek": {
         "label": "DeepSeek 云模型",
@@ -48,6 +54,8 @@ PROVIDER_PRESETS: Dict[str, Dict[str, str]] = {
         "model_key": "model",
         "default_model": "deepseek-chat",
         "base_url": "https://api.deepseek.com/v1",
+        "kind": "cloud",
+        "requires_api_key": True,
     },
     "kimi": {
         "label": "Kimi / Moonshot 云模型",
@@ -55,13 +63,78 @@ PROVIDER_PRESETS: Dict[str, Dict[str, str]] = {
         "model_key": "model",
         "default_model": "moonshot-v1-128k",
         "base_url": "https://api.moonshot.cn/v1",
+        "kind": "cloud",
+        "requires_api_key": True,
     },
     "openai_compatible": {
-        "label": "兼容 OpenAI 协议云模型",
+        "label": "自定义 OpenAI 兼容服务",
         "section": "openai_compatible",
         "model_key": "model",
         "default_model": "custom-model",
         "base_url": "",
+        "kind": "service",
+        "requires_api_key": False,
+        "probe_models": True,
+    },
+    "lmstudio_local": {
+        "label": "LM Studio（本地 OpenAI 兼容服务）",
+        "section": "lmstudio_local",
+        "model_key": "model",
+        "default_model": "qwen2.5-vl-7b-instruct",
+        "base_url": "http://127.0.0.1:1234/v1",
+        "kind": "local_service",
+        "requires_api_key": False,
+        "probe_models": True,
+    },
+    "vllm_local": {
+        "label": "vLLM（本地 OpenAI 兼容服务）",
+        "section": "vllm_local",
+        "model_key": "model",
+        "default_model": "Qwen/Qwen2.5-VL-7B-Instruct",
+        "base_url": "http://127.0.0.1:8000/v1",
+        "kind": "local_service",
+        "requires_api_key": False,
+        "probe_models": True,
+    },
+    "sglang_local": {
+        "label": "SGLang（本地 OpenAI 兼容服务）",
+        "section": "sglang_local",
+        "model_key": "model",
+        "default_model": "Qwen/Qwen2.5-VL-7B-Instruct",
+        "base_url": "http://127.0.0.1:30000/v1",
+        "kind": "local_service",
+        "requires_api_key": False,
+        "probe_models": True,
+    },
+    "lmdeploy_local": {
+        "label": "LMDeploy（本地 OpenAI 兼容服务）",
+        "section": "lmdeploy_local",
+        "model_key": "model",
+        "default_model": "Qwen/Qwen2.5-VL-7B-Instruct",
+        "base_url": "http://127.0.0.1:23333/v1",
+        "kind": "local_service",
+        "requires_api_key": False,
+        "probe_models": True,
+    },
+    "xinference_local": {
+        "label": "Xinference（本地模型服务）",
+        "section": "xinference_local",
+        "model_key": "model",
+        "default_model": "qwen2.5-vl-7b-instruct",
+        "base_url": "http://127.0.0.1:9997/v1",
+        "kind": "local_service",
+        "requires_api_key": False,
+        "probe_models": True,
+    },
+    "llamacpp_local": {
+        "label": "llama.cpp Server（本地 OpenAI 兼容服务）",
+        "section": "llamacpp_local",
+        "model_key": "model",
+        "default_model": "qwen2.5-vl-7b-instruct",
+        "base_url": "http://127.0.0.1:8080/v1",
+        "kind": "local_service",
+        "requires_api_key": False,
+        "probe_models": True,
     },
 }
 
@@ -74,7 +147,11 @@ _LOCAL_MODEL_CACHE: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
 
 def provider_choices() -> List[Dict[str, str]]:
-    return [{"value": key, "label": value["label"]} for key, value in PROVIDER_PRESETS.items()]
+    return [{"value": key, "label": str(value["label"])} for key, value in PROVIDER_PRESETS.items()]
+
+
+def service_provider_keys() -> List[str]:
+    return [key for key, value in PROVIDER_PRESETS.items() if str(value.get("kind", "")).endswith("service") or value.get("kind") == "cloud"]
 
 
 def provider_section(backend: str) -> str:
@@ -87,12 +164,14 @@ def default_model_for_backend(backend: str) -> str:
     return str(get_config(f"{preset['section']}.{preset['model_key']}", preset["default_model"]))
 
 
-def get_backend_runtime_config(backend: str) -> Dict[str, str]:
+def get_backend_runtime_config(backend: str) -> Dict[str, Any]:
     preset = PROVIDER_PRESETS.get(backend or "", PROVIDER_PRESETS["ollama"])
-    section = preset["section"]
+    section = str(preset["section"])
     return {
         "backend": backend,
-        "label": preset["label"],
+        "label": str(preset["label"]),
+        "kind": str(preset.get("kind", "service")),
+        "requires_api_key": bool(preset.get("requires_api_key", False)),
         "api_key": str(get_config(f"{section}.api_key", "")),
         "base_url": str(
             get_config(f"{section}.base_url", get_config(f"{section}.api_base", preset.get("base_url", "")))
@@ -117,6 +196,41 @@ def save_backend_runtime_config(backend: str, api_key: str = "", base_url: str =
     if model is not None and model.strip():
         set_config(f"{section}.{preset['model_key']}", model.strip())
     return get_backend_runtime_config(backend)
+
+
+def _auth_headers(backend: str, config: Dict[str, Any]) -> Dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    api_key = str(config.get("api_key", "")).strip()
+    requires_api_key = bool(PROVIDER_PRESETS.get(backend, {}).get("requires_api_key", False))
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    elif requires_api_key:
+        raise RuntimeError(f"{config['label']} 尚未配置 API Key。")
+    return headers
+
+
+def list_openai_compatible_models(backend: str) -> List[str]:
+    config = get_backend_runtime_config(backend)
+    base_url = str(config.get("base_url", "")).rstrip("/")
+    if not base_url:
+        return []
+    try:
+        response = requests.get(
+            f"{base_url}/models",
+            headers=_auth_headers(backend, config),
+            timeout=min(_timeout_seconds(), 5.0),
+        )
+        response.raise_for_status()
+        payload = response.json()
+        rows = payload.get("data") if isinstance(payload, dict) else None
+        models: List[str] = []
+        if isinstance(rows, list):
+            for item in rows:
+                if isinstance(item, dict) and item.get("id"):
+                    models.append(str(item.get("id")))
+        return sorted(set(models))
+    except Exception:
+        return []
 
 
 def list_ollama_models() -> List[str]:
@@ -163,11 +277,16 @@ def configured_model_catalog() -> Dict[str, List[str]]:
         raw_defaults = get_config("ollama.default_models", "llava:7b-v1.5-q4_K_M")
         catalog["ollama"] = [item.strip() for item in str(raw_defaults).split(",") if item.strip()]
     catalog["local_adapter"] = list_local_adapter_models()
-    for backend in PROVIDER_PRESETS:
+    for backend, preset in PROVIDER_PRESETS.items():
         if backend in {"ollama", "local_adapter"}:
             continue
-        model = default_model_for_backend(backend)
-        catalog[backend] = [model] if model else []
+        models: List[str] = []
+        if bool(preset.get("probe_models", False)):
+            models = list_openai_compatible_models(backend)
+        if not models:
+            model = default_model_for_backend(backend)
+            models = [model] if model else []
+        catalog[backend] = models
     return catalog
 
 
@@ -209,17 +328,11 @@ def _openai_chat_completion(
     max_tokens: int = 220,
 ) -> str:
     config = get_backend_runtime_config(backend)
-    api_key = config.get("api_key", "").strip()
     base_url = config.get("base_url", "").rstrip("/")
-    if not api_key:
-        return f"{config['label']} 尚未配置 API Key。"
     if not base_url:
         return f"{config['label']} 尚未配置 Base URL。"
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    headers = _auth_headers(backend, config)
     content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
     if frame is not None:
         try:
@@ -248,10 +361,10 @@ def _openai_chat_completion(
     data = response.json()
     choices = data.get("choices") or []
     if not choices:
-        raise RuntimeError("云端模型未返回有效结果")
+        raise RuntimeError("模型服务未返回有效结果")
     message = choices[0].get("message", {})
     result = str(message.get("content", "")).strip()
-    return result or "云端模型未返回文本内容。"
+    return result or "模型服务未返回文本内容。"
 
 
 def _ollama_generate(prompt: str, model: str, frame: Any | None = None) -> str:

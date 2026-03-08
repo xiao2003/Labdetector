@@ -2,9 +2,10 @@
 
 本文说明如何从 `D:\Labdetector` 源码仓库生成：
 
-- PC 端可执行文件 `pc/LabDetector.exe`
+- PC 端可执行文件 `pc/LabDetector.exe` / `pc/Lab.exe`
+- PC 端训练入口 `pc/LabDetectorTraining.exe` / `pc/LabTraining.exe`
 - Pi 端运行目录 `pi/APP`
-- 压缩发布包 `LabDetector-v<版本号>.zip`
+- 压缩发布包 `LabDetector-v<版本号>.zip` 与 `LabDetector-Portable-v<版本号>.zip`
 - Windows 引导式安装包 `LabDetector-Setup-v<版本号>.exe`
 
 ## 1. 目标产物
@@ -14,10 +15,14 @@
 ```text
 D:\Labdetector
 ├─ pc\LabDetector.exe
+├─ pc\Lab.exe
+├─ pc\LabDetectorTraining.exe
+├─ pc\LabTraining.exe
 ├─ pc\APP\...
 ├─ pi\start_pi_node.sh
 ├─ pi\APP\...
 ├─ LabDetector-v<版本号>.zip
+├─ LabDetector-Portable-v<版本号>.zip
 └─ LabDetector-Setup-v<版本号>.exe
 ```
 
@@ -58,8 +63,10 @@ D:\Labdetector
 3. 检查并安装 `pyinstaller`
 4. 调用 `labdetector.spec` 生成 PyInstaller 目录版程序
 5. 将产物整理到 `pc/` 和 `pi/`
-6. 生成发布压缩包 `LabDetector-v<版本号>.zip`
-7. 清理 `.pyi_work`、`.pyi_dist`、`build`、`dist`、`release` 等临时目录
+6. 生成 `Lab.exe`、`LabTraining.exe` 等短名启动器
+7. 在 `pc/APP` 内补齐 `python_runtime` 与 `training_runtime`
+8. 生成发布压缩包 `LabDetector-v<版本号>.zip`
+9. 清理 `.pyi_work`、`.pyi_dist`、`build`、`dist`、`release` 等临时目录
 
 ### 3.2 安装包构建脚本
 
@@ -96,7 +103,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build_desktop_exe.ps1 -Python
 
 成功后重点检查：
 
-- `pc/LabDetector.exe`
+- `pc/LabDetector.exe` / `pc/Lab.exe`
+- `pc/LabDetectorTraining.exe` / `pc/LabTraining.exe`
 - `pc/APP/`
 - `pi/start_pi_node.sh`
 - `pi/APP/`

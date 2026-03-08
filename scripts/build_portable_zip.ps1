@@ -21,17 +21,36 @@ try {
 try {
   $Version = (Get-Content -Path (Join-Path $ProjectRoot 'VERSION') -Raw).Trim()
   $PcRoot = Join-Path $ProjectRoot 'pc'
-  $PcExe = Join-Path $PcRoot 'LabDetector.exe'
+  $PiRoot = Join-Path $ProjectRoot 'pi'
   $PcApp = Join-Path $PcRoot 'APP'
+  $PiApp = Join-Path $PiRoot 'APP'
   $StageRoot = Join-Path $ProjectRoot '.portable_stage'
   $PortableRoot = Join-Path $StageRoot 'LabDetector'
+  $PortablePcRoot = Join-Path $PortableRoot 'pc'
+  $PortablePiRoot = Join-Path $PortableRoot 'pi'
   $PortableZip = Join-Path $ProjectRoot ("LabDetector-Portable-v$Version.zip")
 
-  if ((!(Test-Path $PcExe)) -or (!(Test-Path $PcApp))) {
+  $RequiredPcFiles = @(
+    (Join-Path $PcRoot 'LabDetector.exe'),
+    (Join-Path $PcRoot 'LabDetectorTraining.exe'),
+    (Join-Path $PcRoot 'Lab.exe'),
+    (Join-Path $PcRoot 'LabTraining.exe')
+  )
+  $NeedBuild = $false
+  foreach ($file in $RequiredPcFiles) {
+    if (!(Test-Path $file)) {
+      $NeedBuild = $true
+      break
+    }
+  }
+  if (!(Test-Path $PcApp) -or !(Test-Path $PiApp)) {
+    $NeedBuild = $true
+  }
+
+  if ($NeedBuild) {
     if ($SkipDesktopBuild) {
       throw "Desktop runtime not found under: $PcRoot"
     }
-
     & (Join-Path $PSHOME 'powershell.exe') -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot 'scripts\build_desktop_exe.ps1') -PythonExe $PythonExe -NoPause
     if ($LASTEXITCODE -ne 0) {
       throw 'Desktop build failed while preparing portable zip.'
@@ -44,20 +63,31 @@ try {
     }
   }
 
-  New-Item -ItemType Directory -Force -Path $PortableRoot | Out-Null
-  Copy-Item -Path $PcExe -Destination (Join-Path $PortableRoot 'LabDetector.exe') -Force
-  Copy-Item -Path $PcApp -Destination (Join-Path $PortableRoot 'APP') -Recurse -Force
+  New-Item -ItemType Directory -Force -Path $PortablePcRoot | Out-Null
+  New-Item -ItemType Directory -Force -Path $PortablePiRoot | Out-Null
+
+  foreach ($launcher in @('LabDetector.exe', 'LabDetectorPanel.exe', 'LabDetectorTraining.exe', 'Lab.exe', 'LabPanel.exe', 'LabTraining.exe')) {
+    $source = Join-Path $PcRoot $launcher
+    if (Test-Path $source) {
+      Copy-Item -Path $source -Destination (Join-Path $PortablePcRoot $launcher) -Force
+    }
+  }
+  Copy-Item -Path $PcApp -Destination (Join-Path $PortablePcRoot 'APP') -Recurse -Force
+  Copy-Item -Path (Join-Path $PiRoot 'start_pi_node.sh') -Destination (Join-Path $PortablePiRoot 'start_pi_node.sh') -Force
+  Copy-Item -Path $PiApp -Destination (Join-Path $PortablePiRoot 'APP') -Recurse -Force
 
   $quickStartLines = @(
     'LabDetector Portable Usage',
     '==========================',
-    '1. Unzip this package to any directory.',
-    '2. Keep "LabDetector.exe" and "APP" in the same folder.',
-    '3. Double-click "LabDetector.exe" to start.',
+    '1. 解压后，PC 端运行 pc\\Lab.exe 或 pc\\LabDetector.exe。',
+    '2. 训练工作台运行 pc\\LabTraining.exe。',
+    '3. 树莓派端复制 pi 目录后运行 pi/start_pi_node.sh start。',
+    '4. 首次运行时建议先执行软件自检，按需自动安装依赖。',
     '',
-    'Note:',
-    '- This is a portable package, no installer is required.',
-    '- Do not move or delete APP.'
+    '注意：',
+    '- pc\\APP 与 pi\\APP 为运行时目录，请勿删除。',
+    '- 本包为解压即用版，不包含 Windows 安装流程。',
+    '- 如需安装向导，请使用 LabDetector-Setup-v*.exe。'
   )
   Set-Content -Path (Join-Path $PortableRoot 'README_PORTABLE.txt') -Value $quickStartLines -Encoding UTF8
 
@@ -68,12 +98,12 @@ try {
     Remove-Item -Recurse -Force $StageRoot
   }
 
-  $ExeSizeMB = [math]::Round(((Get-Item $PcExe).Length / 1MB), 2)
+  $ExeSizeMB = [math]::Round(((Get-Item (Join-Path $PcRoot 'Lab.exe')).Length / 1MB), 2)
   $ZipSizeMB = [math]::Round(((Get-Item $PortableZip).Length / 1MB), 2)
 
   Write-Host ''
   Write-Host 'Portable launcher EXE:' -ForegroundColor Green
-  Write-Host $PcExe -ForegroundColor Green
+  Write-Host (Join-Path $PcRoot 'Lab.exe') -ForegroundColor Green
   Write-Host ("EXE size: {0} MB" -f $ExeSizeMB) -ForegroundColor Green
   Write-Host 'Portable zip package:' -ForegroundColor Green
   Write-Host $PortableZip -ForegroundColor Green

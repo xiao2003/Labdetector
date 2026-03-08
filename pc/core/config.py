@@ -59,6 +59,36 @@ _DEFAULT_CONFIG = {
         "api_key": "",
         "base_url": "",
     },
+    "lmstudio_local": {
+        "model": "qwen2.5-vl-7b-instruct",
+        "api_key": "",
+        "base_url": "http://127.0.0.1:1234/v1",
+    },
+    "vllm_local": {
+        "model": "Qwen/Qwen2.5-VL-7B-Instruct",
+        "api_key": "",
+        "base_url": "http://127.0.0.1:8000/v1",
+    },
+    "sglang_local": {
+        "model": "Qwen/Qwen2.5-VL-7B-Instruct",
+        "api_key": "",
+        "base_url": "http://127.0.0.1:30000/v1",
+    },
+    "lmdeploy_local": {
+        "model": "Qwen/Qwen2.5-VL-7B-Instruct",
+        "api_key": "",
+        "base_url": "http://127.0.0.1:23333/v1",
+    },
+    "xinference_local": {
+        "model": "qwen2.5-vl-7b-instruct",
+        "api_key": "",
+        "base_url": "http://127.0.0.1:9997/v1",
+    },
+    "llamacpp_local": {
+        "model": "qwen2.5-vl-7b-instruct",
+        "api_key": "",
+        "base_url": "http://127.0.0.1:8080/v1",
+    },
     "voice_interaction": {
         "wake_word": "小爱同学",
         "wake_timeout": "10.0",
@@ -104,6 +134,12 @@ _DEFAULT_CONFIG = {
         "pi_epochs": "20",
         "pi_imgsz": "640",
         "pi_device": "",
+    },
+    "self_check": {
+        "pc_auto_install_core": "True",
+        "pc_auto_install_training": "True",
+        "pc_auto_install_optional": "False",
+        "pi_auto_install_dependencies": "True",
     },
     "pi_detector": {
         "active_weights": "",
@@ -181,5 +217,3 @@ def set_config(key: str, value: Any) -> None:
             _config.add_section(section)
         _config.set(section, option, str(value))
         _save_config()
-
-

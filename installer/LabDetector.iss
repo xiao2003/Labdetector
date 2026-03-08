@@ -6,6 +6,9 @@
 #define MyAppExeName "LabDetector.exe"
 #define MyPanelExeName "LabDetectorPanel.exe"
 #define MyTrainingExeName "LabDetectorTraining.exe"
+#define MyAliasExeName "Lab.exe"
+#define MyAliasPanelExeName "LabPanel.exe"
+#define MyAliasTrainingExeName "LabTraining.exe"
 #ifndef MyAppVersion
   #define MyAppVersion "3.0.2"
 #endif
@@ -61,6 +64,9 @@ Name: "{app}\APP"; Attribs: hidden system
 Source: "{#ReleaseDir}\LabDetector.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ReleaseDir}\LabDetectorPanel.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ReleaseDir}\LabDetectorTraining.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ReleaseDir}\Lab.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ReleaseDir}\LabPanel.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ReleaseDir}\LabTraining.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ReleaseDir}\APP\*"; DestDir: "{app}\APP"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]

@@ -31,6 +31,9 @@ class PiConfig:
             "conf": "0.4",
             "imgsz": "640",
         }
+        config["self_check"] = {
+            "auto_install_dependencies": "True",
+        }
         with open(cls._config_path, "w", encoding="utf-8-sig") as handle:
             config.write(handle)
 
@@ -47,6 +50,9 @@ class PiConfig:
                 "weights_path": "yolov8n.pt",
                 "conf": "0.4",
                 "imgsz": "640",
+            },
+            "self_check": {
+                "auto_install_dependencies": "True",
             },
         }
         changed = False
@@ -99,4 +105,3 @@ def get_pi_config(key, default=None):
 
 def set_pi_config(key, value):
     PiConfig.set(key, value)
-

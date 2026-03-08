@@ -9,7 +9,7 @@ import json
 import socket
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 try:
     from .config import get_pi_config, set_pi_config
@@ -125,7 +125,7 @@ def apply_start_overrides(args: argparse.Namespace) -> None:
         set_pi_config("detector.imgsz", args.detector_imgsz)
 
 
-def start_node(skip_self_check: bool = False) -> int:
+def start_node(skip_self_check: bool = False, auto_install_deps: Optional[bool] = None) -> int:
     runtime = _load_runtime()
     snapshot = _config_snapshot()
     print("准备启动 LabDetector 树莓派边缘端")
@@ -133,16 +133,22 @@ def start_node(skip_self_check: bool = False) -> int:
     print(f"中枢地址: {snapshot['network']['pc_ip'] or '未设置，等待自动发现'}")
     print(f"端口: {snapshot['network']['ws_port']}")
     print(f"检测权重: {snapshot['detector']['weights_path']}")
+    if auto_install_deps is None:
+        auto_install_deps = bool(get_pi_config("self_check.auto_install_dependencies", True))
     if not skip_self_check:
-        runtime.run_pi_self_check()
+        ok = runtime.run_pi_self_check(auto_install=auto_install_deps)
+        if not ok:
+            return 2
     runtime.main()
     return 0
 
 
-def run_self_check() -> int:
+def run_self_check(auto_install_deps: Optional[bool] = None) -> int:
     runtime = _load_runtime()
-    runtime.run_pi_self_check()
-    return 0
+    if auto_install_deps is None:
+        auto_install_deps = bool(get_pi_config("self_check.auto_install_dependencies", True))
+    ok = runtime.run_pi_self_check(auto_install=auto_install_deps)
+    return 0 if ok else 2
 
 
 def interactive_config_wizard() -> int:
@@ -218,10 +224,18 @@ def build_parser() -> argparse.ArgumentParser:
     config_set_parser.add_argument("key", help="配置路径，如 network.pc_ip")
     config_set_parser.add_argument("value", help="配置值")
 
-    subparsers.add_parser("self-check", help="执行树莓派边缘端自检")
+    self_check_parser = subparsers.add_parser("self-check", help="执行树莓派边缘端自检")
+    self_check_group = self_check_parser.add_mutually_exclusive_group()
+    self_check_group.add_argument("--auto-install-deps", dest="auto_install_deps", action="store_true", help="自检时自动安装缺失依赖")
+    self_check_group.add_argument("--no-auto-install-deps", dest="auto_install_deps", action="store_false", help="自检时不自动安装依赖")
+    self_check_parser.set_defaults(auto_install_deps=None)
 
     start_parser = subparsers.add_parser("start", help="启动边缘端服务")
     start_parser.add_argument("--skip-self-check", action="store_true", help="启动前跳过自检")
+    start_group = start_parser.add_mutually_exclusive_group()
+    start_group.add_argument("--auto-install-deps", dest="auto_install_deps", action="store_true", help="启动前自检时自动安装缺失依赖")
+    start_group.add_argument("--no-auto-install-deps", dest="auto_install_deps", action="store_false", help="启动前自检时不自动安装依赖")
+    start_parser.set_defaults(auto_install_deps=None)
     start_parser.add_argument("--pc-ip", help="覆盖中枢 IP，并写入配置文件")
     start_parser.add_argument("--ws-port", help="覆盖 WebSocket 端口，并写入配置文件")
     start_parser.add_argument("--wake-word", help="覆盖唤醒词，并写入配置文件")
@@ -250,10 +264,10 @@ def main(argv: list[str] | None = None) -> int:
                 return set_config_value(args.key, args.value)
             parser.error("config 需要子命令 show 或 set")
         if args.command == "self-check":
-            return run_self_check()
+            return run_self_check(auto_install_deps=getattr(args, "auto_install_deps", None))
         if args.command == "start":
             apply_start_overrides(args)
-            return start_node(skip_self_check=args.skip_self_check)
+            return start_node(skip_self_check=args.skip_self_check, auto_install_deps=getattr(args, "auto_install_deps", None))
         if args.command == "version":
             print(APP_VERSION)
             return 0

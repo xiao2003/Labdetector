@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import importlib
 import importlib.util
 import json
 import os
@@ -38,11 +39,19 @@ from pc.core.ai_backend import (
     get_backend_runtime_config,
     provider_choices,
     save_backend_runtime_config,
+    service_provider_keys,
     set_ai_backend,
 )
 from pc.core.config import get_config, set_config
 from pc.core.experiment_archive import get_experiment_archive
 from pc.training import training_manager
+from pc.training.runtime_env import (
+    build_training_python_env,
+    describe_training_python,
+    install_target_for_training_packages,
+    probe_modules_with_training_python,
+    resolve_training_python_executable,
+)
 from pc.core.expert_manager import expert_manager
 from pc.core.expert_closed_loop import (
     ExpertResult,
@@ -74,6 +83,14 @@ OPTIONAL_DEPENDENCY_MAP = {
     "langchain_huggingface": "langchain-huggingface",
     "sentence_transformers": "sentence-transformers",
     "faiss": "faiss-cpu",
+    "transformers": "transformers",
+    "accelerate": "accelerate",
+    "datasets": "datasets",
+    "peft": "peft",
+    "ultralytics": "ultralytics",
+}
+TRAINING_DEPENDENCY_MAP = {
+    "torch": "torch",
     "transformers": "transformers",
     "accelerate": "accelerate",
     "datasets": "datasets",
@@ -474,6 +491,7 @@ class LabDetectorRuntime:
             ("vosk", "离线语音模型资产", self._check_vosk_assets),
             ("rag", "实验室知识库目录 (RAG)", self._check_rag_assets),
         ]
+        total_checks = len(checks)
         results: List[Dict[str, Any]] = []
         self._log_raw_line("")
         self._log_raw_line("=" * 55)
@@ -482,7 +500,7 @@ class LabDetectorRuntime:
 
         for index, (key, title, runner) in enumerate(checks, start=1):
             self._log_raw_line("")
-            self._log_raw_line(f"[INFO] [{index}/5] 检查 {title}...")
+            self._log_raw_line(f"[INFO] [{index}/{total_checks}] 检查 {title}...")
             start_time = time.time()
             try:
                 result = runner()
@@ -503,58 +521,273 @@ class LabDetectorRuntime:
             })
             results.append(result)
 
+        has_error = any(str(row.get("status", "")).lower() == "error" for row in results)
+        has_warn = any(str(row.get("status", "")).lower() == "warn" for row in results)
         self._log_raw_line("")
         self._log_raw_line("=" * 55)
-        self._log_raw_line("[INFO] 系统自检全部通过，正在启动主控制流...")
+        if has_error:
+            self._log_raw_line("[ERROR] 系统自检存在失败项，请先处理后再启动。")
+        elif has_warn:
+            self._log_raw_line("[WARN] 系统自检完成，存在告警项，可继续使用并按需补齐能力。")
+        else:
+            self._log_raw_line("[INFO] 系统自检全部通过，正在启动主控制流...")
         self._log_raw_line("=" * 55)
         self._log_raw_line("")
         self.self_check_results = results
         self.self_check_has_run = True
         return results
 
+    @staticmethod
+    def _missing_dependencies(module_map: Dict[str, str]) -> List[str]:
+        missing: List[str] = []
+        for module_name, package_name in module_map.items():
+            if importlib.util.find_spec(module_name) is None:
+                missing.append(package_name)
+        return missing
+
+    def _missing_dependencies_in_training_env(self, module_map: Dict[str, str]) -> tuple[List[str], List[str], Dict[str, Any]]:
+        probe = probe_modules_with_training_python(module_map.keys())
+        logs = list(probe.get("logs") or [])
+        results = dict(probe.get("results") or {})
+        missing = [package_name for module_name, package_name in module_map.items() if not results.get(module_name, False)]
+        return missing, logs, probe
+
+    def _ensure_pip_available(
+        self,
+        python_exe: Path | None = None,
+        env: Dict[str, str] | None = None,
+    ) -> Dict[str, Any]:
+        logs: List[str] = []
+        target_python = python_exe
+        if target_python is None:
+            if getattr(sys, "frozen", False):
+                resolved = resolve_training_python_executable()
+                target_python = Path(resolved) if resolved is not None else None
+            else:
+                target_python = Path(sys.executable)
+        if target_python is None or not Path(target_python).exists():
+            return {"ok": False, "logs": ["[ERROR] 未找到可用于自动安装依赖的 Python 解释器。"]}
+
+        runtime_env = env or build_training_python_env(Path(target_python))
+        check_cmd = [str(target_python), "-m", "pip", "--version"]
+        check = subprocess.run(check_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=runtime_env)
+        if check.returncode == 0:
+            output = self._decode_subprocess_output(check.stdout).strip()
+            if output:
+                logs.append(f"[INFO] pip 已就绪: {output}")
+            return {"ok": True, "logs": logs}
+
+        logs.append("[WARN] pip 不可用，尝试通过 ensurepip 自动补齐。")
+        ensure_cmd = [str(target_python), "-m", "ensurepip", "--upgrade"]
+        ensure = subprocess.run(ensure_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=runtime_env)
+        ensure_output = self._decode_subprocess_output(ensure.stdout).strip()
+        if ensure_output:
+            logs.extend([f"[INFO] {line}" for line in ensure_output.splitlines()[-12:]])
+
+        recheck = subprocess.run(check_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=runtime_env)
+        if recheck.returncode == 0:
+            output = self._decode_subprocess_output(recheck.stdout).strip()
+            if output:
+                logs.append(f"[INFO] pip 修复成功: {output}")
+            return {"ok": True, "logs": logs}
+
+        logs.append("[ERROR] pip 仍不可用，无法自动安装 Python 依赖。")
+        return {"ok": False, "logs": logs}
+
+    def _install_python_packages(
+        self,
+        packages: List[str],
+        scope_name: str,
+        python_exe: Path | None = None,
+        env: Dict[str, str] | None = None,
+        install_target: Path | None = None,
+    ) -> Dict[str, Any]:
+        uniq_packages = sorted({str(pkg).strip() for pkg in packages if str(pkg).strip()})
+        if not uniq_packages:
+            return {"ok": True, "installed": [], "failed": [], "logs": [f"[INFO] {scope_name} 无需安装。"]}
+
+        target_python = python_exe
+        if target_python is None:
+            if getattr(sys, "frozen", False):
+                resolved = resolve_training_python_executable()
+                target_python = Path(resolved) if resolved is not None else None
+            else:
+                target_python = Path(sys.executable)
+        if target_python is None or not Path(target_python).exists():
+            return {"ok": False, "installed": [], "failed": uniq_packages, "logs": ["[ERROR] 未找到可执行的 Python 解释器。"]}
+
+        runtime_env = env or build_training_python_env(Path(target_python))
+        install_root = install_target
+        if install_root is None and getattr(sys, "frozen", False):
+            install_root = install_target_for_training_packages()
+        logs: List[str] = [f"[INFO] 开始自动安装{scope_name}: {', '.join(uniq_packages)}"]
+        if install_root is not None:
+            Path(install_root).mkdir(parents=True, exist_ok=True)
+            logs.append(f"[INFO] 安装目标目录: {install_root}")
+        logs.append(f"[INFO] 安装解释器: {target_python}")
+
+        pip_state = self._ensure_pip_available(Path(target_python), runtime_env)
+        logs.extend(pip_state["logs"])
+        if not pip_state["ok"]:
+            return {"ok": False, "installed": [], "failed": uniq_packages, "logs": logs}
+
+        installed: List[str] = []
+        failed: List[str] = []
+        for package_name in uniq_packages:
+            cmd = [str(target_python), "-m", "pip", "install", "--upgrade", "--no-warn-script-location", package_name]
+            if install_root is not None:
+                cmd.extend(["--target", str(install_root)])
+            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=runtime_env)
+            output = self._decode_subprocess_output(proc.stdout)
+            tail_lines = [line for line in output.splitlines() if line.strip()][-12:]
+            if proc.returncode == 0:
+                installed.append(package_name)
+                logs.append(f"[INFO] 安装成功: {package_name}")
+            else:
+                failed.append(package_name)
+                logs.append(f"[ERROR] 安装失败: {package_name}")
+            logs.extend([f"[INFO] {line}" for line in tail_lines])
+
+        return {
+            "ok": len(failed) == 0,
+            "installed": installed,
+            "failed": failed,
+            "logs": logs,
+        }
+
     def _check_dependencies(self) -> Dict[str, Any]:
-        missing_base: List[str] = []
-        missing_optional: List[str] = []
-        installed_base: List[str] = []
-        installed_optional: List[str] = []
-        for module_name, package_name in BASE_DEPENDENCY_MAP.items():
-            if importlib.util.find_spec(module_name) is None:
-                missing_base.append(package_name)
-            else:
-                installed_base.append(package_name)
-        for module_name, package_name in OPTIONAL_DEPENDENCY_MAP.items():
-            if importlib.util.find_spec(module_name) is None:
-                missing_optional.append(package_name)
-            else:
-                installed_optional.append(package_name)
+        auto_install_core = bool(get_config("self_check.pc_auto_install_core", True))
+        auto_install_training = bool(get_config("self_check.pc_auto_install_training", True))
+        auto_install_optional = bool(get_config("self_check.pc_auto_install_optional", False))
+
+        logs: List[str] = []
+        python_info = describe_training_python()
+        if python_info.get("available"):
+            logs.append(f"[INFO] 训练运行时解释器: {python_info.get('path')}")
+        elif python_info.get("reason"):
+            logs.append(f"[WARN] {python_info.get('reason')}")
+
+        missing_base = self._missing_dependencies(BASE_DEPENDENCY_MAP)
+        missing_training, training_logs, _ = self._missing_dependencies_in_training_env(TRAINING_DEPENDENCY_MAP)
+        missing_optional_all, optional_logs, _ = self._missing_dependencies_in_training_env(OPTIONAL_DEPENDENCY_MAP)
+        logs.extend(training_logs)
+        logs.extend(optional_logs)
+        training_package_set = set(TRAINING_DEPENDENCY_MAP.values())
+        missing_optional_extra = [pkg for pkg in missing_optional_all if pkg not in training_package_set]
+
+        target_python = resolve_training_python_executable()
+        runtime_env = build_training_python_env(Path(target_python)) if target_python else None
+        install_target = install_target_for_training_packages()
+
+        if missing_base and auto_install_core:
+            install_report = self._install_python_packages(
+                missing_base,
+                "核心依赖",
+                python_exe=Path(target_python) if target_python else None,
+                env=runtime_env,
+                install_target=install_target,
+            )
+            logs.extend(install_report["logs"])
+
+        if missing_training and auto_install_training:
+            install_report = self._install_python_packages(
+                missing_training,
+                "训练依赖",
+                python_exe=Path(target_python) if target_python else None,
+                env=runtime_env,
+                install_target=install_target,
+            )
+            logs.extend(install_report["logs"])
+
+        if missing_optional_extra and auto_install_optional:
+            install_report = self._install_python_packages(
+                missing_optional_extra,
+                "可选增强依赖",
+                python_exe=Path(target_python) if target_python else None,
+                env=runtime_env,
+                install_target=install_target,
+            )
+            logs.extend(install_report["logs"])
+
+        missing_base = self._missing_dependencies(BASE_DEPENDENCY_MAP)
+        missing_training, _, _ = self._missing_dependencies_in_training_env(TRAINING_DEPENDENCY_MAP)
+        missing_optional_all, _, _ = self._missing_dependencies_in_training_env(OPTIONAL_DEPENDENCY_MAP)
+        missing_optional_extra = [pkg for pkg in missing_optional_all if pkg not in training_package_set]
+
+        installed_base_count = len(BASE_DEPENDENCY_MAP) - len(missing_base)
+        installed_optional_count = len(OPTIONAL_DEPENDENCY_MAP) - len(missing_optional_all)
+        if not logs:
+            logs.append(
+                f"[INFO] Python 关键依赖检查完成：核心 {installed_base_count}/{len(BASE_DEPENDENCY_MAP)}，"
+                f"可选 {installed_optional_count}/{len(OPTIONAL_DEPENDENCY_MAP)}。"
+            )
 
         if missing_base:
-            raw_output = f"[WARN] Python 核心依赖存在缺失: {', '.join(missing_base)}"
-            if missing_optional:
-                raw_output = f"{raw_output}\n[INFO] 可选依赖未安装: {', '.join(missing_optional)}"
+            return {
+                "status": "error",
+                "summary": f"核心依赖缺失 {len(missing_base)} 项",
+                "detail": "缺失核心依赖: " + ", ".join(missing_base),
+                "raw_output": "\n".join(logs),
+            }
+
+        if not python_info.get("available"):
             return {
                 "status": "warn",
-                "summary": f"核心依赖已加载 {len(installed_base)}/{len(BASE_DEPENDENCY_MAP)} 项",
-                "detail": "缺失依赖: " + ", ".join(missing_base),
-                "raw_output": raw_output,
+                "summary": "训练运行时未就绪",
+                "detail": str(python_info.get("reason") or "未找到训练解释器"),
+                "raw_output": "\n".join(logs),
             }
-        if missing_optional:
-            raw_output = (
-                "[INFO] 已启用轻量运行时构建，以下依赖按需导入即可："
-                + ", ".join(missing_optional)
-            )
+
+        if missing_training:
+            return {
+                "status": "warn",
+                "summary": f"训练依赖缺失 {len(missing_training)} 项",
+                "detail": "缺失训练依赖: " + ", ".join(missing_training),
+                "raw_output": "\n".join(logs),
+            }
+
+        if missing_optional_extra:
             return {
                 "status": "pass",
-                "summary": f"核心依赖已就绪，可选依赖缺省 {len(missing_optional)} 项",
-                "detail": "轻量模式已启用；需要专家本地模型时再导入对应依赖包。",
-                "raw_output": raw_output,
+                "summary": f"核心依赖已就绪，可选增强缺省 {len(missing_optional_extra)} 项",
+                "detail": "缺失可选依赖: " + ", ".join(missing_optional_extra),
+                "raw_output": "\n".join(logs),
             }
+
         return {
             "status": "pass",
-            "summary": f"{len(installed_base)} 项核心依赖已就绪",
-            "detail": "requirements 对应核心依赖可导入",
-            "raw_output": f"[INFO] Python 关键依赖检查通过，共 {len(installed_base)} 项；可选依赖已加载 {len(installed_optional)} 项。",
+            "summary": f"{installed_base_count} 项核心依赖已就绪",
+            "detail": "核心与训练链路依赖可导入。",
+            "raw_output": "\n".join(logs),
         }
+
+    def _ensure_training_dependencies_ready(self) -> None:
+        missing_training, probe_logs, probe = self._missing_dependencies_in_training_env(TRAINING_DEPENDENCY_MAP)
+        for line in probe_logs:
+            self._log_raw_line(line)
+        if not missing_training:
+            return
+
+        python_info = describe_training_python()
+        if not python_info.get("available"):
+            raise RuntimeError(str(python_info.get("reason") or "未找到训练运行时 Python。"))
+
+        auto_install_training = bool(get_config("self_check.pc_auto_install_training", True))
+        if auto_install_training:
+            target_python = resolve_training_python_executable()
+            install_report = self._install_python_packages(
+                missing_training,
+                "训练依赖",
+                python_exe=Path(target_python) if target_python else None,
+                env=build_training_python_env(Path(target_python)) if target_python else None,
+                install_target=install_target_for_training_packages(),
+            )
+            for line in install_report["logs"]:
+                self._log_raw_line(line)
+            missing_training, _, _ = self._missing_dependencies_in_training_env(TRAINING_DEPENDENCY_MAP)
+
+        if missing_training:
+            raise RuntimeError("训练依赖未就绪: " + ", ".join(missing_training) + "。请先运行启动自检。")
 
     def _decode_subprocess_output(self, payload: bytes) -> str:
         for encoding in ("utf-8", "gbk", "cp936"):
@@ -711,19 +944,32 @@ class LabDetectorRuntime:
         return summary
 
     def start_llm_finetune(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        self._ensure_training_dependencies_ready()
         job = training_manager.start_llm_job(payload)
         self._log_info(f"LLM 微调任务已启动: {job['job_id']}")
         return job
 
     def start_pi_detector_finetune(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        self._ensure_training_dependencies_ready()
         job = training_manager.start_pi_job(payload)
         self._log_info(f"Pi 检测模型微调任务已启动: {job['job_id']}")
         return job
 
     def start_full_training_pipeline(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        self._ensure_training_dependencies_ready()
         job = training_manager.start_full_pipeline_job(payload)
         self._log_info(f"一键全流程训练任务已启动: {job['job_id']}")
         return job
+
+    def activate_llm_deployment(self, target: str = "") -> Dict[str, Any]:
+        summary = training_manager.activate_llm_deployment(target)
+        self._log_info(f"LLM 部署已激活: {summary.get('name', '')}")
+        return summary
+
+    def activate_pi_deployment(self, target: str = "") -> Dict[str, Any]:
+        summary = training_manager.activate_pi_deployment(target)
+        self._log_info(f"Pi 检测模型已激活: {summary.get('name', '')}")
+        return summary
     @staticmethod
     def _parse_session_tags(raw: Any) -> List[str]:
         if isinstance(raw, list):
@@ -779,15 +1025,16 @@ class LabDetectorRuntime:
 
     def get_cloud_backend_catalog(self) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
-        for backend in ("qwen", "openai", "deepseek", "kimi", "openai_compatible"):
+        for backend in service_provider_keys():
             config = get_backend_runtime_config(backend)
-            config["configured"] = bool(config.get("api_key"))
+            requires_api_key = bool(config.get("requires_api_key"))
+            config["configured"] = bool(config.get("base_url")) and (bool(config.get("api_key")) or not requires_api_key)
             rows.append(config)
         return rows
 
     def save_cloud_backend_config(self, backend: str, api_key: str = "", base_url: str = "", model: str = "") -> Dict[str, Any]:
         summary = save_backend_runtime_config(backend, api_key=api_key, base_url=base_url, model=model)
-        self._log_info(f"云模型配置已保存: {summary['label']}")
+        self._log_info(f"模型服务配置已保存: {summary['label']}")
         return summary
 
     def import_knowledge_paths(
@@ -1329,6 +1576,3 @@ class LabDetectorRuntime:
         exported = self.export_logs()
         if exported:
             self._log_info(f"可视化运行时日志已导出: {exported}")
-
-
-

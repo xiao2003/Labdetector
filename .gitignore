@@ -54,3 +54,7 @@ pc/models/registry/
 pi/models/detectors/
 LabDetector-Portable-v*.zip
 
+
+pc/Lab.exe
+pc/LabPanel.exe
+pc/LabTraining.exe

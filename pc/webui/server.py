@@ -168,6 +168,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc)}, status=400)
             return
+        if parsed.path == "/api/training/activate-llm":
+            try:
+                summary = self.runtime.activate_llm_deployment(str(body.get("target") or ""))
+                self._send_json({"ok": True, "summary": summary, "training": self.runtime.get_training_overview()})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
+            return
+        if parsed.path == "/api/training/activate-pi":
+            try:
+                summary = self.runtime.activate_pi_deployment(str(body.get("target") or ""))
+                self._send_json({"ok": True, "summary": summary, "training": self.runtime.get_training_overview()})
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=400)
+            return
         if parsed.path == "/api/training/pi":
             try:
                 job = self.runtime.start_pi_detector_finetune(body)

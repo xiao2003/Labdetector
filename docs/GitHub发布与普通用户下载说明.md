@@ -5,8 +5,8 @@
 建议将 GitHub 仓库分成三层用途：
 
 - 仓库首页：给开发者，展示源码、文档、接口和训练说明。
-- Releases 页面：给普通用户，只下载 `LabDetector-Setup-vX.Y.Z.exe`。
-- 安装后的本地目录：用户只看到 `LabDetector.exe + APP`。
+- Releases 页面：给普通用户，下载安装器或完整 ZIP。
+- 安装后的本地目录：Windows 用户看到 `LabDetector.exe / Lab.exe + APP`，树莓派用户看到 `start_pi_node.sh + APP`。
 
 ## 2. 实施方式
 
@@ -26,10 +26,13 @@
 - 产物：
   - `LabDetector-Setup-vX.Y.Z.exe`
   - `LabDetector-vX.Y.Z.zip`
+  - `LabDetector-Portable-vX.Y.Z.zip`
 
-普通用户应优先下载安装器：
+普通用户建议按场景下载：
 
-- `LabDetector-Setup-vX.Y.Z.exe`
+- Windows 安装版：`LabDetector-Setup-vX.Y.Z.exe`
+- PC + Pi 完整交付包：`LabDetector-vX.Y.Z.zip`
+- 便携解压版：`LabDetector-Portable-vX.Y.Z.zip`
 
 ### 2.3 安装后的电脑
 
@@ -38,6 +41,9 @@
 ```text
 安装目录
 ├─ LabDetector.exe
+├─ Lab.exe
+├─ LabDetectorTraining.exe
+├─ LabTraining.exe
 └─ APP
 ```
 

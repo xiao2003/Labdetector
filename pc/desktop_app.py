@@ -103,7 +103,7 @@ class DesktopApp:
         self.cloud_api_key_entry: ttk.Entry | None = None
         self.cloud_base_url_entry: ttk.Entry | None = None
         self.cloud_model_entry: ttk.Entry | None = None
-        self.cloud_status_var = tk.StringVar(value="等待配置云模型 API")
+        self.cloud_status_var = tk.StringVar(value="等待配置模型服务")
         self.stream_viewer_window: tk.Toplevel | None = None
         self.stream_viewer_label: tk.Label | None = None
         self.stream_viewer_title_var = tk.StringVar(value="")
@@ -371,7 +371,7 @@ class DesktopApp:
         ttk.Button(hero_right, text="运行启动自检", command=self._run_self_check).pack(anchor="e", pady=(8, 0), fill="x")
         ttk.Button(hero_right, text="专家模型管理", command=self._show_expert_window).pack(anchor="e", pady=(8, 0), fill="x")
         ttk.Button(hero_right, text="知识库管理", command=self._show_knowledge_base_window).pack(anchor="e", pady=(8, 0), fill="x")
-        ttk.Button(hero_right, text="云模型配置", command=self._show_cloud_backend_window).pack(anchor="e", pady=(8, 0), fill="x")
+        ttk.Button(hero_right, text="模型服务配置", command=self._show_cloud_backend_window).pack(anchor="e", pady=(8, 0), fill="x")
         ttk.Button(hero_right, text="软件说明", command=self._show_manual_window).pack(anchor="e", pady=(8, 0), fill="x")
         ttk.Button(hero_right, text="关于 / 版权", command=self._show_about_and_copyright).pack(anchor="e", pady=(8, 0), fill="x")
 
@@ -1841,7 +1841,7 @@ class DesktopApp:
         software_menu.add_command(label="刷新模型目录", command=self._refresh_models)
         software_menu.add_command(label="专家模型管理", command=self._show_expert_window)
         software_menu.add_command(label="知识库管理", command=self._show_knowledge_base_window)
-        software_menu.add_command(label="云模型配置", command=self._show_cloud_backend_window)
+        software_menu.add_command(label="模型服务配置", command=self._show_cloud_backend_window)
         software_menu.add_command(label="实验档案中心", command=self._show_archive_window)
         software_menu.add_command(label="训练工作台", command=self._show_training_window)
         software_menu.add_separator()
@@ -1933,7 +1933,7 @@ class DesktopApp:
         self._dispatch("expert_catalog", self.runtime.get_expert_catalog)
 
     def _refresh_cloud_backend_catalog(self) -> None:
-        self.hero_var.set("正在刷新云模型配置")
+        self.hero_var.set("正在刷新模型服务配置")
         self._dispatch("cloud_catalog", self.runtime.get_cloud_backend_catalog)
 
     def _sync_knowledge_scope_choices(self) -> None:
@@ -2741,7 +2741,7 @@ class DesktopApp:
         api_key = self.cloud_api_key_entry.get().strip() if self.cloud_api_key_entry is not None else ""
         base_url = self.cloud_base_url_entry.get().strip() if self.cloud_base_url_entry is not None else ""
         model = self.cloud_model_entry.get().strip() if self.cloud_model_entry is not None else ""
-        self.cloud_status_var.set("正在保存云模型配置")
+        self.cloud_status_var.set("正在保存模型服务配置")
         self._dispatch(
             "cloud_save",
             lambda: self.runtime.save_cloud_backend_config(
@@ -2761,7 +2761,7 @@ class DesktopApp:
             return
 
         window = tk.Toplevel(self.root)
-        window.title(f"{APP_DISPLAY_NAME} - 云模型配置")
+        window.title(f"{APP_DISPLAY_NAME} - 模型服务配置")
         self._set_window_geometry(window, 860, 620, 720, 520)
         window.configure(bg="#0f1720")
         window.transient(self.root)
@@ -2782,10 +2782,10 @@ class DesktopApp:
         header = ttk.Frame(shell, style="Panel.TFrame", padding=16)
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="云模型配置", style="Header.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(header, text="模型服务配置", style="Header.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(
             header,
-            text="支持通义千问、OpenAI、DeepSeek、Kimi 及兼容 OpenAI 协议的云大模型；使用前请填写 API Key。",
+            text="支持通义千问、OpenAI、DeepSeek、Kimi，以及 LM Studio / vLLM / SGLang / LMDeploy / Xinference / llama.cpp 等本地或云端模型服务；本地服务可不填 API Key。",
             style="Body.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(8, 0))
 
@@ -2869,14 +2869,14 @@ class DesktopApp:
                 elif name == "cloud_catalog":
                     rows = list(payload)
                     for row in rows:
-                        row["configured"] = bool(row.get("api_key"))
+                        row["configured"] = bool(row.get("configured"))
                     self.cloud_backend_catalog = rows
                     self._sync_cloud_provider_choices()
                     self._load_selected_cloud_backend_into_form()
-                    self.hero_var.set("云模型配置已刷新")
+                    self.hero_var.set("模型服务配置已刷新")
                 elif name == "cloud_save":
                     self.cloud_status_var.set(f"{payload['label']} 配置已保存")
-                    self.hero_var.set("云模型配置已保存")
+                    self.hero_var.set("模型服务配置已保存")
                     self._refresh_cloud_backend_catalog()
                     self._refresh_models()
                 elif name == "self_check":
@@ -2955,7 +2955,3 @@ def launch_desktop_app(open_training_workbench: bool = False) -> int:
         app.root.after(1200, app._show_training_window)
     app.run()
     return 0
-
-
-
-

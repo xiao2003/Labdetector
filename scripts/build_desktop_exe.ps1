@@ -28,10 +28,16 @@ try {
   $PcExePath = Join-Path $PcRoot 'LabDetector.exe'
   $PcPanelExePath = Join-Path $PcRoot 'LabDetectorPanel.exe'
   $PcTrainingExePath = Join-Path $PcRoot 'LabDetectorTraining.exe'
+  $PcAliasExePath = Join-Path $PcRoot 'Lab.exe'
+  $PcPanelAliasExePath = Join-Path $PcRoot 'LabPanel.exe'
+  $PcTrainingAliasExePath = Join-Path $PcRoot 'LabTraining.exe'
   $PcAppRoot = Join-Path $PcRoot 'APP'
+  $PcPythonRuntimeRoot = Join-Path $PcAppRoot 'python_runtime'
+  $PcTrainingRuntimeRoot = Join-Path $PcAppRoot 'training_runtime'
   $PiAppRoot = Join-Path $PiRoot 'APP'
   $ZipPath = Join-Path $ProjectRoot ("LabDetector-v$Version.zip")
   $StageFolder = Join-Path $DistRoot 'LabDetector'
+  $PythonHome = Split-Path -Parent $PythonExe
 
   if (!(Test-Path $PythonExe)) {
     throw "Python interpreter not found: $PythonExe"
@@ -85,7 +91,7 @@ PiConfig.init()
     throw "Build output not found: $StageFolder"
   }
 
-  foreach ($artifact in @($PcExePath, $PcPanelExePath, $PcTrainingExePath, $PcAppRoot, $PiAppRoot, $BundleRoot, $ZipPath)) {
+  foreach ($artifact in @($PcExePath, $PcPanelExePath, $PcTrainingExePath, $PcAliasExePath, $PcPanelAliasExePath, $PcTrainingAliasExePath, $PcAppRoot, $PiAppRoot, $BundleRoot, $ZipPath)) {
     if (Test-Path $artifact) {
       Remove-Item -Recurse -Force $artifact
     }
@@ -94,7 +100,44 @@ PiConfig.init()
   Copy-Item -Path (Join-Path $StageFolder 'LabDetector.exe') -Destination $PcExePath -Force
   Copy-Item -Path $PcExePath -Destination $PcPanelExePath -Force
   Copy-Item -Path $PcExePath -Destination $PcTrainingExePath -Force
+  Copy-Item -Path $PcExePath -Destination $PcAliasExePath -Force
+  Copy-Item -Path $PcPanelExePath -Destination $PcPanelAliasExePath -Force
+  Copy-Item -Path $PcTrainingExePath -Destination $PcTrainingAliasExePath -Force
   Copy-Item -Path (Join-Path $StageFolder 'APP') -Destination $PcAppRoot -Recurse -Force
+
+  New-Item -ItemType Directory -Force -Path $PcPythonRuntimeRoot | Out-Null
+  foreach ($file in @('python.exe', 'pythonw.exe', 'python311.dll', 'python3.dll', 'VCRUNTIME140.dll', 'VCRUNTIME140_1.dll', 'MSVCP140.dll')) {
+    $source = Join-Path $PythonHome $file
+    if (Test-Path $source) {
+      Copy-Item -Path $source -Destination (Join-Path $PcPythonRuntimeRoot $file) -Force
+    }
+  }
+  foreach ($dirName in @('Lib', 'DLLs')) {
+    $sourceDir = Join-Path $PythonHome $dirName
+    if (Test-Path $sourceDir) {
+      Copy-Item -Path $sourceDir -Destination (Join-Path $PcPythonRuntimeRoot $dirName) -Recurse -Force
+    }
+  }
+  foreach ($trimPath in @(
+    (Join-Path $PcPythonRuntimeRoot 'Lib\site-packages'),
+    (Join-Path $PcPythonRuntimeRoot 'Lib\test'),
+    (Join-Path $PcPythonRuntimeRoot 'Lib\idlelib'),
+    (Join-Path $PcPythonRuntimeRoot 'Lib\tkinter\test')
+  )) {
+    if (Test-Path $trimPath) {
+      Remove-Item -Recurse -Force $trimPath
+    }
+  }
+  Get-ChildItem -Path $PcPythonRuntimeRoot -Directory -Recurse -Force -Filter '__pycache__' | Remove-Item -Recurse -Force
+  Get-ChildItem -Path $PcPythonRuntimeRoot -Recurse -Force -Include *.pyc,*.pyo | Remove-Item -Force
+
+  New-Item -ItemType Directory -Force -Path $PcTrainingRuntimeRoot | Out-Null
+  foreach ($file in @('training_worker.py', 'llm_finetune.py', 'pi_detector_finetune.py')) {
+    $source = Join-Path $ProjectRoot (Join-Path 'pc\training' $file)
+    if (Test-Path $source) {
+      Copy-Item -Path $source -Destination (Join-Path $PcTrainingRuntimeRoot $file) -Force
+    }
+  }
 
   $PiItems = @(
     'config.ini',
@@ -122,12 +165,30 @@ PiConfig.init()
   $BundlePiRoot = Join-Path $BundleRoot 'pi'
   New-Item -ItemType Directory -Force -Path $BundlePcRoot | Out-Null
   New-Item -ItemType Directory -Force -Path $BundlePiRoot | Out-Null
-  Copy-Item -Path $PcExePath -Destination (Join-Path $BundlePcRoot 'LabDetector.exe') -Force
-  Copy-Item -Path $PcPanelExePath -Destination (Join-Path $BundlePcRoot 'LabDetectorPanel.exe') -Force
-  Copy-Item -Path $PcTrainingExePath -Destination (Join-Path $BundlePcRoot 'LabDetectorTraining.exe') -Force
+  foreach ($launcher in @('LabDetector.exe', 'LabDetectorPanel.exe', 'LabDetectorTraining.exe', 'Lab.exe', 'LabPanel.exe', 'LabTraining.exe')) {
+    $source = Join-Path $PcRoot $launcher
+    if (Test-Path $source) {
+      Copy-Item -Path $source -Destination (Join-Path $BundlePcRoot $launcher) -Force
+    }
+  }
   Copy-Item -Path $PcAppRoot -Destination (Join-Path $BundlePcRoot 'APP') -Recurse -Force
   Copy-Item -Path (Join-Path $PiRoot 'start_pi_node.sh') -Destination (Join-Path $BundlePiRoot 'start_pi_node.sh') -Force
   Copy-Item -Path $PiAppRoot -Destination (Join-Path $BundlePiRoot 'APP') -Recurse -Force
+
+  $quickStartLines = @(
+    'LabDetector Quick Start',
+    '=======================',
+    '1. PC 端使用 pc\\Lab.exe 或 pc\\LabDetector.exe 启动主程序。',
+    '2. 训练工作台使用 pc\\LabTraining.exe 或 pc\\LabDetectorTraining.exe 启动。',
+    '3. 树莓派端将 pi 目录复制到设备后，执行 pi/start_pi_node.sh start。',
+    '4. 首次运行时先执行软件自检，按需自动安装依赖。',
+    '',
+    '目录说明：',
+    '- pc\\APP 为隐藏运行时目录，请勿删除。',
+    '- pi\\APP 为树莓派运行时目录。',
+    '- 如需安装到 Windows，请使用 LabDetector-Setup-v*.exe。'
+  )
+  Set-Content -Path (Join-Path $BundleRoot 'README_QUICKSTART.txt') -Value $quickStartLines -Encoding UTF8
 
   Add-Type -AssemblyName System.IO.Compression.FileSystem
   [System.IO.Compression.ZipFile]::CreateFromDirectory($BundleRoot, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $true)
@@ -155,10 +216,12 @@ PiConfig.init()
   Write-Host ''
   Write-Host 'PC executable:' -ForegroundColor Green
   Write-Host $PcExePath -ForegroundColor Green
-  Write-Host 'Panel executable:' -ForegroundColor Green
-  Write-Host $PcPanelExePath -ForegroundColor Green
+  Write-Host 'PC alias executable:' -ForegroundColor Green
+  Write-Host $PcAliasExePath -ForegroundColor Green
   Write-Host 'Training executable:' -ForegroundColor Green
   Write-Host $PcTrainingExePath -ForegroundColor Green
+  Write-Host 'Training alias executable:' -ForegroundColor Green
+  Write-Host $PcTrainingAliasExePath -ForegroundColor Green
   Write-Host 'PC runtime:' -ForegroundColor Green
   Write-Host $PcAppRoot -ForegroundColor Green
   Write-Host 'PI launcher:' -ForegroundColor Green
@@ -184,5 +247,3 @@ finally {
     Stop-Transcript | Out-Null
   }
 }
-
-

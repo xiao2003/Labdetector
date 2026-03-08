@@ -35,6 +35,19 @@ def is_frozen_runtime() -> bool:
     return bool(getattr(sys, "frozen", False) or getattr(sys, "_MEIPASS", ""))
 
 
+def launcher_root() -> Path:
+    if is_frozen_runtime():
+        return Path(sys.executable).resolve().parent
+    return project_root()
+
+
+def external_app_root() -> Path:
+    if is_frozen_runtime():
+        return launcher_root() / "APP"
+    candidate = project_root() / "pc" / "APP"
+    return candidate if candidate.exists() else project_root()
+
+
 def runtime_root() -> Path:
     bundle_root = getattr(sys, "_MEIPASS", "")
     if bundle_root:
