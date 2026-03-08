@@ -1,4 +1,4 @@
-﻿# NeuroLab Hub：可编排专家模型的实验室多模态智能中枢 (V3.0.6)
+﻿# NeuroLab Hub——可编排专家模型的实验室多模态智能中枢 (V3.0.6)
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Windows Desktop](https://img.shields.io/badge/Delivery-Windows%20Desktop-1f6feb)](docs/NeuroLab_Hub_用户手册.md)
@@ -6,7 +6,7 @@
 [![LLM](https://img.shields.io/badge/LLM-Ollama%20%7C%20LM%20Studio%20%7C%20vLLM-orange)](docs/本地模型服务接入指南.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-NeuroLab Hub（项目全称：可编排专家模型的实验室多模态智能中枢）是一个面向科研实验室场景的软件化多模态智能系统。项目以 AI for Science 为核心导向，围绕实验室实时视觉监控、语音智能交互、实验知识沉淀、风险预警提示、实验过程档案化以及用户自有模型训练六条主线持续建设，形成了“PC 智算中枢 + Raspberry Pi 边缘节点 + 专家模型体系 + 多知识库体系 + 训练工作台”的完整工程闭环。
+NeuroLab Hub（项目全称：“NeuroLab Hub——可编排专家模型的实验室多模态智能中枢”）是一个面向科研实验室场景的软件化多模态智能系统。项目以 AI for Science 为核心导向，围绕实验室实时视觉监控、语音智能交互、实验知识沉淀、风险预警提示、实验过程档案化以及用户自有模型训练六条主线持续建设，形成了“PC 智算中枢 + Raspberry Pi 边缘节点 + 专家模型体系 + 多知识库体系 + 训练工作台”的完整工程闭环。
 
 当前版本已经不是单纯的算法原型或命令行脚本集合，而是可直接交付的桌面软件体系：
 

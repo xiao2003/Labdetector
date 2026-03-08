@@ -15,7 +15,7 @@ VSVersionInfo(
         u'080404B0',
         [
           StringStruct(u'CompanyName', u'NeuroLab Hub Software Team'),
-          StringStruct(u'FileDescription', u'NeuroLab Hub：可编排专家模型的实验室多模态智能中枢 Desktop Suite'),
+          StringStruct(u'FileDescription', u'NeuroLab Hub——可编排专家模型的实验室多模态智能中枢 Desktop Suite'),
           StringStruct(u'FileVersion', u'3.0.6'),
           StringStruct(u'InternalName', u'NeuroLabHub'),
           StringStruct(u'LegalCopyright', u'Copyright (C) 2026 NeuroLab Hub Software Team. All rights reserved.'),

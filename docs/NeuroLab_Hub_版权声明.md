@@ -1,6 +1,6 @@
-# NeuroLab Hub：可编排专家模型的实验室多模态智能中枢 软件版权声明
+# NeuroLab Hub——可编排专家模型的实验室多模态智能中枢 软件版权声明
 
-软件全称：NeuroLab Hub：可编排专家模型的实验室多模态智能中枢  
+软件全称：NeuroLab Hub——可编排专家模型的实验室多模态智能中枢  
 软件简称：NeuroLab Hub  
 版本号：3.0.6  
 著作权人：NeuroLab Hub 软件研发组  

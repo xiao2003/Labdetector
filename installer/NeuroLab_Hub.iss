@@ -1,6 +1,6 @@
 ﻿#define MyAppId "{{A48DB687-BD0A-4F91-B7B3-6AFB0C2DCE41}}"
 #define MyAppName "NeuroLab Hub"
-#define MyAppDisplayName "NeuroLab Hub：可编排专家模型的实验室多模态智能中枢"
+#define MyAppDisplayName "NeuroLab Hub——可编排专家模型的实验室多模态智能中枢"
 #define MyAppPublisher "NeuroLab Hub Software Team"
 #define MyAppURL "https://github.com/xiao2003/Labdetector"
 #define MyAppExeName "NeuroLab Hub.exe"
