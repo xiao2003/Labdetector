@@ -9,14 +9,14 @@ from pathlib import Path
 
 APP_NAME = "NeuroLabHub"
 APP_DISPLAY_NAME = "NeuroLab Hub"
-APP_SHORT_TAGLINE = "AI for Science 实验室多节点监控与智能交互平台"
-APP_DESCRIPTION = "面向科研实验室的多节点监控、风险研判、语音交互、知识沉淀与训练部署一体化桌面平台。"
+APP_SHORT_TAGLINE = "可编排专家模型的实验室多模态智能中枢"
+APP_DESCRIPTION = "面向科研实验室的多节点感知、专家编排、风险预警、语音交互、知识沉淀与训练闭环一体化桌面平台。"
 COMPANY_NAME = "NeuroLab Hub 软件研发组"
 COMPANY_NAME_EN = "NeuroLab Hub Software Team"
 COPYRIGHT_TEXT = "Copyright (C) 2026 NeuroLab Hub 软件研发组. All rights reserved."
 COPYRIGHT_TEXT_EN = "Copyright (C) 2026 NeuroLab Hub Software Team. All rights reserved."
 LEGAL_NOTICE = (
-    "NeuroLab Hub\n\n"
+    "NeuroLab Hub：可编排专家模型的实验室多模态智能中枢\n\n"
     "著作权人：NeuroLab Hub 软件研发组\n"
     "完成日期：2026 年 3 月\n"
     "本软件用于实验室多节点监控、专家辅助分析、语音交互、知识增强与模型训练。\n\n"

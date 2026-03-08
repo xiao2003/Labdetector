@@ -8,5 +8,6 @@
 2. `NeuroLab-Hub-v3.0.6.zip`
 3. `NeuroLab-Hub-Portable-v3.0.6.zip`
 
-说明：文件名沿用历史命名，但安装和界面展示名均为 `NeuroLab Hub`。
+说明：程序文件名和安装入口保留 `NeuroLab Hub` 简称，但项目正式名称统一为“NeuroLab Hub：可编排专家模型的实验室多模态智能中枢”。
+
 
