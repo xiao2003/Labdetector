@@ -37,11 +37,17 @@ try {
   $PiAppRoot = Join-Path $PiRoot 'APP'
   $ZipPath = Join-Path $ProjectRoot ("LabDetector-v$Version.zip")
   $StageFolder = Join-Path $DistRoot 'LabDetector'
-  $PythonHome = Split-Path -Parent $PythonExe
 
+  if (!(Test-Path $PythonExe)) {
+    $resolvedPython = Get-Command $PythonExe -ErrorAction SilentlyContinue
+    if ($resolvedPython -and $resolvedPython.Source) {
+      $PythonExe = $resolvedPython.Source
+    }
+  }
   if (!(Test-Path $PythonExe)) {
     throw "Python interpreter not found: $PythonExe"
   }
+  $PythonHome = Split-Path -Parent $PythonExe
 
   & $PythonExe (Join-Path $ProjectRoot 'scripts\generate_brand_assets.py')
   if ($LASTEXITCODE -ne 0) {

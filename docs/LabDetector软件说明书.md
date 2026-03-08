@@ -1,6 +1,6 @@
 # LabDetector 软件说明书
 
-版本号：V3.0.3
+版本号：V3.0.4
 软件名称：LabDetector 智能实验室监控软件
 著作权人：LabDetector 软件研发组
 完成日期：2026 年 3 月

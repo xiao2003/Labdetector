@@ -10,7 +10,7 @@
 #define MyAliasPanelExeName "LabPanel.exe"
 #define MyAliasTrainingExeName "LabTraining.exe"
 #ifndef MyAppVersion
-  #define MyAppVersion "3.0.3"
+  #define MyAppVersion "3.0.4"
 #endif
 #ifndef ReleaseDir
   #define ReleaseDir "..\\pc"
