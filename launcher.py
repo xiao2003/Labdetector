@@ -10,16 +10,15 @@ import sys
 from pathlib import Path
 
 from pc.app_identity import APP_NAME
-from pc.desktop_app import launch_desktop_app
 from pc.tools.version_manager import get_app_version
-from pc.webui.runtime import LabDetectorRuntime
-from pc.webui.server import serve_dashboard
 
 
 APP_VERSION = get_app_version()
 
 
 def run_cli_entry() -> int:
+    from pc.webui.runtime import LabDetectorRuntime
+
     runtime = LabDetectorRuntime()
     print("=" * 56)
     print(f"{APP_NAME} v{APP_VERSION} CLI 模式")
@@ -40,6 +39,8 @@ def run_cli_entry() -> int:
 
 
 def run_smoke_test(output_path: str) -> int:
+    from pc.webui.runtime import LabDetectorRuntime
+
     runtime = LabDetectorRuntime()
     payload = runtime.bootstrap(include_self_check=False)
     runtime.shutdown()
@@ -85,6 +86,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.cli:
         return run_cli_entry()
     if args.web:
+        from pc.webui.server import serve_dashboard
+
         serve_dashboard(host=args.host, port=args.port, open_browser=args.open_browser)
         return 0
 
@@ -96,6 +99,8 @@ def main(argv: list[str] | None = None) -> int:
         training_focus = "all"
     else:
         training_focus = ""
+
+    from pc.desktop_app import launch_desktop_app
 
     return launch_desktop_app(
         open_training_workbench=bool(training_focus),
