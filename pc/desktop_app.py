@@ -40,6 +40,7 @@ class DesktopApp:
         self.app_version = get_app_version()
         self.runtime: Any | None = None
         self.root = tk.Tk()
+        self._apply_windows_app_id()
         self.root.withdraw()
         self.root.title(f"{APP_DISPLAY_NAME} v{self.app_version}")
         self.root.configure(bg="#0f1720")
@@ -244,6 +245,15 @@ class DesktopApp:
             pass
         try:
             ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _apply_windows_app_id() -> None:
+        if sys.platform != "win32":
+            return
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("NeuroLab.Hub.Desktop")
         except Exception:
             pass
 
