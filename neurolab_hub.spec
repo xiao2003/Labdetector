@@ -39,7 +39,7 @@ hiddenimports = [
     "pc.experts.safety.spill_detection_expert",
 ]
 
-icon_file = os.path.join("assets", "branding", "labdetector.ico")
+icon_file = os.path.join("assets", "branding", "neurolab_hub.ico")
 version_file = os.path.join("scripts", "version_info.txt")
 
 datas = [

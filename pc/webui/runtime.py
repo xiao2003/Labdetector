@@ -696,6 +696,10 @@ class LabDetectorRuntime:
             "raw_output": "\\n".join(logs + ["[INFO] 训练运行时已就绪，可执行 YOLO / LLM 训练"]),
         }
 
+    # Compatibility shim for stale startup callbacks in older packaged UI code.
+    def check_DEPENDENCE(self) -> Dict[str, Any]:
+        return self._check_dependencies()
+
     @staticmethod
     def _parse_session_tags(raw: Any) -> List[str]:
         if isinstance(raw, list):
