@@ -1,4 +1,4 @@
-﻿# NeuroLab Hub——可编排专家模型的实验室多模态智能中枢 (V3.0.6)
+﻿# NeuroLab Hub——可编排专家模型的实验室多模态智能中枢 (V3.0.7)
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Windows Desktop](https://img.shields.io/badge/Delivery-Windows%20Desktop-1f6feb)](docs/NeuroLab_Hub_用户手册.md)
@@ -42,7 +42,7 @@ NeuroLab Hub 通过统一 AI 后端接口兼容多类模型服务。除了本地
 
 ## 2. 更新日志
 
-### [V3.0.6] 仓库收口、文档体系与发布命名统一版
+### [V3.0.7] 仓库收口、文档体系与发布命名统一版
 - 以软件产品口径重写 README、用户手册、软件说明书、软著材料、测试实例和测试报告
 - 补充根目录 `LICENSE`，恢复并明确仓库级 MIT 开源协议
 - 清扫 GitHub 仓库残余文件，删除未引用的临时测试脚本与旧推送脚本
