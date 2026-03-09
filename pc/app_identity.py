@@ -9,9 +9,61 @@ import sys
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-IDENTITY_PATH = PROJECT_ROOT / "project_identity.json"
-IDENTITY = json.loads(IDENTITY_PATH.read_text(encoding="utf-8"))
+def _module_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _identity_candidates() -> list[Path]:
+    module_root = _module_root()
+    candidates = [
+        module_root / "project_identity.json",
+        module_root.parent / "project_identity.json",
+    ]
+
+    bundle_root = getattr(sys, "_MEIPASS", "")
+    if bundle_root:
+        bundle_path = Path(bundle_root)
+        candidates.extend(
+            [
+                bundle_path / "project_identity.json",
+                bundle_path / "pc" / "project_identity.json",
+            ]
+        )
+
+    if getattr(sys, "frozen", False):
+        exe_root = Path(sys.executable).resolve().parent
+        candidates.extend(
+            [
+                exe_root / "APP" / "project_identity.json",
+                exe_root / "project_identity.json",
+                exe_root.parent / "project_identity.json",
+            ]
+        )
+
+    unique_candidates: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_candidates.append(candidate)
+    return unique_candidates
+
+
+def _load_identity() -> dict[str, str]:
+    for candidate in _identity_candidates():
+        if not candidate.exists():
+            continue
+        return json.loads(candidate.read_text(encoding="utf-8"))
+    raise FileNotFoundError(
+        "project_identity.json not found. Searched: "
+        + ", ".join(str(path) for path in _identity_candidates())
+    )
+
+
+PROJECT_ROOT = _module_root()
+IDENTITY = _load_identity()
 
 APP_NAME = IDENTITY["app_name"]
 APP_DISPLAY_NAME = IDENTITY["short_name"]

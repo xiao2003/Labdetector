@@ -44,6 +44,7 @@ version_file = os.path.join("scripts", "version_info.txt")
 
 datas = [
     ("config.ini", "pc"),
+    ("project_identity.json", "."),
     ("VERSION", "pc"),
     ("pc/webui/static", "pc/pc/webui/static"),
     ("assets/branding", "pc/assets/branding"),
