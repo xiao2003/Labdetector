@@ -67,6 +67,10 @@ class DesktopApp:
         self.logo_image: ImageTk.PhotoImage | None = None
         self.splash_logo_image: ImageTk.PhotoImage | None = None
         self.splash: tk.Toplevel | None = None
+        self.splash_progress_var = tk.DoubleVar(value=6.0)
+        self.splash_step_var = tk.StringVar(value="当前阶段：准备初始化")
+        self.splash_detail_var = tk.StringVar(value="等待启动任务")
+        self.voice_test_prompted = False
         self.backend_map: Dict[str, str] = {}
         self.backend_reverse: Dict[str, str] = {}
         self.mode_map: Dict[str, str] = {}
@@ -599,14 +603,21 @@ class DesktopApp:
         text_holder.grid(row=0, column=1, sticky="nsew")
         ttk.Label(text_holder, text=APP_DISPLAY_NAME, style="SplashTitle.TLabel").pack(anchor="w", pady=(18, 0))
         ttk.Label(text_holder, text=APP_SHORT_TAGLINE, style="Brand.TLabel").pack(anchor="w", pady=(10, 0))
-        ttk.Label(text_holder, text=f"{COMPANY_NAME} | 版本 v{self.app_version}", style="SplashBody.TLabel").pack(anchor="w", pady=(10, 0))
+        ttk.Label(text_holder, text=f"{COMPANY_NAME} | 桌面版 v{self.app_version}", style="SplashBody.TLabel").pack(anchor="w", pady=(10, 0))
         wraplength = max(self._scaled(360), width - self._scaled(320))
         ttk.Label(text_holder, textvariable=self.splash_message_var, style="SplashBody.TLabel", wraplength=wraplength).pack(anchor="w", pady=(18, 0))
+        ttk.Label(text_holder, textvariable=self.splash_step_var, style="Foot.TLabel", wraplength=wraplength).pack(anchor="w", pady=(10, 0))
+        ttk.Label(text_holder, textvariable=self.splash_detail_var, style="Foot.TLabel", wraplength=wraplength).pack(anchor="w", pady=(6, 0))
         ttk.Label(text_holder, text=COPYRIGHT_TEXT, style="Foot.TLabel", wraplength=wraplength).pack(anchor="w", pady=(18, 0))
 
-        progress = ttk.Progressbar(text_holder, mode="indeterminate", length=min(self._scaled(360), wraplength))
+        progress = ttk.Progressbar(
+            text_holder,
+            mode="determinate",
+            variable=self.splash_progress_var,
+            maximum=100,
+            length=min(self._scaled(360), wraplength),
+        )
         progress.pack(anchor="w", pady=(22, 0))
-        progress.start(12)
         splash.update_idletasks()
 
     def _load_logo_image(self, size: tuple[int, int]) -> ImageTk.PhotoImage | None:
@@ -618,7 +629,28 @@ class DesktopApp:
         except Exception:
             return None
 
+    def _set_startup_progress(
+        self,
+        value: float,
+        message: str | None = None,
+        step: str | None = None,
+        detail: str | None = None,
+    ) -> None:
+        self.splash_progress_var.set(max(0.0, min(100.0, float(value))))
+        if message is not None:
+            self.splash_message_var.set(message)
+        if step is not None:
+            self.splash_step_var.set(f"当前阶段：{step}")
+        if detail is not None:
+            self.splash_detail_var.set(detail)
+        if self.splash is not None:
+            try:
+                self.splash.update_idletasks()
+            except Exception:
+                pass
+
     def _finish_startup(self) -> None:
+        self._set_startup_progress(100, "主界面已就绪", "启动完成", "系统自检和依赖修复已完成")
         if self.splash is not None:
             try:
                 self.splash.destroy()
@@ -628,6 +660,7 @@ class DesktopApp:
         self.root.deiconify()
         self.root.lift()
         self.root.focus_force()
+        self.root.after(800, self._offer_voice_test)
 
     def _add_labeled_combo(self, parent: ttk.Frame, row: int, label: str) -> ttk.Combobox:
         wrapper = ttk.Frame(parent, style="SoftPanel.TFrame")
@@ -970,8 +1003,23 @@ class DesktopApp:
         self._refresh_knowledge_bases()
 
     def _run_self_check(self) -> None:
-        self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
-        self._dispatch("self_check", self.runtime.run_self_check)
+        self.hero_var.set("正在执行系统启动自检")
+        self._dispatch("self_check", lambda: self.runtime.run_self_check(include_microphone=False))
+
+    def _offer_voice_test(self) -> None:
+        if self.voice_test_prompted:
+            return
+        self.voice_test_prompted = True
+        should_test = messagebox.askyesno(
+            APP_DISPLAY_NAME,
+            "主界面已加载完成。\n\n是否现在开始语音交互测试？\n点击“是”后，系统会尝试接入麦克风，并请你说出唤醒词进行测试。",
+            parent=self.root,
+        )
+        if should_test:
+            self.hero_var.set("正在准备语音交互测试")
+            self._dispatch("voice_test", self.runtime.run_voice_test)
+        else:
+            self.hero_var.set("主控制台已就绪")
 
     def _start_session(self) -> None:
         try:
@@ -2042,16 +2090,33 @@ class DesktopApp:
         self.root.configure(menu=menubar)
 
     def _load_bootstrap(self) -> None:
-        self.splash_message_var.set("Loading runtime configuration")
+        self._set_startup_progress(10, "正在准备启动页面", "初始化桌面端", "即将执行系统自检与依赖修复")
         self._dispatch("bootstrap", self._bootstrap_runtime)
+
+    def _post_startup_progress(self, payload: Dict[str, Any]) -> None:
+        self.ui_queue.put(("progress", "startup", payload))
 
     def _bootstrap_runtime(self) -> Dict[str, Any]:
         from pc.webui.runtime import LabDetectorRuntime
 
+        self._post_startup_progress({
+            "value": 14,
+            "message": "正在加载运行时",
+            "step": "创建核心引擎",
+            "detail": "准备桌面运行时、自检器与依赖修复流程",
+        })
         runtime = LabDetectorRuntime()
         self.runtime = runtime
         self.app_version = runtime.version
-        return runtime.bootstrap(include_self_check=False, include_catalogs=False)
+        checks = runtime.run_self_check(progress_callback=self._post_startup_progress, include_microphone=False)
+        self._post_startup_progress({
+            "value": 82,
+            "message": "正在整理主控制台数据",
+            "step": "同步工作台与模型目录",
+            "detail": "正在装载主界面所需配置与目录信息",
+        })
+        payload = runtime.bootstrap(include_self_check=False, include_catalogs=False)
+        return {"payload": payload, "checks": checks}
 
     def _apply_bootstrap_payload(self, payload: Dict[str, Any]) -> None:
         controls = payload["controls"]
@@ -2097,10 +2162,9 @@ class DesktopApp:
         self._render_summary(payload["state"])
         self._render_checks(payload["state"]["self_check"])
         self._render_logs(payload["state"]["logs"])
+        self._set_startup_progress(92, "正在同步控制台", "渲染主界面", "自检结果已同步到主控制台")
         self._render_streams(payload["state"]["streams"])
-        self.splash_message_var.set("Preparing dashboard shell")
         self.root.after(150, self._finish_startup)
-        self.root.after(450, self._run_self_check)
 
     def _refresh_models(self) -> None:
         self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
@@ -2807,14 +2871,14 @@ class DesktopApp:
                 self.training_notebook.select(1)
         if focus_key == "llm" and self.training_base_model_entry is not None:
             self.training_base_model_entry.focus_set()
-            self.training_status_var.set("Current workspace: LLM workbench")
-            self.hero_var.set("Entered the LLM workbench")
+            self.training_status_var.set("当前工作台：LLM 工作台")
+            self.hero_var.set("已进入 LLM 工作台")
         elif focus_key in {"vision", "yolo"} and self.training_pi_weights_entry is not None:
             self.training_pi_weights_entry.focus_set()
-            self.training_status_var.set("Current workspace: YOLO workbench")
-            self.hero_var.set("Entered the YOLO workbench")
+            self.training_status_var.set("当前工作台：YOLO 工作台")
+            self.hero_var.set("已进入 YOLO 工作台")
         else:
-            self.training_status_var.set("Training workbench ready")
+            self.training_status_var.set("训练工作台已就绪")
 
     def _show_training_window(self, focus: str = "") -> None:
         if self.training_window is not None and self.training_window.winfo_exists():
@@ -2826,7 +2890,7 @@ class DesktopApp:
             return
 
         window = tk.Toplevel(self.root)
-        window.title(f"{APP_DISPLAY_NAME} - Training Workbench")
+        window.title(f"{APP_DISPLAY_NAME} - 训练工作台")
         self._set_window_geometry(window, 1120, 820, 900, 680)
         window.configure(bg="#0f1720")
         window.transient(self.root)
@@ -2848,8 +2912,8 @@ class DesktopApp:
         header = ttk.Frame(shell, style="Panel.TFrame", padding=16)
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="Training Workbench", style="Header.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(header, text="LLM fine-tuning and YOLO training are split into two workbenches that share one workspace and overview.", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(header, text="训练工作台", style="Header.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(header, text="LLM 与 YOLO 训练能力已拆分为两个独立工作台，可分别导入数据与启动训练。", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
 
         body = ttk.Frame(shell, style="Panel.TFrame", padding=16)
         body.grid(row=1, column=0, sticky="nsew", pady=(16, 0))
@@ -2859,7 +2923,7 @@ class DesktopApp:
         form = ttk.Frame(body, style="SoftPanel.TFrame", padding=12)
         form.grid(row=0, column=0, sticky="ew")
         form.columnconfigure(1, weight=1)
-        ttk.Label(form, text="Workspace name", style="Body.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(form, text="工作区名称", style="Body.TLabel").grid(row=0, column=0, sticky="w")
         self.training_workspace_entry = ttk.Entry(form)
         self.training_workspace_entry.grid(row=0, column=1, sticky="ew", padx=(10, 0))
         self.training_workspace_entry.insert(0, str(get_config("training.workspace_name", "neurolab_hub_training")))
@@ -2868,22 +2932,22 @@ class DesktopApp:
         common_actions.grid(row=1, column=0, sticky="ew", pady=(14, 0))
         for idx in range(4):
             common_actions.columnconfigure(idx, weight=1)
-        ttk.Button(common_actions, text="Build workspace", command=self._build_training_workspace_from_form).grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        ttk.Button(common_actions, text="Run full pipeline", command=self._start_full_training_from_form).grid(row=0, column=1, sticky="ew", padx=6)
-        ttk.Button(common_actions, text="Refresh overview", command=self._refresh_training_overview).grid(row=0, column=2, sticky="ew", padx=6)
-        ttk.Button(common_actions, text="Close", command=_close_window).grid(row=0, column=3, sticky="ew", padx=(6, 0))
+        ttk.Button(common_actions, text="构建工作区", command=self._build_training_workspace_from_form).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        ttk.Button(common_actions, text="一键全流程", command=self._start_full_training_from_form).grid(row=0, column=1, sticky="ew", padx=6)
+        ttk.Button(common_actions, text="刷新概览", command=self._refresh_training_overview).grid(row=0, column=2, sticky="ew", padx=6)
+        ttk.Button(common_actions, text="关闭", command=_close_window).grid(row=0, column=3, sticky="ew", padx=(6, 0))
 
         self.training_notebook = ttk.Notebook(body)
         self.training_notebook.grid(row=2, column=0, sticky="nsew", pady=(14, 0))
 
         llm_tab = ttk.Frame(self.training_notebook, style="Panel.TFrame", padding=14)
         llm_tab.columnconfigure(0, weight=1)
-        ttk.Label(llm_tab, text="LLM Workbench", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(llm_tab, text="Import SFT data, choose a base model, and start LLM fine-tuning.", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(llm_tab, text="LLM 训练工作台", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(llm_tab, text="面向 SFT / 指令微调流程，独立导入数据并启动 LLM 训练。", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
         llm_form = ttk.Frame(llm_tab, style="SoftPanel.TFrame", padding=12)
         llm_form.grid(row=2, column=0, sticky="ew", pady=(14, 0))
         llm_form.columnconfigure(1, weight=1)
-        ttk.Label(llm_form, text="LLM base model", style="Body.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(llm_form, text="LLM 基础模型", style="Body.TLabel").grid(row=0, column=0, sticky="w")
         self.training_base_model_entry = ttk.Entry(llm_form)
         self.training_base_model_entry.grid(row=0, column=1, sticky="ew", padx=(10, 0))
         self.training_base_model_entry.insert(0, str(get_config("training.llm_base_model", "")))
@@ -2891,17 +2955,17 @@ class DesktopApp:
         llm_actions.grid(row=3, column=0, sticky="ew", pady=(14, 0))
         llm_actions.columnconfigure(0, weight=1)
         llm_actions.columnconfigure(1, weight=1)
-        ttk.Button(llm_actions, text="Import LLM data", command=self._import_llm_dataset_from_dialog).grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        ttk.Button(llm_actions, text="Start LLM tune", command=self._start_llm_training_from_form).grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        ttk.Button(llm_actions, text="导入 LLM 数据", command=self._import_llm_dataset_from_dialog).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        ttk.Button(llm_actions, text="启动 LLM 训练", command=self._start_llm_training_from_form).grid(row=0, column=1, sticky="ew", padx=(6, 0))
 
         vision_tab = ttk.Frame(self.training_notebook, style="Panel.TFrame", padding=14)
         vision_tab.columnconfigure(0, weight=1)
-        ttk.Label(vision_tab, text="YOLO Workbench", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(vision_tab, text="Import detection data, choose YOLO weights, and start vision training.", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(vision_tab, text="YOLO 训练工作台", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(vision_tab, text="面向目标检测与 Pi 端视觉任务，独立导入数据并启动 YOLO 训练。", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
         vision_form = ttk.Frame(vision_tab, style="SoftPanel.TFrame", padding=12)
         vision_form.grid(row=2, column=0, sticky="ew", pady=(14, 0))
         vision_form.columnconfigure(1, weight=1)
-        ttk.Label(vision_form, text="YOLO base weights", style="Body.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(vision_form, text="YOLO 基础权重", style="Body.TLabel").grid(row=0, column=0, sticky="w")
         self.training_pi_weights_entry = ttk.Entry(vision_form)
         self.training_pi_weights_entry.grid(row=0, column=1, sticky="ew", padx=(10, 0))
         self.training_pi_weights_entry.insert(0, str(get_config("training.pi_base_weights", "yolov8n.pt")))
@@ -2909,17 +2973,17 @@ class DesktopApp:
         vision_actions.grid(row=3, column=0, sticky="ew", pady=(14, 0))
         vision_actions.columnconfigure(0, weight=1)
         vision_actions.columnconfigure(1, weight=1)
-        ttk.Button(vision_actions, text="Import YOLO data", command=self._import_pi_dataset_from_dialog).grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        ttk.Button(vision_actions, text="Start YOLO train", command=self._start_pi_training_from_form).grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        ttk.Button(vision_actions, text="导入 YOLO 数据", command=self._import_pi_dataset_from_dialog).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        ttk.Button(vision_actions, text="启动 YOLO 训练", command=self._start_pi_training_from_form).grid(row=0, column=1, sticky="ew", padx=(6, 0))
 
-        self.training_notebook.add(llm_tab, text="LLM Workbench")
-        self.training_notebook.add(vision_tab, text="YOLO Workbench")
+        self.training_notebook.add(llm_tab, text="LLM 工作台")
+        self.training_notebook.add(vision_tab, text="YOLO 工作台")
 
         detail_wrap = ttk.Frame(body, style="SoftPanel.TFrame", padding=12)
         detail_wrap.grid(row=3, column=0, sticky="nsew", pady=(14, 0))
         detail_wrap.columnconfigure(0, weight=1)
         detail_wrap.rowconfigure(1, weight=1)
-        ttk.Label(detail_wrap, text="Training Overview", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(detail_wrap, text="执行日志", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
         self.training_detail_text = tk.Text(detail_wrap, bg="#0f1720", fg="#dbe6f2", insertbackground="#dbe6f2", relief="flat", font=("Microsoft YaHei UI", 10), wrap="word")
         self.training_detail_text.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
         self.training_detail_text.configure(state="disabled")
@@ -2929,8 +2993,6 @@ class DesktopApp:
         footer.columnconfigure(0, weight=1)
         ttk.Label(footer, textvariable=self.training_status_var, style="Foot.TLabel").grid(row=0, column=0, sticky="w")
 
-        self._register_scroll_target(detail_wrap, self.training_detail_text)
-        self._register_scroll_target(self.training_detail_text, self.training_detail_text)
         self._refresh_training_overview()
         self._focus_training_section(focus)
 
@@ -3057,6 +3119,14 @@ class DesktopApp:
         try:
             while True:
                 status, name, payload = self.ui_queue.get_nowait()
+                if status == "progress" and name == "startup":
+                    self._set_startup_progress(
+                        float(payload.get("value", self.splash_progress_var.get())),
+                        str(payload.get("message") or self.splash_message_var.get()),
+                        str(payload.get("step") or self.splash_step_var.get().replace("当前阶段：", "", 1)),
+                        str(payload.get("detail") or self.splash_detail_var.get()),
+                    )
+                    continue
                 if status == "error":
                     self.hero_var.set(f"{name} 失败: {payload}")
                     if self.splash is not None:
@@ -3065,8 +3135,9 @@ class DesktopApp:
                     continue
 
                 if name == "bootstrap":
-                    self._apply_bootstrap_payload(payload)
-                    self.hero_var.set("Main dashboard ready")
+                    bootstrap_payload = payload["payload"] if isinstance(payload, dict) and "payload" in payload else payload
+                    self._apply_bootstrap_payload(bootstrap_payload)
+                    self.hero_var.set("主控制台已就绪")
                 elif name == "refresh_models":
                     self.model_catalog = payload
                     self._update_model_choices()
@@ -3121,6 +3192,18 @@ class DesktopApp:
                     self._render_checks(payload)
                     self._render_logs(self.runtime.get_state().get("logs", []))
                     self.hero_var.set("启动自检已完成")
+                elif name == "voice_test":
+                    level = str(payload.get("status") or "warn").lower()
+                    summary = str(payload.get("summary") or "语音测试已结束")
+                    detail = str(payload.get("detail") or "")
+                    self.hero_var.set(summary)
+                    dialog_text = f"{summary}\n\n{detail}".strip()
+                    if level == "pass":
+                        messagebox.showinfo(APP_DISPLAY_NAME, dialog_text, parent=self.root)
+                    elif level == "error":
+                        messagebox.showerror(APP_DISPLAY_NAME, dialog_text, parent=self.root)
+                    else:
+                        messagebox.showwarning(APP_DISPLAY_NAME, dialog_text, parent=self.root)
                 elif name == "archive_catalog":
                     self.archive_catalog = list(payload)
                     self._populate_archive_tree()
@@ -3165,6 +3248,7 @@ class DesktopApp:
         except queue.Empty:
             pass
         self.root.after(250, self._process_queue)
+
     def _on_close(self) -> None:
         try:
             for window in list(self.window_refs):
@@ -3194,3 +3278,4 @@ def launch_desktop_app(open_training_workbench: bool = False, training_focus: st
         app.root.after(1200, lambda: app._show_training_window(training_focus))
     app.run()
     return 0
+

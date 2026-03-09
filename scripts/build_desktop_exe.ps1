@@ -54,6 +54,10 @@ try {
   if ($LASTEXITCODE -ne 0) {
     throw "Version resource generation failed."
   }
+  & $PythonExe (Join-Path $ProjectRoot 'scripts\check_source_encoding.py')
+  if ($LASTEXITCODE -ne 0) {
+    throw "Source encoding check failed."
+  }
 
   $ConfigBootstrap = @"
 import sys
