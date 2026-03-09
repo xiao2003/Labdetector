@@ -338,60 +338,6 @@ class DesktopApp:
         except Exception:
             self.logo_image = None
 
-    def _build_menu(self) -> None:
-        menubar = tk.Menu(
-            self.root,
-            tearoff=False,
-            bg="#182330",
-            fg="#f5f7fb",
-            activebackground="#20c997",
-            activeforeground="#0f1720",
-        )
-        software_menu = tk.Menu(
-            menubar,
-            tearoff=False,
-            bg="#182330",
-            fg="#f5f7fb",
-            activebackground="#20c997",
-            activeforeground="#0f1720",
-        )
-        software_menu.add_command(label="运行启动自检", command=self._run_self_check)
-        software_menu.add_command(label="刷新模型目录", command=self._refresh_models)
-        software_menu.add_command(label="专家模型管理", command=self._show_expert_window)
-        software_menu.add_command(label="知识库管理", command=self._show_knowledge_base_window)
-        software_menu.add_command(label="模型服务配置", command=self._show_cloud_backend_window)
-        software_menu.add_command(label="实验档案中心", command=self._show_archive_window)
-        software_menu.add_command(label="训练工作台", command=self._show_training_window)
-        software_menu.add_separator()
-        software_menu.add_command(label="退出", command=self._on_close)
-
-        view_menu = tk.Menu(
-            menubar,
-            tearoff=False,
-            bg="#182330",
-            fg="#f5f7fb",
-            activebackground="#20c997",
-            activeforeground="#0f1720",
-        )
-        view_menu.add_command(label="折叠 / 展开左栏", command=self._toggle_left_panel)
-        view_menu.add_command(label="恢复默认布局", command=self._reset_window_layout)
-
-        help_menu = tk.Menu(
-            menubar,
-            tearoff=False,
-            bg="#182330",
-            fg="#f5f7fb",
-            activebackground="#20c997",
-            activeforeground="#0f1720",
-        )
-        help_menu.add_command(label="软件说明", command=self._show_manual_window)
-        help_menu.add_command(label="关于软件", command=self._show_about_window)
-        help_menu.add_command(label="版权信息", command=self._show_copyright_window)
-
-        menubar.add_cascade(label="软件", menu=software_menu)
-        menubar.add_cascade(label="视图", menu=view_menu)
-        menubar.add_cascade(label="帮助", menu=help_menu)
-        self.root.configure(menu=menubar)
 
     def _build_layout(self) -> None:
         shell = ttk.Frame(self.root, style="Root.TFrame", padding=18)
@@ -699,48 +645,6 @@ class DesktopApp:
         self.root.bind("<Escape>", lambda _event: self._handle_escape_key())
         self._bind_global_scroll_support()
 
-    def _load_bootstrap(self) -> None:
-        payload = self.runtime.bootstrap(include_self_check=False)
-        controls = payload["controls"]
-        self.backend_combo["values"] = [item["label"] for item in controls["backends"]]
-        self.backend_map = {item["label"]: item["value"] for item in controls["backends"]}
-        self.backend_reverse = {value: label for label, value in self.backend_map.items()}
-        self.mode_combo["values"] = [item["label"] for item in controls["modes"]]
-        self.mode_map = {item["label"]: item["value"] for item in controls["modes"]}
-        self.mode_reverse = {value: label for label, value in self.mode_map.items()}
-        self.model_catalog = controls["models"]
-        self.knowledge_catalog = payload.get("knowledge_bases", [])
-        self._sync_knowledge_scope_choices()
-
-        self.backend_var.set(controls["defaults"]["ai_backend"])
-        self.mode_var.set(controls["defaults"]["mode"])
-        self.backend_combo.set(self.backend_reverse[self.backend_var.get()])
-        self.mode_combo.set(self.mode_reverse[self.mode_var.get()])
-        self.expected_nodes_var.set(str(controls["defaults"]["expected_nodes"]))
-        self.expected_entry.delete(0, tk.END)
-        self.expected_entry.insert(0, self.expected_nodes_var.get())
-        if self.project_entry is not None:
-            self.project_entry.delete(0, tk.END)
-            self.project_entry.insert(0, str(controls["defaults"].get("project_name", "")))
-        if self.experiment_entry is not None:
-            self.experiment_entry.delete(0, tk.END)
-            self.experiment_entry.insert(0, str(controls["defaults"].get("experiment_name", "")))
-        if self.operator_entry is not None:
-            self.operator_entry.delete(0, tk.END)
-            self.operator_entry.insert(0, str(controls["defaults"].get("operator_name", "")))
-        if self.tags_entry is not None:
-            self.tags_entry.delete(0, tk.END)
-            self.tags_entry.insert(0, str(controls["defaults"].get("tags", "")))
-
-        self._update_model_choices(controls["defaults"]["selected_model"])
-        self.current_state = payload["state"]
-        self._render_summary(payload["state"])
-        self._render_checks(payload["state"]["self_check"])
-        self._render_logs(payload["state"]["logs"])
-        self._render_streams(payload["state"]["streams"])
-        self.splash_message_var.set("正在准备运行环境与可视化面板")
-        self.root.after(450, self._finish_startup)
-        self.root.after(900, self._run_self_check)
 
     def _update_model_choices(self, selected_model: str | None = None) -> None:
         backend_value = self.backend_map.get(self.backend_combo.get(), self.backend_var.get() or "ollama")
@@ -777,240 +681,19 @@ class DesktopApp:
 
         threading.Thread(target=runner, daemon=True, name=f"UI_{name}").start()
 
-    def _refresh_models(self) -> None:
-        self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
-        self._dispatch("refresh_models", self.runtime.refresh_model_catalog)
 
-    def _sync_knowledge_scope_choices(self) -> None:
-        labels = []
-        self.kb_scope_map = {}
-        self.kb_scope_reverse = {}
-        for row in self.knowledge_catalog:
-            label = f"{row['title']} [{row['scope']}]"
-            labels.append(label)
-            self.kb_scope_map[label] = row["scope"]
-            self.kb_scope_reverse[row["scope"]] = label
-        if not labels:
-            labels = ["公共底座知识库 [common]"]
-            self.kb_scope_map = {labels[0]: "common"}
-            self.kb_scope_reverse = {"common": labels[0]}
-        if self.kb_scope_combo is not None:
-            self.kb_scope_combo["values"] = labels
-            if not self.kb_scope_combo.get():
-                self.kb_scope_combo.set(labels[0])
 
     def _selected_kb_scope(self) -> str:
         if self.kb_scope_combo is None:
             return "common"
         return self.kb_scope_map.get(self.kb_scope_combo.get(), "common")
 
-    def _refresh_knowledge_bases(self) -> None:
-        self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
-        self._dispatch("kb_catalog", self.runtime.get_knowledge_base_catalog)
 
-    def _import_knowledge_files(self) -> None:
-        paths = filedialog.askopenfilenames(
-            parent=self.kb_window or self.root,
-            title="选择要导入的知识文件",
-            filetypes=[
-                ("Knowledge Files", "*.txt *.md *.csv *.json *.xls *.xlsx"),
-                ("Text Files", "*.txt *.md"),
-                ("Table Files", "*.csv *.xls *.xlsx"),
-                ("JSON Files", "*.json"),
-                ("All Files", "*.*"),
-            ],
-        )
-        if not paths:
-            return
-        scope = self._selected_kb_scope()
-        self.kb_status_var.set("等待导入知识库目录")
-        self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
-        self._dispatch(
-            "kb_import",
-            lambda: self.runtime.import_knowledge_paths(
-                list(paths),
-                scope_name=scope,
-                reset_index=bool(self.kb_reset_var.get()),
-                structured=bool(self.kb_structured_var.get()),
-            ),
-        )
 
-    def _import_knowledge_folder(self) -> None:
-        directory = filedialog.askdirectory(parent=self.kb_window or self.root, title="选择知识库文件夹")
-        if not directory:
-            return
-        scope = self._selected_kb_scope()
-        self.kb_status_var.set("等待导入知识库目录")
-        self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
-        self._dispatch(
-            "kb_import",
-            lambda: self.runtime.import_knowledge_paths(
-                [directory],
-                scope_name=scope,
-                reset_index=bool(self.kb_reset_var.get()),
-                structured=bool(self.kb_structured_var.get()),
-            ),
-        )
 
-    def _render_kb_detail(self, row: Dict[str, Any]) -> None:
-        if self.kb_detail_text is None:
-            return
-        docs = row.get("docs") or []
-        lines = [
-            f"作用域: {row.get('scope', '')}",
-            f"标题: {row.get('title', '')}",
-            f"文档数量: {row.get('doc_count', 0)}",
-            f"向量索引: {'是' if row.get('vector_ready') else '否'}",
-            f"结构化库: {'是' if row.get('structured_ready') else '否'}",
-            f"文档目录: {row.get('docs_dir', '')}",
-            f"向量目录: {row.get('vector_path', '')}",
-            f"结构化库路径: {row.get('structured_path', '')}",
-            "",
-            "当前收录文件:",
-        ]
-        if docs:
-            lines.extend(f"- {name}" for name in docs)
-        else:
-            lines.append("- 暂无已导入文件")
-        self.kb_detail_text.configure(state="normal")
-        self.kb_detail_text.delete("1.0", tk.END)
-        self.kb_detail_text.insert("1.0", "\n".join(lines))
-        self.kb_detail_text.configure(state="disabled")
 
-    def _on_kb_tree_select(self, _event: tk.Event | None = None) -> None:
-        if self.kb_tree is None:
-            return
-        selected = self.kb_tree.selection()
-        if not selected:
-            return
-        scope = selected[0]
-        for row in self.knowledge_catalog:
-            if row["scope"] == scope:
-                self._render_kb_detail(row)
-                break
 
-    def _populate_knowledge_tree(self) -> None:
-        if self.kb_tree is None:
-            return
-        self.kb_tree.delete(*self.kb_tree.get_children())
-        for row in self.knowledge_catalog:
-            self.kb_tree.insert(
-                "",
-                "end",
-                iid=row["scope"],
-                values=(
-                    row["scope"],
-                    row["title"],
-                    row.get("doc_count", 0),
-                    "是" if row.get("vector_ready") else "否",
-                    "是" if row.get("structured_ready") else "否",
-                ),
-            )
-        if self.knowledge_catalog:
-            first_scope = self.knowledge_catalog[0]["scope"]
-            self.kb_tree.selection_set(first_scope)
-            self._render_kb_detail(self.knowledge_catalog[0])
-            if self.kb_scope_combo is not None:
-                self.kb_scope_combo.set(self.kb_scope_reverse.get(first_scope, self.kb_scope_combo.get()))
-        self.kb_status_var.set("等待导入知识库目录")
 
-    def _show_knowledge_base_window(self) -> None:
-        if self.kb_window is not None and self.kb_window.winfo_exists():
-            self.kb_window.deiconify()
-            self.kb_window.lift()
-            self.kb_window.focus_force()
-            self._refresh_knowledge_bases()
-            return
-
-        window = tk.Toplevel(self.root)
-        window.title(f"{APP_DISPLAY_NAME} - 知识库管理")
-        self._set_window_geometry(window, min(1180, int(self.window_width * 0.72)), min(820, int(self.window_height * 0.8)), 900, 620)
-        window.configure(bg="#0f1720")
-        window.transient(self.root)
-        self._apply_window_icon(window)
-        self.window_refs.append(window)
-        self.kb_window = window
-
-        def _close_window() -> None:
-            self.kb_window = None
-            window.destroy()
-
-        window.protocol("WM_DELETE_WINDOW", _close_window)
-
-        shell = ttk.Frame(window, style="Root.TFrame", padding=18)
-        shell.pack(fill="both", expand=True)
-        shell.columnconfigure(0, weight=1)
-        shell.rowconfigure(1, weight=1)
-
-        header = ttk.Frame(shell, style="Panel.TFrame", padding=16)
-        header.grid(row=0, column=0, sticky="ew")
-        header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="多知识库管理", style="Header.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(header, text="公共底座知识库 + 专家专属知识库统一导入与查看", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
-
-        control = ttk.Frame(shell, style="Panel.TFrame", padding=16)
-        control.grid(row=1, column=0, sticky="nsew", pady=(16, 0))
-        control.columnconfigure(0, weight=3)
-        control.columnconfigure(1, weight=2)
-        control.rowconfigure(1, weight=1)
-
-        topbar = ttk.Frame(control, style="SoftPanel.TFrame", padding=12)
-        topbar.grid(row=0, column=0, columnspan=2, sticky="ew")
-        topbar.columnconfigure(1, weight=1)
-        ttk.Label(topbar, text="导入目标", style="Body.TLabel").grid(row=0, column=0, sticky="w")
-        self.kb_scope_combo = ttk.Combobox(topbar, state="readonly")
-        self.kb_scope_combo.grid(row=0, column=1, sticky="ew", padx=(10, 12))
-        ttk.Checkbutton(topbar, text="导入前重建当前作用域索引", variable=self.kb_reset_var).grid(row=0, column=2, sticky="w", padx=(0, 10))
-        ttk.Checkbutton(topbar, text="同步写入结构化知识库", variable=self.kb_structured_var).grid(row=0, column=3, sticky="w", padx=(0, 10))
-        ttk.Button(topbar, text="导入文件", command=self._import_knowledge_files).grid(row=0, column=4, sticky="ew", padx=(0, 8))
-        ttk.Button(topbar, text="导入文件夹", command=self._import_knowledge_folder).grid(row=0, column=5, sticky="ew", padx=(0, 8))
-        ttk.Button(topbar, text="刷新目录", command=self._refresh_knowledge_bases).grid(row=0, column=6, sticky="ew")
-
-        table_wrap = ttk.Frame(control, style="SoftPanel.TFrame", padding=12)
-        table_wrap.grid(row=1, column=0, sticky="nsew", pady=(14, 0), padx=(0, 10))
-        table_wrap.columnconfigure(0, weight=1)
-        table_wrap.rowconfigure(0, weight=1)
-
-        self.kb_tree = ttk.Treeview(table_wrap, columns=("scope", "title", "docs", "vector", "structured"), show="headings")
-        self.kb_tree.heading("scope", text="作用域")
-        self.kb_tree.heading("title", text="名称")
-        self.kb_tree.heading("docs", text="文件数")
-        self.kb_tree.heading("vector", text="向量索引")
-        self.kb_tree.heading("structured", text="结构化库")
-        self.kb_tree.column("scope", width=220, anchor="w")
-        self.kb_tree.column("title", width=260, anchor="w")
-        self.kb_tree.column("docs", width=80, anchor="center")
-        self.kb_tree.column("vector", width=90, anchor="center")
-        self.kb_tree.column("structured", width=90, anchor="center")
-        self.kb_tree.grid(row=0, column=0, sticky="nsew")
-        self.kb_tree.bind("<<TreeviewSelect>>", self._on_kb_tree_select)
-        table_scroll = ttk.Scrollbar(table_wrap, orient="vertical", command=self.kb_tree.yview)
-        table_scroll.grid(row=0, column=1, sticky="ns")
-        self.kb_tree.configure(yscrollcommand=table_scroll.set)
-
-        detail_wrap = ttk.Frame(control, style="SoftPanel.TFrame", padding=12)
-        detail_wrap.grid(row=1, column=1, sticky="nsew", pady=(14, 0))
-        detail_wrap.columnconfigure(0, weight=1)
-        detail_wrap.rowconfigure(1, weight=1)
-        ttk.Label(detail_wrap, text="作用域详情", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
-        self.kb_detail_text = tk.Text(detail_wrap, bg="#0f1720", fg="#dbe6f2", insertbackground="#dbe6f2", relief="flat", font=("Microsoft YaHei UI", 10), wrap="word")
-        self.kb_detail_text.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
-        self.kb_detail_text.configure(state="disabled")
-        self._register_scroll_target(self.kb_tree, self.kb_tree)
-        self._register_scroll_target(detail_wrap, self.kb_detail_text)
-        self._register_scroll_target(self.kb_detail_text, self.kb_detail_text)
-
-        footer = ttk.Frame(shell, style="Panel.TFrame", padding=(10, 12))
-        footer.grid(row=2, column=0, sticky="ew", pady=(16, 0))
-        footer.columnconfigure(0, weight=1)
-        ttk.Label(footer, textvariable=self.kb_status_var, style="Foot.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Button(footer, text="关闭", command=_close_window).grid(row=0, column=1, sticky="e")
-
-        self._sync_knowledge_scope_choices()
-        if self.kb_scope_combo["values"]:
-            self.kb_scope_combo.set(self.kb_scope_combo["values"][0])
-        self._populate_knowledge_tree()
-        self._refresh_knowledge_bases()
 
     def _run_self_check(self) -> None:
         self.hero_var.set("正在执行系统启动自检")
@@ -1056,48 +739,6 @@ class DesktopApp:
         self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
         self._dispatch("stop_session", self.runtime.stop_session)
 
-    def _process_queue(self) -> None:
-        try:
-            while True:
-                status, name, payload = self.ui_queue.get_nowait()
-                if status == "error":
-                    self.hero_var.set(f"{name} 失败: {payload}")
-                    if self.splash is not None:
-                        self.splash_message_var.set(f"初始化失败：{payload}")
-                    messagebox.showerror(APP_DISPLAY_NAME, str(payload), parent=self.root)
-                    continue
-
-                if name == "refresh_models":
-                    self.model_catalog = payload
-                    self._update_model_choices()
-                    self.hero_var.set("模型清单已刷新")
-                elif name == "kb_catalog":
-                    self.knowledge_catalog = payload
-                    self._sync_knowledge_scope_choices()
-                    self._populate_knowledge_tree()
-                    self.hero_var.set("知识库目录已刷新")
-                elif name == "kb_import":
-                    self.kb_status_var.set(
-                        f"导入完成: 作用域={payload['scope']}，成功 {payload['imported_count']} 项，失败 {payload['failed_count']} 项"
-                    )
-                    self.hero_var.set("知识库导入已完成")
-                    self._render_logs(self.runtime.get_state().get("logs", []))
-                    messagebox.showinfo(
-                        APP_DISPLAY_NAME,
-                        f"作用域: {payload['scope']}\n成功: {payload['imported_count']}\n失败: {payload['failed_count']}\n结构化记录: {payload.get('structured_records', 0)}",
-                        parent=self.kb_window or self.root,
-                    )
-                    self._refresh_knowledge_bases()
-                elif name == "self_check":
-                    self._render_checks(payload)
-                    self._render_logs(self.runtime.get_state().get("logs", []))
-                    self.hero_var.set("启动自检已完成")
-                elif name in {"start_session", "stop_session"}:
-                    self._render_state(payload)
-                    self._refresh_archive_catalog() if self.archive_window is not None else None
-        except queue.Empty:
-            pass
-        self.root.after(250, self._process_queue)
 
     def _refresh_state_tick(self) -> None:
         try:
