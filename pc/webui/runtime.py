@@ -565,91 +565,10 @@ class LabDetectorRuntime:
         self.self_check_has_run = True
         return results
 
-    def _check_microphone(self) -> Dict[str, Any]:
-        try:
-            from pc.voice.voice_interaction import VOICE_INTERACTION_AVAILABLE, get_voice_interaction
-        except Exception as exc:
-            return {
-                "status": "warn",
-                "summary": "语音链路未就绪",
-                "detail": str(exc),
-                "raw_output": f"[WARN] 语音测试模块加载失败: {exc}",
-            }
 
-        if not VOICE_INTERACTION_AVAILABLE:
-            return {
-                "status": "warn",
-                "summary": "语音链路未就绪",
-                "detail": "缺少 speech_recognition / pyaudio 等依赖。",
-                "raw_output": "[WARN] 语音交互依赖未安装，主界面加载后可再次尝试交互测试。",
-            }
 
-        agent = get_voice_interaction()
-        if not agent or not hasattr(agent, "_get_working_microphone"):
-            return {
-                "status": "warn",
-                "summary": "语音链路未就绪",
-                "detail": "语音助手实例不可用。",
-                "raw_output": "[WARN] 未能创建语音助手实例。",
-            }
 
-        microphone = agent._get_working_microphone()
-        if microphone is None:
-            return {
-                "status": "warn",
-                "summary": "未检测到可用麦克风",
-                "detail": "请在主界面加载完成后进行交互式语音测试。",
-                "raw_output": "[WARN] 未检测到可用麦克风，语音测试已延后到主界面交互阶段。",
-            }
 
-        return {
-            "status": "pass",
-            "summary": "检测到可用麦克风",
-            "detail": "主界面加载完成后可执行交互式语音测试。",
-            "raw_output": "[INFO] 已检测到可用麦克风，语音测试将在主界面加载后由用户主动触发。",
-        }
-
-    def run_voice_test(self) -> Dict[str, Any]:
-        try:
-            from pc.voice.voice_interaction import VOICE_INTERACTION_AVAILABLE, get_voice_interaction
-        except Exception as exc:
-            return {
-                "status": "error",
-                "summary": "语音测试初始化失败",
-                "detail": str(exc),
-            }
-
-        if not VOICE_INTERACTION_AVAILABLE:
-            return {
-                "status": "warn",
-                "summary": "语音交互依赖未安装",
-                "detail": "请先安装 speech_recognition、pyaudio、vosk 等依赖。",
-            }
-
-        agent = get_voice_interaction()
-        if not agent:
-            return {
-                "status": "error",
-                "summary": "语音助手不可用",
-                "detail": "无法创建语音交互实例。",
-            }
-
-        agent.set_ai_backend(self.ai_backend, self.selected_model)
-        agent.get_latest_frame_callback = self._latest_frame_for_voice
-        if not agent.is_running:
-            started = agent.start()
-            if not started:
-                return {
-                    "status": "warn",
-                    "summary": "语音测试未启动",
-                    "detail": "未检测到可用麦克风，或麦克风被其它程序占用。",
-                }
-
-        return {
-            "status": "pass",
-            "summary": "语音测试已就绪",
-            "detail": f"请对着麦克风说出唤醒词“{get_config('voice_interaction.wake_word', '小爱同学')}”，再继续说出测试指令。",
-        }
 
     def _check_training_runtime(self) -> Dict[str, Any]:
         python_info = describe_training_python()
@@ -657,18 +576,200 @@ class LabDetectorRuntime:
             detail = str(python_info.get("reason") or "Training interpreter not found.")
             return {
                 "status": "warn",
-                "summary": "训练运行时未就绪",
+                "summary": "Training runtime not ready",
                 "detail": detail,
                 "raw_output": f"[WARN] {detail}",
             }
 
+        runtime_kind = {
+            "bundled": "Bundled runtime",
+            "system": "System Python",
+            "current": "Current interpreter",
+        }.get(str(python_info.get("kind") or ""), "Python")
         runtime_path = str(python_info.get("path") or "")
-        logs = [f"[INFO] 训练解释器: {runtime_path}"]
-        missing_training, probe_logs, _ = self._missing_dependencies_in_training_env(TRAINING_DEPENDENCY_MAP)
-        logs.extend(probe_logs)
+        return {
+            "status": "pass",
+            "summary": f"Training interpreter ready ({runtime_kind})",
+            "detail": runtime_path or "Interpreter detected",
+            "raw_output": "\n".join([
+                f"[INFO] Training interpreter: {runtime_path}",
+                "[INFO] Training dependencies are checked only when a training job starts.",
+            ]),
+        }
+
+    @staticmethod
+    def _missing_dependencies(module_map: Dict[str, str]) -> List[str]:
+        missing: List[str] = []
+        for module_name, package_name in module_map.items():
+            if importlib.util.find_spec(module_name) is None:
+                missing.append(package_name)
+        return missing
+
+    def _missing_dependencies_in_training_env(self, module_map: Dict[str, str]) -> tuple[List[str], List[str], Dict[str, Any]]:
+        probe = probe_modules_with_training_python(module_map.keys())
+        logs = list(probe.get("logs") or [])
+        results = dict(probe.get("results") or {})
+        missing = [package_name for module_name, package_name in module_map.items() if not results.get(module_name, False)]
+        return missing, logs, probe
+
+    def _ensure_pip_available(
+        self,
+        python_exe: Path | None = None,
+        env: Dict[str, str] | None = None,
+    ) -> Dict[str, Any]:
+        logs: List[str] = []
+        target_python = python_exe
+        if target_python is None:
+            if getattr(sys, "frozen", False):
+                resolved = resolve_training_python_executable()
+                target_python = Path(resolved) if resolved is not None else None
+            else:
+                target_python = Path(sys.executable)
+        if target_python is None or not Path(target_python).exists():
+            return {"ok": False, "logs": ["[ERROR] 未找到可用于自动安装依赖的 Python 解释器。"]}
+
+        runtime_env = env or build_training_python_env(Path(target_python))
+        check_cmd = [str(target_python), "-m", "pip", "--version"]
+        check = run_hidden(check_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=runtime_env)
+        if check.returncode == 0:
+            output = self._decode_subprocess_output(check.stdout).strip()
+            if output:
+                logs.append(f"[INFO] pip 已就绪: {output}")
+            return {"ok": True, "logs": logs}
+
+        logs.append("[WARN] pip 不可用，尝试通过 ensurepip 自动补齐。")
+        ensure_cmd = [str(target_python), "-m", "ensurepip", "--upgrade"]
+        ensure = run_hidden(ensure_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=runtime_env)
+        ensure_output = self._decode_subprocess_output(ensure.stdout).strip()
+        if ensure_output:
+            logs.extend([f"[INFO] {line}" for line in ensure_output.splitlines()[-12:]])
+
+        recheck = run_hidden(check_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=runtime_env)
+        if recheck.returncode == 0:
+            output = self._decode_subprocess_output(recheck.stdout).strip()
+            if output:
+                logs.append(f"[INFO] pip 修复成功: {output}")
+            return {"ok": True, "logs": logs}
+
+        logs.append("[ERROR] pip 仍不可用，无法自动安装 Python 依赖。")
+        return {"ok": False, "logs": logs}
+
+    def _install_python_packages(
+        self,
+        packages: List[str],
+        scope_name: str,
+        python_exe: Path | None = None,
+        env: Dict[str, str] | None = None,
+        install_target: Path | None = None,
+    ) -> Dict[str, Any]:
+        uniq_packages = sorted({str(pkg).strip() for pkg in packages if str(pkg).strip()})
+        if not uniq_packages:
+            return {"ok": True, "installed": [], "failed": [], "logs": [f"[INFO] {scope_name} 无需安装。"]}
+
+        target_python = python_exe
+        if target_python is None:
+            if getattr(sys, "frozen", False):
+                resolved = resolve_training_python_executable()
+                target_python = Path(resolved) if resolved is not None else None
+            else:
+                target_python = Path(sys.executable)
+        if target_python is None or not Path(target_python).exists():
+            return {"ok": False, "installed": [], "failed": uniq_packages, "logs": ["[ERROR] 未找到可执行的 Python 解释器。"]}
+
+        runtime_env = env or build_training_python_env(Path(target_python))
+        install_root = install_target
+        if install_root is None and getattr(sys, "frozen", False):
+            install_root = install_target_for_training_packages()
+        logs: List[str] = [f"[INFO] 开始自动安装{scope_name}: {', '.join(uniq_packages)}"]
+        if install_root is not None:
+            Path(install_root).mkdir(parents=True, exist_ok=True)
+            logs.append(f"[INFO] 安装目标目录: {install_root}")
+        logs.append(f"[INFO] 安装解释器: {target_python}")
+
+        pip_state = self._ensure_pip_available(Path(target_python), runtime_env)
+        logs.extend(pip_state["logs"])
+        if not pip_state["ok"]:
+            return {"ok": False, "installed": [], "failed": uniq_packages, "logs": logs}
+
+        installed: List[str] = []
+        failed: List[str] = []
+        for package_name in uniq_packages:
+            cmd = [str(target_python), "-m", "pip", "install", "--upgrade", "--no-warn-script-location", package_name]
+            if install_root is not None:
+                cmd.extend(["--target", str(install_root)])
+            proc = run_hidden(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=runtime_env)
+            output = self._decode_subprocess_output(proc.stdout)
+            tail_lines = [line for line in output.splitlines() if line.strip()][-12:]
+            if proc.returncode == 0:
+                installed.append(package_name)
+                logs.append(f"[INFO] 安装成功: {package_name}")
+            else:
+                failed.append(package_name)
+                logs.append(f"[ERROR] 安装失败: {package_name}")
+            logs.extend([f"[INFO] {line}" for line in tail_lines])
+
+        return {
+            "ok": len(failed) == 0,
+            "installed": installed,
+            "failed": failed,
+            "logs": logs,
+        }
+
+    def _check_dependencies(self) -> Dict[str, Any]:
+        auto_install_core = bool(get_config("self_check.pc_auto_install_core", True))
+        logs: List[str] = []
+        missing_base = self._missing_dependencies(BASE_DEPENDENCY_MAP)
+
+        target_python = resolve_training_python_executable()
+        runtime_env = build_training_python_env(Path(target_python)) if target_python else None
+        install_target = install_target_for_training_packages()
+
+        if missing_base and auto_install_core:
+            install_report = self._install_python_packages(
+                missing_base,
+                "Core dependencies",
+                python_exe=Path(target_python) if target_python else None,
+                env=runtime_env,
+                install_target=install_target,
+            )
+            logs.extend(install_report["logs"])
+
+        missing_base = self._missing_dependencies(BASE_DEPENDENCY_MAP)
+        installed_base_count = len(BASE_DEPENDENCY_MAP) - len(missing_base)
+        logs.append(
+            f"[INFO] Core Python dependency check finished: {installed_base_count}/{len(BASE_DEPENDENCY_MAP)} ready."
+        )
+        logs.append("[INFO] Training dependencies for YOLO and LLM are checked on demand, not during startup self-check.")
+
+        if missing_base:
+            return {
+                "status": "error",
+                "summary": f"Missing {len(missing_base)} core packages",
+                "detail": "Missing core dependencies: " + ", ".join(missing_base),
+                "raw_output": "\n".join(logs),
+            }
+
+        return {
+            "status": "pass",
+            "summary": f"{installed_base_count} core packages ready",
+            "detail": "Desktop runtime imports are available. Training dependencies are checked separately.",
+            "raw_output": "\n".join(logs),
+        }
+
+    def _ensure_training_dependencies_ready(self) -> None:
+        self._log_raw_line("[INFO] Checking training dependencies on demand before starting the job.")
+        missing_training, probe_logs, probe = self._missing_dependencies_in_training_env(TRAINING_DEPENDENCY_MAP)
+        for line in probe_logs:
+            self._log_raw_line(line)
+        if not missing_training:
+            return
+
+        python_info = describe_training_python()
+        if not python_info.get("available"):
+            raise RuntimeError(str(python_info.get("reason") or "未找到训练运行时 Python。"))
 
         auto_install_training = bool(get_config("self_check.pc_auto_install_training", True))
-        if missing_training and auto_install_training:
+        if auto_install_training:
             target_python = resolve_training_python_executable()
             install_report = self._install_python_packages(
                 missing_training,
@@ -677,29 +778,194 @@ class LabDetectorRuntime:
                 env=build_training_python_env(Path(target_python)) if target_python else None,
                 install_target=install_target_for_training_packages(),
             )
-            logs.extend(install_report["logs"])
-            missing_training, reprobe_logs, _ = self._missing_dependencies_in_training_env(TRAINING_DEPENDENCY_MAP)
-            logs.extend(reprobe_logs)
+            for line in install_report["logs"]:
+                self._log_raw_line(line)
+            missing_training, _, _ = self._missing_dependencies_in_training_env(TRAINING_DEPENDENCY_MAP)
 
         if missing_training:
-            return {
-                "status": "warn",
-                "summary": f"训练依赖缺失 {len(missing_training)} 项",
-                "detail": "缺失依赖: " + ", ".join(missing_training),
-                "raw_output": "\n".join(logs),
-            }
+            raise RuntimeError("训练依赖未就绪: " + ", ".join(missing_training) + "。请先运行启动自检。")
 
+    def _decode_subprocess_output(self, payload: bytes) -> str:
+        for encoding in ("utf-8", "gbk", "cp936"):
+            try:
+                return payload.decode(encoding)
+            except Exception:
+                continue
+        return payload.decode("utf-8", errors="ignore")
+
+    def _run_python_script(self, relative_path: str) -> str:
+        module_name = relative_path.replace("\\", "/").removesuffix(".py").replace("/", ".")
+        resource_file = resource_path(relative_path)
+        buffer = io.StringIO()
+        try:
+            with redirect_stdout(buffer), redirect_stderr(buffer):
+                if module_name.startswith("pc."):
+                    runpy.run_module(module_name, run_name="__main__")
+                else:
+                    runpy.run_path(str(resource_file), run_name="__main__")
+        except SystemExit:
+            pass
+        except Exception as exc:
+            output = buffer.getvalue().strip()
+            error_text = f"[ERROR] \u811a\u672c\u6267\u884c\u5931\u8d25: {exc}"
+            return f"{output}\n{error_text}".strip() if output else error_text
+        return buffer.getvalue().strip()
+
+    def _check_gpu(self) -> Dict[str, Any]:
+        output = self._run_python_script("pc/tools/check_gpu.py")
+        status = "pass" if "GPU 可用: True" in output else "warn"
+        summary = "检测到可用 GPU" if status == "pass" else "未检测到 CUDA，可降级到 CPU"
         return {
-            "status": "pass",
-            "summary": "训练运行时正常",
-            "detail": runtime_path or "训练解释器可用",
-            "raw_output": "\\n".join(logs + ["[INFO] 训练运行时已就绪，可执行 YOLO / LLM 训练"]),
+            "status": status,
+            "summary": summary,
+            "detail": output or "未返回输出",
+            "raw_output": output or "[WARN] GPU 检查脚本未返回输出",
         }
 
-    # Compatibility shim for stale startup callbacks in older packaged UI code.
-    def check_DEPENDENCE(self) -> Dict[str, Any]:
-        return self._check_dependencies()
+    def _check_microphone(self) -> Dict[str, Any]:
+        output = self._run_python_script("pc/tools/check_mic.py")
+        if "[ERROR]" in output:
+            status = "error"
+            summary = "麦克风检查失败"
+        elif "[WARN]" in output:
+            status = "warn"
+            summary = "麦克风可用性存在风险"
+        else:
+            status = "pass"
+            summary = "麦克风链路可用"
+        return {
+            "status": status,
+            "summary": summary,
+            "detail": output or "未返回输出",
+            "raw_output": output or "[WARN] 麦克风检查脚本未返回输出",
+        }
 
+    def _check_vosk_assets(self) -> Dict[str, Any]:
+        model_root = Path(resource_path("pc/voice/model"))
+        model_am = model_root / "am"
+        if model_am.exists():
+            return {
+                "status": "pass",
+                "summary": "离线语音模型已就绪",
+                "detail": str(model_root),
+                "raw_output": f"[INFO] 已检测到 Vosk 离线语音模型目录: {model_root}",
+            }
+
+        buffer = io.StringIO()
+        result_holder: Dict[str, Any] = {"ready": False, "error": ""}
+
+        def worker() -> None:
+            try:
+                with redirect_stdout(buffer), redirect_stderr(buffer):
+                    result_holder["ready"] = check_and_download_vosk()
+            except Exception as exc:
+                result_holder["error"] = str(exc)
+
+        thread = threading.Thread(target=worker, daemon=True, name="VoskAssetCheck")
+        thread.start()
+        thread.join(20)
+
+        output = buffer.getvalue().strip()
+        if thread.is_alive():
+            timeout_text = "[WARN] Vosk 离线语音模型自动补齐超时，已跳过本次下载。"
+            output = f"{output}\n{timeout_text}" if output else timeout_text
+            return {
+                "status": "warn",
+                "summary": "离线语音模型尚未就绪",
+                "detail": str(model_root),
+                "raw_output": output,
+            }
+
+        if result_holder["error"]:
+            output = f"{output}\n[ERROR] {result_holder['error']}" if output else f"[ERROR] {result_holder['error']}"
+            return {
+                "status": "error",
+                "summary": "离线语音模型补齐失败",
+                "detail": str(model_root),
+                "raw_output": output,
+            }
+
+        if not output:
+            output = "[INFO] 已自动完成离线语音模型资产检查."
+        return {
+            "status": "pass" if result_holder["ready"] else "warn",
+            "summary": "已自动补齐离线语音模型" if result_holder["ready"] else "离线语音模型尚未就绪",
+            "detail": str(model_root),
+            "raw_output": output,
+        }
+
+    def _check_rag_assets(self) -> Dict[str, Any]:
+        scopes = knowledge_manager.list_scopes(include_known_experts=True)
+        available = [row for row in scopes if row["doc_count"] or row["vector_ready"] or row["structured_ready"]]
+        detail_parts = [f"{row['scope']} docs={row['doc_count']}" for row in available[:8]]
+        return {
+            "status": "pass" if scopes else "error",
+            "summary": f"已发现 {len(scopes)} 个知识库作用域" if scopes else "未发现可用知识库目录",
+            "detail": ", ".join(detail_parts) if detail_parts else str(resource_path("pc/knowledge_base")),
+            "raw_output": "[INFO] 已成功扫描到本地实验室知识库目录及结构.",
+        }
+
+    def get_knowledge_base_catalog(self) -> List[Dict[str, Any]]:
+        return knowledge_manager.list_scopes(include_known_experts=True)
+
+    def get_expert_catalog(self) -> List[Dict[str, Any]]:
+        return expert_manager.list_expert_catalog()
+
+    def get_archive_catalog(self) -> List[Dict[str, Any]]:
+        return self.experiment_archive.list_sessions(limit=80)
+
+    def get_archive_detail(self, session_id: str) -> Dict[str, Any]:
+        return self.experiment_archive.get_session_detail(session_id)
+
+    def get_training_overview(self) -> Dict[str, Any]:
+        return training_manager.overview()
+
+    def build_training_workspace(self, workspace_name: str = "") -> Dict[str, Any]:
+        summary = training_manager.build_training_workspace(
+            workspace_name=workspace_name or str(get_config("training.workspace_name", "labdetector_training"))
+        )
+        self._log_info(f"训练工作区已生成: {summary['workspace_dir']}")
+        return summary
+
+    def import_llm_training_data(self, paths: List[str]) -> Dict[str, Any]:
+        summary = training_manager.import_llm_dataset(paths)
+        self._log_info(
+            f"LLM 训练数据导入完成: 新增 {summary['sample_count']} 条，总计 {summary['total_sample_count']} 条"
+        )
+        return summary
+
+    def import_pi_training_data(self, paths: List[str]) -> Dict[str, Any]:
+        summary = training_manager.import_pi_dataset(paths)
+        self._log_info(f"Pi 训练数据导入完成: 样本 {summary['sample_count']}，配置 {summary['dataset_yaml']}")
+        return summary
+
+    def start_llm_finetune(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        self._ensure_training_dependencies_ready()
+        job = training_manager.start_llm_job(payload)
+        self._log_info(f"LLM 微调任务已启动: {job['job_id']}")
+        return job
+
+    def start_pi_detector_finetune(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        self._ensure_training_dependencies_ready()
+        job = training_manager.start_pi_job(payload)
+        self._log_info(f"Pi 检测模型微调任务已启动: {job['job_id']}")
+        return job
+
+    def start_full_training_pipeline(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        self._ensure_training_dependencies_ready()
+        job = training_manager.start_full_pipeline_job(payload)
+        self._log_info(f"一键全流程训练任务已启动: {job['job_id']}")
+        return job
+
+    def activate_llm_deployment(self, target: str = "") -> Dict[str, Any]:
+        summary = training_manager.activate_llm_deployment(target)
+        self._log_info(f"LLM 部署已激活: {summary.get('name', '')}")
+        return summary
+
+    def activate_pi_deployment(self, target: str = "") -> Dict[str, Any]:
+        summary = training_manager.activate_pi_deployment(target)
+        self._log_info(f"Pi 检测模型已激活: {summary.get('name', '')}")
+        return summary
     @staticmethod
     def _parse_session_tags(raw: Any) -> List[str]:
         if isinstance(raw, list):
@@ -785,65 +1051,6 @@ class LabDetectorRuntime:
         if extra:
             message = f"{message}；向量状态: {extra}"
         self._log_info(message)
-        return summary
-
-    def get_knowledge_base_catalog(self) -> List[Dict[str, Any]]:
-        return knowledge_manager.list_scopes(include_known_experts=True)
-
-    def get_expert_catalog(self) -> List[Dict[str, Any]]:
-        return expert_manager.list_expert_catalog()
-
-    def get_archive_catalog(self) -> List[Dict[str, Any]]:
-        return self.experiment_archive.list_sessions(limit=80)
-
-    def get_archive_detail(self, session_id: str) -> Dict[str, Any]:
-        return self.experiment_archive.get_session_detail(session_id)
-
-    def get_training_overview(self) -> Dict[str, Any]:
-        return training_manager.overview()
-
-    def build_training_workspace(self, workspace_name: str = "") -> Dict[str, Any]:
-        summary = training_manager.build_training_workspace(
-            workspace_name=workspace_name or str(get_config("training.workspace_name", "labdetector_training"))
-        )
-        self._log_info(f"????????: {summary['workspace_dir']}")
-        return summary
-
-    def import_llm_training_data(self, paths: List[str]) -> Dict[str, Any]:
-        summary = training_manager.import_llm_dataset(paths)
-        self._log_info(
-            f"LLM ????????: ?? {summary['sample_count']} ???? {summary['total_sample_count']} ?"
-        )
-        return summary
-
-    def import_pi_training_data(self, paths: List[str]) -> Dict[str, Any]:
-        summary = training_manager.import_pi_dataset(paths)
-        self._log_info(f"Pi ????????: ?? {summary['sample_count']}??? {summary['dataset_yaml']}")
-        return summary
-
-    def start_llm_finetune(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        job = training_manager.start_llm_job(payload)
-        self._log_info(f"LLM ???????: {job['job_id']}")
-        return job
-
-    def start_pi_detector_finetune(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        job = training_manager.start_pi_job(payload)
-        self._log_info(f"Pi ???????????: {job['job_id']}")
-        return job
-
-    def start_full_training_pipeline(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        job = training_manager.start_full_pipeline_job(payload)
-        self._log_info(f"????????????: {job['job_id']}")
-        return job
-
-    def activate_llm_deployment(self, target: str = "") -> Dict[str, Any]:
-        summary = training_manager.activate_llm_deployment(target)
-        self._log_info(f"LLM ?????: {summary.get('name', '')}")
-        return summary
-
-    def activate_pi_deployment(self, target: str = "") -> Dict[str, Any]:
-        summary = training_manager.activate_pi_deployment(target)
-        self._log_info(f"Pi ???????: {summary.get('name', '')}")
         return summary
 
     def start_session(self, payload: Dict[str, Any]) -> Dict[str, Any]:

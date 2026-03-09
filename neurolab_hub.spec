@@ -41,6 +41,7 @@ hiddenimports = [
 
 icon_file = os.path.join("assets", "branding", "neurolab_hub.ico")
 version_file = os.path.join("scripts", "version_info.txt")
+exe_name = os.environ.get("NEUROLAB_EXE_NAME", "NeuroLab Hub")
 
 datas = [
     ("config.ini", "pc"),
@@ -101,7 +102,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="NeuroLab Hub",
+    name=exe_name,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -119,5 +120,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=True,
-    name="NeuroLab Hub",
+    name=exe_name,
 )

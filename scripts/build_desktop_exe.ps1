@@ -83,15 +83,31 @@ PiConfig.init()
     New-Item -ItemType Directory -Force -Path $path | Out-Null
   }
 
-  Push-Location $ProjectRoot
-  try {
-    & $PythonExe -m PyInstaller --noconfirm --clean --workpath $WorkRoot --distpath $DistRoot neurolab_hub.spec
-    if ($LASTEXITCODE -ne 0) {
-      throw "PyInstaller build failed."
+  $buildTargets = @(
+    @{ Name = 'NeuroLab Hub'; OutDir = $DistRoot },
+    @{ Name = 'NeuroLab Hub LLM'; OutDir = (Join-Path $BundleStageRoot 'dist_llm') },
+    @{ Name = 'NeuroLab Hub Vision'; OutDir = (Join-Path $BundleStageRoot 'dist_vision') }
+  )
+
+  foreach ($target in $buildTargets) {
+    $targetDist = $target.OutDir
+    if (Test-Path $targetDist) {
+      Remove-Item -Recurse -Force $targetDist
     }
-  }
-  finally {
-    Pop-Location
+    New-Item -ItemType Directory -Force -Path $targetDist | Out-Null
+
+    Push-Location $ProjectRoot
+    try {
+      $env:NEUROLAB_EXE_NAME = $target.Name
+      & $PythonExe -m PyInstaller --noconfirm --clean --workpath $WorkRoot --distpath $targetDist neurolab_hub.spec
+      if ($LASTEXITCODE -ne 0) {
+        throw "PyInstaller build failed for $($target.Name)."
+      }
+    }
+    finally {
+      Remove-Item Env:NEUROLAB_EXE_NAME -ErrorAction SilentlyContinue
+      Pop-Location
+    }
   }
 
   if (!(Test-Path $StageFolder)) {
@@ -110,9 +126,18 @@ PiConfig.init()
     }
   }
 
+  $LlmStageFolder = Join-Path (Join-Path $BundleStageRoot 'dist_llm') 'NeuroLab Hub LLM'
+  $VisionStageFolder = Join-Path (Join-Path $BundleStageRoot 'dist_vision') 'NeuroLab Hub Vision'
+  if (!(Test-Path $LlmStageFolder)) {
+    throw "Build output not found: $LlmStageFolder"
+  }
+  if (!(Test-Path $VisionStageFolder)) {
+    throw "Build output not found: $VisionStageFolder"
+  }
+
   Copy-Item -Path (Join-Path $StageFolder 'NeuroLab Hub.exe') -Destination $PcExePath -Force
-  Copy-Item -Path $PcExePath -Destination $PcLlmExePath -Force
-  Copy-Item -Path $PcExePath -Destination $PcVisionExePath -Force
+  Copy-Item -Path (Join-Path $LlmStageFolder 'NeuroLab Hub LLM.exe') -Destination $PcLlmExePath -Force
+  Copy-Item -Path (Join-Path $VisionStageFolder 'NeuroLab Hub Vision.exe') -Destination $PcVisionExePath -Force
   Copy-Item -Path (Join-Path $StageFolder 'APP') -Destination $PcAppRoot -Recurse -Force
 
   New-Item -ItemType Directory -Force -Path $PcPythonRuntimeRoot | Out-Null
