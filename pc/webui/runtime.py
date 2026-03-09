@@ -1206,8 +1206,8 @@ class LabDetectorRuntime:
         self.mode = "idle"
         self.status_message = "待机"
         if announce and had_running_session:
-            self._log_info("监控会话已停止")
-            self._log_info("监控会话已停止")
+            self._log_info("???????")
+
     def _build_streams(self) -> List[Dict[str, Any]]:
         if self.mode == "camera":
             result_text = self.latest_inference_result.get("text", "")

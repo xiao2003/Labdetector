@@ -368,22 +368,25 @@ class DesktopApp:
 
         action_strip = ttk.Frame(hero_right, style="Panel.TFrame")
         action_strip.grid(row=1, column=0, sticky="e", pady=(12, 0))
-        for column in range(4):
-            action_strip.columnconfigure(column, weight=1)
         actions = [
-            ("折叠侧栏", self._toggle_left_panel),
-            ("运行自检", self._run_self_check),
-            ("专家模型", self._show_expert_window),
-            ("知识库", self._show_knowledge_base_window),
-            ("模型服务", self._show_cloud_backend_window),
-            ("训练工作台", self._show_training_window),
-            ("软件说明", self._show_manual_window),
-            ("关于版权", self._show_about_and_copyright),
+            ("??", self._toggle_left_panel),
+            ("??", self._run_self_check),
+            ("??", self._show_expert_window),
+            ("???", self._show_knowledge_base_window),
+            ("????", self._show_cloud_backend_window),
+            ("???", self._show_training_window),
+            ("??", self._show_manual_window),
+            ("??", self._show_about_and_copyright),
         ]
+        for column in range(len(actions)):
+            action_strip.columnconfigure(column, weight=1)
         for index, (label, command) in enumerate(actions):
-            row_index = index // 4
-            column_index = index % 4
-            ttk.Button(action_strip, text=label, command=command).grid(row=row_index, column=column_index, sticky="ew", padx=(0 if column_index == 0 else 8, 0), pady=(0 if row_index == 0 else 8, 0))
+            ttk.Button(action_strip, text=label, command=command).grid(
+                row=0,
+                column=index,
+                sticky="ew",
+                padx=(0 if index == 0 else 8, 0),
+            )
 
         left = ttk.Frame(shell, style="Panel.TFrame", padding=18)
         left.grid(row=1, column=0, sticky="nsew", padx=(0, 16))
@@ -750,8 +753,17 @@ class DesktopApp:
 
     def _render_state(self, state: Dict[str, Any]) -> None:
         self.current_state = state
-        self.hero_var.set("正在初始化 NeuroLab Hub 可视化界面")
-        self.session_var.set("待机")
+        session = state.get("session", {})
+        phase = str(session.get("phase") or "idle").lower()
+        status_message = str(session.get("status_message") or "").strip()
+        if phase == "running":
+            badge_text = "???"
+        elif phase == "starting":
+            badge_text = "???"
+        else:
+            badge_text = "??"
+        self.hero_var.set(status_message or "????? NeuroLab Hub ?????")
+        self.session_var.set(badge_text)
         self._update_session_badge()
         self._render_summary(state)
         self._render_checks(state.get("self_check", []))
@@ -761,16 +773,22 @@ class DesktopApp:
     def _update_session_badge(self) -> None:
         if self.session_badge is None:
             return
-        active = bool(self.current_state.get("session", {}).get("active"))
-        self.session_badge.configure(bg="#20c997" if active else "#f6c344")
+        session = self.current_state.get("session", {})
+        phase = str(session.get("phase") or "idle").lower()
+        if phase == "running":
+            self.session_badge.configure(bg="#20c997", fg="#0f1720")
+        elif phase == "starting":
+            self.session_badge.configure(bg="#6ec1ff", fg="#0f1720")
+        else:
+            self.session_badge.configure(bg="#f6c344", fg="#0f1720")
 
     def _render_summary(self, state: Dict[str, Any]) -> None:
         summary = state.get("summary", {})
         session = state.get("session", {})
         mode_label = {
-            "idle": "Not started",
-            "camera": "Camera",
-            "websocket": "Pi Cluster",
+            "idle": "???",
+            "camera": "????",
+            "websocket": "Pi ??",
         }.get(str(session.get("mode") or "").lower(), session.get("mode") or "-")
         self.summary_vars["mode"].set(mode_label)
         self.summary_vars["online"].set(str(summary.get("online_nodes", 0)))
