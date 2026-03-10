@@ -1,4 +1,4 @@
-﻿# NeuroLab Hub——可编排专家模型的实验室多模态智能中枢 (V3.0.7)
+# NeuroLab Hub——可编排专家模型的实验室多模态智能中枢 (V3.0.8)
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Windows Desktop](https://img.shields.io/badge/Delivery-Windows%20Desktop-1f6feb)](docs/NeuroLab_Hub_用户手册.md)
@@ -41,6 +41,11 @@ NeuroLab Hub 通过统一 AI 后端接口兼容多类模型服务。除了本地
 桌面主界面已将原本跳屏刷新的日志区重构为结构化“系统事件流”，支持按时间、级别、模块和摘要查看系统运行状态。PC 与 Pi 两端均支持启动自检、依赖检测与自动安装，尽可能降低普通用户首次使用门槛。
 
 ## 2. 更新日志
+
+### [V3.0.8] 顶部中文文案修复与发布热修复版
+- 修复桌面主界面顶部快捷栏、状态徽标和模式摘要中的问号乱码
+- 修复内置“软件说明”“版权信息”文档路径占位错误，确保打包后入口可正常打开
+- 重新构建并验收桌面 EXE，准备新的发布包
 
 ### [V3.0.7] 仓库收口、文档体系与发布命名统一版
 - 以软件产品口径重写 README、用户手册、软件说明书、软著材料、测试实例和测试报告

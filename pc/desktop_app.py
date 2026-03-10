@@ -369,14 +369,14 @@ class DesktopApp:
         action_strip = ttk.Frame(hero_right, style="Panel.TFrame")
         action_strip.grid(row=1, column=0, sticky="e", pady=(12, 0))
         actions = [
-            ("??", self._toggle_left_panel),
-            ("??", self._run_self_check),
-            ("??", self._show_expert_window),
-            ("???", self._show_knowledge_base_window),
-            ("????", self._show_cloud_backend_window),
-            ("???", self._show_training_window),
-            ("??", self._show_manual_window),
-            ("??", self._show_about_and_copyright),
+            ("侧栏", self._toggle_left_panel),
+            ("自检", self._run_self_check),
+            ("专家", self._show_expert_window),
+            ("知识库", self._show_knowledge_base_window),
+            ("模型服务", self._show_cloud_backend_window),
+            ("训练台", self._show_training_window),
+            ("手册", self._show_manual_window),
+            ("关于", self._show_about_and_copyright),
         ]
         for column in range(len(actions)):
             action_strip.columnconfigure(column, weight=1)
@@ -757,12 +757,12 @@ class DesktopApp:
         phase = str(session.get("phase") or "idle").lower()
         status_message = str(session.get("status_message") or "").strip()
         if phase == "running":
-            badge_text = "???"
+            badge_text = "运行中"
         elif phase == "starting":
-            badge_text = "???"
+            badge_text = "启动中"
         else:
-            badge_text = "??"
-        self.hero_var.set(status_message or "????? NeuroLab Hub ?????")
+            badge_text = "待机"
+        self.hero_var.set(status_message or "欢迎使用 NeuroLab Hub 主控制台")
         self.session_var.set(badge_text)
         self._update_session_badge()
         self._render_summary(state)
@@ -786,9 +786,9 @@ class DesktopApp:
         summary = state.get("summary", {})
         session = state.get("session", {})
         mode_label = {
-            "idle": "???",
-            "camera": "????",
-            "websocket": "Pi ??",
+            "idle": "待机",
+            "camera": "单机监控",
+            "websocket": "Pi 多节点",
         }.get(str(session.get("mode") or "").lower(), session.get("mode") or "-")
         self.summary_vars["mode"].set(mode_label)
         self.summary_vars["online"].set(str(summary.get("online_nodes", 0)))

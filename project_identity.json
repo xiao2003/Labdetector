@@ -13,6 +13,6 @@
   "desktop_exe": "NeuroLab Hub.exe",
   "llm_exe": "NeuroLab Hub LLM.exe",
   "vision_exe": "NeuroLab Hub Vision.exe",
-  "manual_doc": "docs/NeuroLab_Hub_????.md",
-  "copyright_doc": "docs/NeuroLab_Hub_????.md"
+  "manual_doc": "docs/NeuroLab_Hub_软件说明书.md",
+  "copyright_doc": "docs/NeuroLab_Hub_版权声明.md"
 }
