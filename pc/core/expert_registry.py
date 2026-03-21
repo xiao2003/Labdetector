@@ -14,11 +14,14 @@ class ExpertDefinition:
     display_name: str
     category: str
     description: str
+    trigger_mode: str = "resident"
+    stream_group: str = "default"
     knowledge_required: bool = False
     model_required: bool = False
     model_hint: str = ""
     knowledge_hint: str = ""
     media_types: Tuple[str, ...] = ("text",)
+    voice_keywords: Tuple[str, ...] = ()
 
     @property
     def scope(self) -> str:
@@ -33,16 +36,21 @@ _EXPERTS: List[ExpertDefinition] = [
     ExpertDefinition(
         code="equipment_ocr_expert",
         module="pc.experts.equipment_ocr_expert",
+        trigger_mode="voice",
+        stream_group="ocr_video",
         display_name="设备 OCR 识别专家",
         category="仪表读数",
         description="识别实验仪表、屏幕或铭牌文字，输出读数与状态提示。",
         model_required=True,
         model_hint="建议导入 OCR 识别模型或设备读数数据集。",
         media_types=("image", "video", "text"),
+        voice_keywords=("ocr", "读数", "识别设备", "仪表", "读一下", "屏幕内容", "标签内容"),
     ),
     ExpertDefinition(
         code="lab_qa_expert",
         module="pc.experts.lab_qa_expert",
+        trigger_mode="voice",
+        stream_group="voice_qa",
         display_name="实验室智能问答专家",
         category="问答检索",
         description="结合公共背景知识与实验问答知识库，回答实验流程、制度与历史问题。",
@@ -51,30 +59,39 @@ _EXPERTS: List[ExpertDefinition] = [
         model_hint="建议配置本地或云端大模型。",
         knowledge_hint="建议导入实验室制度、SOP、操作手册和问答资料。",
         media_types=("audio", "video", "text"),
+        voice_keywords=("问答", "什么", "为什么", "如何", "介绍", "说明", "系统状态", "帮我看"),
     ),
     ExpertDefinition(
         code="nanofluidics.microfluidic_contact_angle_expert",
         module="pc.experts.nanofluidics.microfluidic_contact_angle_expert",
+        trigger_mode="voice",
+        stream_group="nanofluidics_video",
         display_name="微流控接触角分析专家",
         category="微纳流体",
         description="分析液滴接触角与边界变化，辅助材料润湿性评估。",
         model_required=True,
         model_hint="建议导入接触角分析样本或标定模型。",
         media_types=("image", "video", "text"),
+        voice_keywords=("接触角", "润湿", "液滴", "微流控", "微纳", "分析液滴"),
     ),
     ExpertDefinition(
         code="nanofluidics.nanofluidics_multimodel_expert",
         module="pc.experts.nanofluidics.nanofluidics_multimodel_expert",
+        trigger_mode="voice",
+        stream_group="nanofluidics_video",
         display_name="微纳流体多模态专家",
         category="微纳流体",
         description="对芯片流场、气泡和多物理量变化进行综合研判。",
         model_required=True,
         model_hint="建议导入微流控实验模型或标定参数。",
         media_types=("image", "video", "text"),
+        voice_keywords=("微纳", "微流体", "芯片流场", "气泡", "多模态分析"),
     ),
     ExpertDefinition(
         code="safety.chem_safety_expert",
         module="pc.experts.safety.chem_safety_expert",
+        trigger_mode="voice",
+        stream_group="chem_video",
         display_name="危化品识别提醒专家",
         category="安全合规",
         description="识别危化品容器与标签，输出禁忌、风险和防护建议。",
@@ -83,10 +100,13 @@ _EXPERTS: List[ExpertDefinition] = [
         model_hint="建议导入危化品识别模型或标签样本。",
         knowledge_hint="建议导入危化品台账、MSDS 与应急处置资料。",
         media_types=("image", "video", "text"),
+        voice_keywords=("化学品", "危化品", "试剂", "药品", "瓶子里是什么", "识别这个化学品", "识别试剂"),
     ),
     ExpertDefinition(
         code="safety.equipment_operation_expert",
         module="pc.experts.safety.equipment_operation_expert",
+        trigger_mode="resident",
+        stream_group="safety_video",
         display_name="设备操作合规专家",
         category="安全合规",
         description="检查实验设备操作过程是否符合规范。",
@@ -99,6 +119,8 @@ _EXPERTS: List[ExpertDefinition] = [
     ExpertDefinition(
         code="safety.flame_fire_expert",
         module="pc.experts.safety.flame_fire_expert",
+        trigger_mode="resident",
+        stream_group="safety_video",
         display_name="明火与热源风险专家",
         category="安全合规",
         description="识别明火、热源和烟雾风险，给出处置提醒。",
@@ -109,6 +131,8 @@ _EXPERTS: List[ExpertDefinition] = [
     ExpertDefinition(
         code="safety.general_safety_expert",
         module="pc.experts.safety.general_safety_expert",
+        trigger_mode="resident",
+        stream_group="safety_video",
         display_name="通用安全行为专家",
         category="安全合规",
         description="识别通用实验室违规行为，如分心、误操作和危险接近。",
@@ -119,6 +143,8 @@ _EXPERTS: List[ExpertDefinition] = [
     ExpertDefinition(
         code="safety.hand_pose_expert",
         module="pc.experts.safety.hand_pose_expert",
+        trigger_mode="resident",
+        stream_group="safety_video",
         display_name="手部姿态估计专家",
         category="动作识别",
         description="分析抓取、伸手和精细操作姿态。",
@@ -129,6 +155,8 @@ _EXPERTS: List[ExpertDefinition] = [
     ExpertDefinition(
         code="safety.integrated_lab_safety_expert",
         module="pc.experts.safety.integrated_lab_safety_expert",
+        trigger_mode="resident",
+        stream_group="safety_video",
         display_name="综合实验室安全专家",
         category="安全合规",
         description="融合 PPE、热源、危化和行为信号，输出综合安全结论。",
@@ -141,6 +169,8 @@ _EXPERTS: List[ExpertDefinition] = [
     ExpertDefinition(
         code="safety.ppe_expert",
         module="pc.experts.safety.ppe_expert",
+        trigger_mode="resident",
+        stream_group="safety_video",
         display_name="个体防护装备专家",
         category="安全合规",
         description="检查实验服、护目镜、口罩和手套穿戴情况。",
@@ -151,6 +181,8 @@ _EXPERTS: List[ExpertDefinition] = [
     ExpertDefinition(
         code="safety.spill_detection_expert",
         module="pc.experts.safety.spill_detection_expert",
+        trigger_mode="resident",
+        stream_group="safety_video",
         display_name="液体泄漏识别专家",
         category="安全合规",
         description="识别台面、地面液体泄漏与残留，给出清理与隔离建议。",

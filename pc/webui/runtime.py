@@ -61,6 +61,8 @@ from pc.core.expert_closed_loop import (
     parse_pi_expert_packet,
 )
 from pc.tools.model_downloader import check_and_download_vosk
+from pc.tools.model_downloader import check_and_download_sensevoice
+from pc.tools.gpu_runtime_helper import detect_gpu_environment, install_cuda_enabled_pytorch
 from pc.tools.version_manager import get_app_version
 from pc.knowledge_base.rag_engine import knowledge_manager
 
@@ -98,6 +100,15 @@ TRAINING_DEPENDENCY_MAP = {
     "peft": "peft",
     "ultralytics": "ultralytics",
 }
+VOICE_AI_DEPENDENCY_MAP = {
+    "funasr": "funasr",
+    "modelscope": "modelscope",
+    "onnxruntime": "onnxruntime",
+    "soundfile": "soundfile",
+    "torch": "torch",
+    "torchaudio": "torchaudio",
+    "openwakeword": "openwakeword",
+}
 
 
 def _now_text() -> str:
@@ -110,6 +121,7 @@ class DashboardMultiPiManager:
         pi_dict: Dict[str, str],
         log_info: Callable[[str], None],
         log_error: Callable[[str], None],
+        selected_model: str = "",
         archive_event: Optional[Callable[..., Any]] = None,
     ) -> None:
         from pc.communication.multi_ws_manager import MultiPiManager as BaseMultiPiManager
@@ -127,11 +139,16 @@ class DashboardMultiPiManager:
         self.pending_result_acks = self._base.pending_result_acks
         self.ack_timeout = self._base.ack_timeout
         self.ack_retries = self._base.ack_retries
+        self.event_queue = self._base.event_queue
+        self.event_worker_count = self._base.event_worker_count
+        self.event_cooldown = self._base.event_cooldown
+        self.recent_policy_hits = self._base.recent_policy_hits
         self.audit_log_dir = self._base.audit_log_dir
         self._write_audit = self._base._write_audit
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.log_info = log_info
         self.log_error = log_error
+        self.selected_model = str(selected_model or "").strip()
         self.archive_event = archive_event
         self.node_latest_results: Dict[str, Dict[str, Any]] = {
             pid: {"text": "", "event_name": "", "timestamp": 0.0}
@@ -141,31 +158,138 @@ class DashboardMultiPiManager:
     async def _send_with_ack(self, ws: Any, pi_id: str, result: ExpertResult) -> bool:
         cmd = build_expert_result_command(result)
         for _ in range(self.ack_retries + 1):
-            await ws.send(cmd)
             self.pending_result_acks[(pi_id, result.event_id)] = time.time()
+            await self.send_queues[pi_id].put(cmd)
             await asyncio.sleep(self.ack_timeout)
             if (pi_id, result.event_id) not in self.pending_result_acks:
                 return True
         return False
 
+    async def _dispatch_expert_result(self, pi_id: str, event_name: str, result: ExpertResult) -> None:
+        if not self.running or self.node_status.get(pi_id) != "online":
+            return
+        acked = await self._send_with_ack(None, pi_id, result)
+        self._write_audit(
+            f"node={pi_id} event={event_name} event_id={result.event_id} acked={acked} text={result.text}"
+        )
+        if not acked:
+            self.log_error(f"节点 [{pi_id}] 对专家结论未确认 ACK: {result.event_id}")
+
+    def _should_skip_event(self, pi_id: str, event: Any) -> bool:
+        expert_code = str(event.expert_code or "").strip() or "|".join(expert_manager.closed_loop_codes_for_event(event.event_name))
+        key = (str(pi_id), expert_code or str(event.event_name or "").strip())
+        now = time.time()
+        last_ts = float(self.recent_policy_hits.get(key, 0.0) or 0.0)
+        if now - last_ts < self.event_cooldown:
+            return True
+        self.recent_policy_hits[key] = now
+        return False
+
+    async def _enqueue_edge_event(self, pi_id: str, event: Any) -> None:
+        if self._should_skip_event(pi_id, event):
+            self.log_info(f"节点 [{pi_id}] 同类策略事件冷却中，已跳过: {event.event_name}")
+            return
+        try:
+            self.event_queue.put_nowait((pi_id, event))
+        except asyncio.QueueFull:
+            self.log_error(f"节点 [{pi_id}] 边缘事件队列已满，已丢弃: {event.event_name}")
+
+    async def _event_worker(self) -> None:
+        from pc.voice.voice_interaction import get_voice_interaction
+
+        while self.running or not self.event_queue.empty():
+            try:
+                pi_id, event = await asyncio.wait_for(self.event_queue.get(), timeout=0.5)
+            except asyncio.TimeoutError:
+                continue
+            try:
+                self.log_info(f"收到节点 [{pi_id}] 边缘高优告警: {event.event_name} ({event.event_id})")
+                agent = get_voice_interaction()
+                if agent and agent.is_active:
+                    self.log_info("语音助手正在活跃，安防播报暂缓")
+                    continue
+
+                allowed_codes = []
+                if event.expert_code:
+                    allowed_codes = [event.expert_code]
+                else:
+                    allowed_codes = expert_manager.closed_loop_codes_for_event(event.event_name)
+
+                context = {
+                    "event_desc": event.event_name,
+                    "detected_classes": event.detected_classes,
+                    "metrics": event.capture_metrics,
+                    "expert_code": event.expert_code,
+                    "policy_name": event.policy_name,
+                    "policy_action": event.policy_action,
+                    "closed_loop_llm": True,
+                    "source": "pi_websocket",
+                    "model": self.selected_model,
+                }
+                tts_text = await asyncio.to_thread(
+                    expert_manager.route_and_analyze,
+                    event.event_name,
+                    event.frame,
+                    context,
+                    allowed_expert_codes=allowed_codes,
+                    trigger_mode=None if allowed_codes else "resident",
+                )
+                if tts_text:
+                    self.node_latest_results[pi_id] = {
+                        "text": tts_text,
+                        "event_name": event.event_name,
+                        "timestamp": time.time(),
+                    }
+                    if self.archive_event is not None:
+                        try:
+                            self.archive_event(
+                                "expert_result",
+                                {
+                                    "node_id": pi_id,
+                                    "event_id": event.event_id,
+                                    "event_name": event.event_name,
+                                    "result_text": tts_text,
+                                },
+                                title=f"专家结论 {event.event_name}",
+                            )
+                        except Exception:
+                            pass
+                    result = ExpertResult(
+                        event_id=event.event_id,
+                        text=tts_text,
+                        severity="warning",
+                        speak=self.node_caps.get(pi_id, {}).get("has_speaker", False),
+                    )
+                    await self._dispatch_expert_result(pi_id, event.event_name, result)
+            except Exception as exc:
+                self.log_error(f"节点 [{pi_id}] 边缘事件处理失败: {exc}")
+            finally:
+                self.event_queue.task_done()
+
     async def _node_handler(self, pi_id: str, ip: str) -> None:
         from pc.core.expert_manager import expert_manager
         from pc.voice.voice_interaction import get_voice_interaction
 
-        uri = f"ws://{ip}:8001"
+        endpoint = str(ip).strip()
+        if endpoint.startswith("ws://") or endpoint.startswith("wss://"):
+            uri = endpoint
+        elif ":" in endpoint:
+            uri = f"ws://{endpoint}"
+        else:
+            uri = f"ws://{endpoint}:8001"
         while self.running:
             try:
                 self.node_status[pi_id] = "connecting"
                 async with websockets.connect(uri, ping_interval=None) as ws:
                     self.node_status[pi_id] = "online"
                     self.log_info(f"节点 [{pi_id}] ({ip}) 握手成功")
-                    await ws.send(f"CMD:SET_FPS:{self.target_fps}")
+                    await self.send_queues[pi_id].put(f"CMD:SET_FPS:{self.target_fps}")
 
                     sync_data = {"wake_word": get_config("voice_interaction.wake_word", "小爱同学")}
-                    await ws.send(f"CMD:SYNC_CONFIG:{json.dumps(sync_data, ensure_ascii=False)}")
+                    await self.send_queues[pi_id].put(f"CMD:SYNC_CONFIG:{json.dumps(sync_data, ensure_ascii=False)}")
 
                     policies = expert_manager.get_aggregated_edge_policy()
-                    await ws.send(f"CMD:SYNC_POLICY:{json.dumps(policies, ensure_ascii=False)}")
+                    await self.send_queues[pi_id].put(f"CMD:SYNC_POLICY:{json.dumps(policies, ensure_ascii=False)}")
                     self.log_info(f"已向节点 [{pi_id}] 下发 {len(policies['event_policies'])} 条专家策略")
 
                     async def recv_stream_task() -> None:
@@ -204,22 +328,39 @@ class DashboardMultiPiManager:
                                         expired = self.recent_event_queue.popleft()
                                         self.recent_event_ids.discard(expired)
 
+                                    await self._enqueue_edge_event(pi_id, event)
+                                    continue
+
                                     self.log_info(f"收到节点 [{pi_id}] 边缘高优告警: {event.event_name} ({event.event_id})")
                                     agent = get_voice_interaction()
                                     if agent and agent.is_active:
                                         self.log_info("语音助手正在活跃，安防播报暂缓")
                                         continue
 
+                                    allowed_codes = []
+                                    if event.expert_code:
+                                        allowed_codes = [event.expert_code]
+                                    else:
+                                        allowed_codes = expert_manager.closed_loop_codes_for_event(event.event_name)
+
                                     context = {
                                         "event_desc": event.event_name,
                                         "detected_classes": event.detected_classes,
                                         "metrics": event.capture_metrics,
+                                        "expert_code": event.expert_code,
+                                        "policy_name": event.policy_name,
+                                        "policy_action": event.policy_action,
+                                        "closed_loop_llm": True,
+                                        "source": "pi_websocket",
+                                        "model": self.selected_model,
                                     }
                                     tts_text = await asyncio.to_thread(
                                         expert_manager.route_and_analyze,
                                         event.event_name,
                                         event.frame,
                                         context,
+                                        allowed_expert_codes=allowed_codes,
+                                        trigger_mode=None if allowed_codes else "resident",
                                     )
                                     if tts_text:
                                         self.node_latest_results[pi_id] = {
@@ -247,7 +388,7 @@ class DashboardMultiPiManager:
                                             severity="warning",
                                             speak=self.node_caps.get(pi_id, {}).get("has_speaker", False),
                                         )
-                                        acked = await self._send_with_ack(ws, pi_id, result)
+                                        asyncio.create_task(self._dispatch_expert_result(ws, pi_id, event.event_name, result)); acked = True
                                         self._write_audit(
                                             f"node={pi_id} event={event.event_name} event_id={event.event_id} acked={acked} text={tts_text}"
                                         )
@@ -291,6 +432,8 @@ class DashboardMultiPiManager:
                 "event_name": "语音交互",
                 "timestamp": time.time(),
             }
+            preview = message if len(message) <= 120 else f"{message[:117]}..."
+            self.log_info(f"已回传节点 {pi_id} 语音播报: {preview}")
             self._write_audit(f"node={pi_id} voice_command={cmd_text} reply={message}")
             self.send_to_node(pi_id, f"CMD:TTS:{message}")
 
@@ -306,6 +449,7 @@ class DashboardMultiPiManager:
         self.running = True
         self._base.running = True
         tasks = [self._node_handler(pid, ip) for pid, ip in self.pi_dict.items()]
+        tasks.extend(self._event_worker() for _ in range(self.event_worker_count))
         await asyncio.gather(*tasks)
 
     def send_to_node(self, pi_id: str, text: str) -> None:
@@ -320,6 +464,14 @@ class DashboardMultiPiManager:
     def stop(self) -> None:
         self.running = False
         self._base.running = False
+        self.pending_result_acks.clear()
+        self.recent_policy_hits.clear()
+        while not self.event_queue.empty():
+            try:
+                self.event_queue.get_nowait()
+                self.event_queue.task_done()
+            except Exception:
+                break
 
 
 class LabDetectorRuntime:
@@ -340,12 +492,14 @@ class LabDetectorRuntime:
 
         self.local_frame: Optional[np.ndarray] = None
         self.latest_inference_result: Dict[str, Any] = {"text": "", "timestamp": 0.0}
+        self.last_inference_log_ts = 0.0
         self.inference_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=1)
 
         self.capture: Optional[cv2.VideoCapture] = None
         self.camera_thread: Optional[threading.Thread] = None
         self.inference_thread: Optional[threading.Thread] = None
         self.manager_thread: Optional[threading.Thread] = None
+        self.background_init_thread: Optional[threading.Thread] = None
         self.stop_event = threading.Event()
 
         self.topology: Dict[str, str] = {}
@@ -489,6 +643,17 @@ class LabDetectorRuntime:
             "logs": list(self.logs),
         }
 
+    def get_streams_state(self) -> Dict[str, Any]:
+        return {
+            "session": {
+                "active": self.session_active,
+                "phase": self.session_phase,
+                "mode": self.mode,
+                "status_message": self.status_message,
+            },
+            "streams": self._build_streams(),
+        }
+
     def run_self_check(
         self,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
@@ -499,6 +664,8 @@ class LabDetectorRuntime:
             ("dependencies", "Python 依赖环境", self._check_dependencies),
             ("gpu", "GPU 算力环境", self._check_gpu),
             ("training_runtime", "训练运行时环境", self._check_training_runtime),
+            ("voice_ai_runtime", "增强语音识别运行时", self._check_voice_ai_runtime),
+            ("sensevoice", "SenseVoice 模型资产", self._check_sensevoice_assets),
             ("vosk", "离线语音模型资产", self._check_vosk_assets),
             ("rag", "实验室知识库目录 (RAG)", self._check_rag_assets),
         ]
@@ -564,6 +731,161 @@ class LabDetectorRuntime:
         self.self_check_results = results
         self.self_check_has_run = True
         return results
+
+    def run_voice_test(self) -> Dict[str, Any]:
+        self._log_info("开始执行本地语音测试")
+
+        mic_result = self._check_microphone()
+        raw_output = str(mic_result.get("raw_output") or "").strip()
+        for line in raw_output.splitlines():
+            self._log_raw_line(line, level="INFO" if "[ERROR]" not in line else "ERROR")
+        if str(mic_result.get("status") or "").lower() == "error":
+            return {
+                "status": "error",
+                "summary": "本地语音测试失败",
+                "detail": str(mic_result.get("detail") or mic_result.get("summary") or "麦克风链路不可用。"),
+            }
+
+        try:
+            import pc.voice.voice_interaction as voice_module
+
+            original_console_info = voice_module.console_info
+            original_console_error = voice_module.console_error
+
+            def _voice_info(message: str) -> None:
+                text = str(message or "").strip()
+                if text:
+                    self._log_info(text)
+
+            def _voice_error(message: str) -> None:
+                text = str(message or "").strip()
+                if text:
+                    self._log_error(text)
+
+            voice_module.console_info = _voice_info
+            voice_module.console_error = _voice_error
+
+            get_voice_interaction = voice_module.get_voice_interaction
+            try:
+                agent = get_voice_interaction()
+                if agent is None:
+                    self._log_error("语音测试未能创建语音助手实例")
+                    return {
+                        "status": "error",
+                        "summary": "本地语音测试失败",
+                        "detail": "未能创建语音助手实例，请检查语音依赖是否完整。",
+                    }
+
+                wake_word = str(getattr(getattr(agent, "config", None), "wake_word", "") or "").strip()
+                self._log_info("正在尝试启动本地语音助手")
+                agent.set_ai_backend(self.ai_backend, self.selected_model)
+                agent.open_runtime_session(mode="voice_test", source="pc_local", metadata={"test": True})
+
+                started_here = False
+                if not getattr(agent, "is_running", False):
+                    started_here = bool(agent.start())
+                if not getattr(agent, "is_running", False):
+                    self._log_error("本地语音助手未能启动，请检查麦克风占用或 Windows 录音权限")
+                    return {
+                        "status": "warn",
+                        "summary": "本地语音链路未完全启动",
+                        "detail": "麦克风基础检测已通过，但语音助手未能真正启动。请检查麦克风是否被其他程序占用，以及 Windows 录音权限是否允许 Python/PyCharm 访问。",
+                    }
+
+                self._log_info(f"本地语音助手已启动，当前唤醒词：{wake_word or '未配置'}")
+                self._log_info(f"请先在 12 秒内说出唤醒词：{wake_word or '未配置'}")
+
+                wake_detected = False
+                wake_deadline = time.time() + 12.0
+                while time.time() < wake_deadline:
+                    if getattr(agent, "is_active", False):
+                        wake_detected = True
+                        break
+                    time.sleep(0.2)
+
+                if not wake_detected:
+                    self._log_error("本地语音测试未在限定时间内检测到唤醒词")
+                    return {
+                        "status": "warn",
+                        "summary": "本地语音已启动，但未检测到唤醒词",
+                        "detail": f"语音助手已启动，但在 12 秒内没有识别到唤醒词“{wake_word or '未配置'}”。请优先检查麦克风输入音量、环境噪音，以及唤醒词是否与当前配置一致。",
+                    }
+
+                self._log_info("本地语音测试已检测到唤醒词")
+                self._log_info("请在 15 秒内继续说出一条测试指令，例如“介绍当前系统状态”")
+
+                command_text = ""
+                answer_text = ""
+                command_deadline = time.time() + 15.0
+                while time.time() < command_deadline:
+                    for row in reversed(self.logs):
+                        text = str(row.get("text") or "")
+                        if not command_text and "收到语音输入" in text:
+                            command_text = text
+                        if not answer_text and "AI 回答" in text:
+                            answer_text = text
+                        if command_text and answer_text:
+                            break
+                    if command_text and answer_text:
+                        break
+                    time.sleep(0.2)
+
+                if command_text and answer_text:
+                    playback_wait = max(3.0, min(10.0, len(answer_text) / 10.0))
+                    self._log_info(f"等待 {playback_wait:.1f} 秒以完成语音播报")
+                    playback_deadline = time.time() + playback_wait
+                    while time.time() < playback_deadline:
+                        interrupted = False
+                        for row in reversed(self.logs):
+                            text = str(row.get("text") or "")
+                            if "已停止语音播报" in text:
+                                interrupted = True
+                                break
+                        if interrupted:
+                            self._log_info("检测到停止播报指令，提前结束等待")
+                            break
+                        time.sleep(0.2)
+                    self._log_info("本地语音测试已完成唤醒、识别和应答")
+                    return {
+                        "status": "pass",
+                        "summary": "本地语音完整链路测试通过",
+                        "detail": f"{command_text}\n{answer_text}",
+                    }
+
+                if command_text:
+                    self._log_error("本地语音已识别到测试指令，但尚未收到 AI 应答")
+                    return {
+                        "status": "warn",
+                        "summary": "已识别到语音指令，但未完成应答",
+                        "detail": command_text,
+                    }
+
+                self._log_error("本地语音已唤醒，但未识别到后续测试指令")
+                return {
+                    "status": "warn",
+                    "summary": "已检测到唤醒词，但未识别到后续指令",
+                    "detail": "语音助手已经进入唤醒状态，但在等待窗口内没有识别到后续指令。请说得更近一些，或适当提高麦克风输入音量。",
+                }
+            finally:
+                try:
+                    if 'started_here' in locals() and started_here and agent is not None:
+                        agent.stop()
+                except Exception:
+                    pass
+                try:
+                    if 'agent' in locals() and agent is not None:
+                        agent.close_runtime_session()
+                except Exception:
+                    pass
+                voice_module.console_info = original_console_info
+                voice_module.console_error = original_console_error
+        except Exception as exc:
+            self._log_error(f"本地语音测试异常: {exc}")
+            return {
+                "status": "error",
+                "summary": "本地语音测试失败",
+                "detail": str(exc),
+            }
 
 
 
@@ -756,6 +1078,46 @@ class LabDetectorRuntime:
             "raw_output": "\n".join(logs),
         }
 
+    def _check_voice_ai_runtime(self) -> Dict[str, Any]:
+        auto_install_voice_ai = bool(get_config("self_check.pc_auto_install_voice_ai", True))
+        logs: List[str] = []
+        missing_voice_ai = self._missing_dependencies(VOICE_AI_DEPENDENCY_MAP)
+
+        target_python = resolve_training_python_executable()
+        runtime_env = build_training_python_env(Path(target_python)) if target_python else None
+        install_target = install_target_for_training_packages()
+
+        if missing_voice_ai and auto_install_voice_ai:
+            install_report = self._install_python_packages(
+                missing_voice_ai,
+                "Voice AI dependencies",
+                python_exe=Path(target_python) if target_python else None,
+                env=runtime_env,
+                install_target=install_target,
+            )
+            logs.extend(install_report["logs"])
+
+        missing_voice_ai = self._missing_dependencies(VOICE_AI_DEPENDENCY_MAP)
+        ready_count = len(VOICE_AI_DEPENDENCY_MAP) - len(missing_voice_ai)
+        logs.append(
+            f"[INFO] Voice AI dependency check finished: {ready_count}/{len(VOICE_AI_DEPENDENCY_MAP)} ready."
+        )
+
+        if missing_voice_ai:
+            return {
+                "status": "warn",
+                "summary": f"Voice AI 缺少 {len(missing_voice_ai)} 项依赖",
+                "detail": "Missing voice AI dependencies: " + ", ".join(missing_voice_ai),
+                "raw_output": "\n".join(logs),
+            }
+
+        return {
+            "status": "pass",
+            "summary": "增强语音识别运行时已就绪",
+            "detail": "FunASR / SenseVoice 运行时依赖可用。",
+            "raw_output": "\n".join(logs),
+        }
+
     def _ensure_training_dependencies_ready(self) -> None:
         self._log_raw_line("[INFO] Checking training dependencies on demand before starting the job.")
         missing_training, probe_logs, probe = self._missing_dependencies_in_training_env(TRAINING_DEPENDENCY_MAP)
@@ -820,6 +1182,59 @@ class LabDetectorRuntime:
             "summary": summary,
             "detail": output or "未返回输出",
             "raw_output": output or "[WARN] GPU 检查脚本未返回输出",
+        }
+
+    def _check_gpu(self) -> Dict[str, Any]:
+        report = detect_gpu_environment()
+        details = dict(report.get("details") or {})
+        logs = list(report.get("logs") or [])
+
+        auto_install = bool(get_config("self_check.pc_auto_install_gpu_runtime", True))
+        auto_install_on_nvidia = bool(get_config("gpu_runtime.auto_install_on_nvidia", True))
+        cuda_packages_raw = str(get_config("gpu_runtime.pytorch_cuda_packages", "torch,torchvision,torchaudio"))
+        cuda_packages = [item.strip() for item in cuda_packages_raw.split(",") if item.strip()]
+        index_url = str(get_config("gpu_runtime.pytorch_cuda_index_url", "https://download.pytorch.org/whl/cu124")).strip()
+
+        if details.get("can_auto_install_cuda_torch") and auto_install and auto_install_on_nvidia:
+            logs.append("[INFO] 检测到 NVIDIA GPU，但当前 PyTorch 仍为 CPU 运行时，开始自动补齐 CUDA 版 PyTorch。")
+            install_report = install_cuda_enabled_pytorch(index_url, cuda_packages)
+            logs.append(f"[INFO] 安装命令: {install_report.get('command', '')}")
+            for line in list(install_report.get("logs") or []):
+                logs.append(f"[INFO] {line}")
+            if install_report.get("ok"):
+                logs.append("[INFO] CUDA 版 PyTorch 安装完成，正在重新检测 GPU 状态。")
+                report = detect_gpu_environment()
+                details = dict(report.get("details") or {})
+                logs.extend(list(report.get("logs") or []))
+            else:
+                logs.append("[WARN] CUDA 版 PyTorch 自动安装未完成，将继续使用 CPU。")
+
+        if details.get("torch_cuda_available"):
+            status = "pass"
+            summary = "检测到可用 GPU"
+            detail = details.get("nvidia_gpu_name") or "CUDA 运行时可用"
+        elif details.get("needs_cuda_torch"):
+            status = "warn"
+            summary = "检测到 NVIDIA GPU，但仍在使用 CPU 版 PyTorch"
+            detail = (
+                f"NVIDIA GPU: {details.get('nvidia_gpu_name') or '未知'}；"
+                "可在联网环境下自动安装 CUDA 版 PyTorch，或手动执行官方安装命令。"
+            )
+            logs.append(f"[INFO] 建议使用官方 PyTorch CUDA 源: {index_url}")
+        elif details.get("needs_driver"):
+            status = "warn"
+            summary = "未检测到可用 CUDA，将继续使用 CPU"
+            detail = "当前环境未发现可用 NVIDIA 驱动或 GPU。若设备支持 NVIDIA GPU，请先安装官方驱动。"
+        else:
+            status = "warn"
+            summary = "未检测到可用 CUDA，将继续使用 CPU"
+            detail = "当前环境未发现可用 GPU / CUDA 运行时。"
+
+        return {
+            "status": status,
+            "summary": summary,
+            "detail": detail,
+            "raw_output": "\n".join(logs) if logs else "[WARN] GPU 检查未返回输出",
         }
 
     def _check_microphone(self) -> Dict[str, Any]:
@@ -890,6 +1305,60 @@ class LabDetectorRuntime:
         return {
             "status": "pass" if result_holder["ready"] else "warn",
             "summary": "已自动补齐离线语音模型" if result_holder["ready"] else "离线语音模型尚未就绪",
+            "detail": str(model_root),
+            "raw_output": output,
+        }
+
+    def _check_sensevoice_assets(self) -> Dict[str, Any]:
+        model_root = Path(resource_path("pc/voice/models/SenseVoiceSmall"))
+        config_file = model_root / "configuration.json"
+        if config_file.exists():
+            return {
+                "status": "pass",
+                "summary": "SenseVoice 模型已就绪",
+                "detail": str(model_root),
+                "raw_output": f"[INFO] 已检测到 SenseVoice 模型目录: {model_root}",
+            }
+
+        buffer = io.StringIO()
+        result_holder: Dict[str, Any] = {"ready": False, "error": ""}
+
+        def worker() -> None:
+            try:
+                with redirect_stdout(buffer), redirect_stderr(buffer):
+                    result_holder["ready"] = check_and_download_sensevoice()
+            except Exception as exc:
+                result_holder["error"] = str(exc)
+
+        thread = threading.Thread(target=worker, daemon=True, name="SenseVoiceAssetCheck")
+        thread.start()
+        thread.join(45)
+
+        output = buffer.getvalue().strip()
+        if thread.is_alive():
+            timeout_text = "[WARN] SenseVoice 模型自动补齐超时，已跳过本次下载。"
+            output = f"{output}\n{timeout_text}".strip()
+            return {
+                "status": "warn",
+                "summary": "SenseVoice 模型尚未就绪",
+                "detail": str(model_root),
+                "raw_output": output,
+            }
+
+        if result_holder["error"]:
+            output = f"{output}\n[ERROR] {result_holder['error']}".strip()
+            return {
+                "status": "error",
+                "summary": "SenseVoice 模型补齐失败",
+                "detail": str(model_root),
+                "raw_output": output,
+            }
+
+        if not output:
+            output = "[INFO] 已完成 SenseVoice 模型资产检查。"
+        return {
+            "status": "pass" if result_holder["ready"] else "warn",
+            "summary": "SenseVoice 模型已自动补齐" if result_holder["ready"] else "SenseVoice 模型尚未就绪",
             "detail": str(model_root),
             "raw_output": output,
         }
@@ -1081,6 +1550,7 @@ class LabDetectorRuntime:
             self.started_at = time.time()
             self.stop_event = threading.Event()
             self.latest_inference_result = {"text": "", "timestamp": 0.0}
+            self.last_inference_log_ts = 0.0
             self.local_frame = None
             self.topology = {}
             self.manager = None
@@ -1090,8 +1560,6 @@ class LabDetectorRuntime:
             self._open_archive_session()
             try:
                 self._configure_backend()
-                self._ensure_scheduler()
-                self._ensure_voice_agent(start_local_microphone=self.mode == "camera")
 
                 if self.mode == "camera":
                     self._start_camera_session_locked()
@@ -1104,6 +1572,7 @@ class LabDetectorRuntime:
                     self._start_shadow_demo_locked()
                     self.status_message = f"演示模式已启用，{self.status_message}"
 
+                self._start_background_aux_services(start_local_microphone=self.mode == "camera")
                 self.session_phase = "running"
                 self._record_archive_event(
                     "session_start",
@@ -1224,7 +1693,7 @@ class LabDetectorRuntime:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-            time.sleep(1)
+            time.sleep(0.2)
         except Exception as exc:
             self._log_error(f"尝试拉起 Ollama 服务失败: {exc}")
 
@@ -1266,6 +1735,21 @@ class LabDetectorRuntime:
         except Exception as exc:
             self._log_error(f"语音助手初始化失败: {exc}")
 
+    def _start_background_aux_services(self, *, start_local_microphone: bool) -> None:
+        def worker() -> None:
+            try:
+                self._ensure_scheduler()
+                self._ensure_voice_agent(start_local_microphone=start_local_microphone)
+            except Exception as exc:
+                self._log_error(f"后台附属模块初始化失败: {exc}")
+
+        self.background_init_thread = threading.Thread(
+            target=worker,
+            daemon=True,
+            name="RuntimeAuxInit",
+        )
+        self.background_init_thread.start()
+
     def _latest_frame_for_voice(self) -> Optional[np.ndarray]:
         if self.local_frame is not None:
             return self.local_frame
@@ -1284,6 +1768,16 @@ class LabDetectorRuntime:
             self.session_phase = "error"
             raise RuntimeError("无法打开本机摄像头")
 
+        # Lower the local camera load first to keep preview and voice interaction responsive.
+        try:
+            self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 960)
+            self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 540)
+            self.capture.set(cv2.CAP_PROP_FPS, 15)
+            if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
+                self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        except Exception:
+            pass
+
         self.camera_thread = threading.Thread(target=self._camera_capture_loop, daemon=True, name="CameraCapture")
         self.camera_thread.start()
         if self.demo_mode_enabled:
@@ -1296,29 +1790,32 @@ class LabDetectorRuntime:
     def _camera_capture_loop(self) -> None:
         read_failures = 0
         while not self.stop_event.is_set():
-            if self.capture is None:
+            capture = self.capture
+            if capture is None:
                 break
-            ok, frame = self.capture.read()
+            ok, frame = capture.read()
+            if self.stop_event.is_set():
+                break
             if not ok:
                 read_failures += 1
-                if read_failures == 1:
+                if read_failures == 1 and not self.stop_event.is_set():
                     self._log_error("摄像头读取失败，正在重试")
                 time.sleep(0.2)
                 continue
 
             read_failures = 0
             with self.lock:
-                self.local_frame = frame.copy()
+                self.local_frame = frame
 
             try:
-                self.inference_queue.put_nowait(frame.copy())
+                self.inference_queue.put_nowait(frame)
             except queue.Full:
                 try:
                     self.inference_queue.get_nowait()
                 except queue.Empty:
                     pass
                 try:
-                    self.inference_queue.put_nowait(frame.copy())
+                    self.inference_queue.put_nowait(frame)
                 except queue.Full:
                     pass
 
@@ -1329,7 +1826,8 @@ class LabDetectorRuntime:
     def _camera_inference_loop(self) -> None:
         from pc.core.expert_manager import expert_manager
 
-        interval = float(get_config("inference.interval", 5))
+        interval = float(get_config("inference.interval", 1.0))
+        event_name = str(get_config("inference.local_event_name", "综合安全巡检")).strip() or "综合安全巡检"
         last_inference = 0.0
         while not self.stop_event.is_set():
             try:
@@ -1339,10 +1837,20 @@ class LabDetectorRuntime:
             if time.time() - last_inference < interval:
                 continue
             try:
-                result = expert_manager.route_and_analyze("Motion_Alert", frame, {})
+                inference_frame = frame
+                height, width = frame.shape[:2]
+                if width > 640:
+                    scaled_height = max(1, int(height * (640.0 / width)))
+                    inference_frame = cv2.resize(frame, (640, scaled_height), interpolation=cv2.INTER_AREA)
+                resident_bundle = expert_manager.analyze_resident_frame(
+                    inference_frame,
+                    {"source": "pc_local_camera", "event_name": event_name, "mode": "camera"},
+                    media_type="video",
+                )
+                result = str(resident_bundle.get("text") or "").strip()
                 if result:
                     self.latest_inference_result = {"text": result, "timestamp": time.time()}
-                    self._record_archive_event("local_inference", {"event_name": "Motion_Alert", "result_text": result}, title="会话启动", frame=frame)
+                    self._record_archive_event("local_inference", {"event_name": event_name, "result_text": result}, title="本机巡检", frame=inference_frame)
                     self._log_info(f"本机推理结果: {result}")
                     if not (self.voice_agent and getattr(self.voice_agent, "is_active", False)):
                         try:
@@ -1350,6 +1858,13 @@ class LabDetectorRuntime:
                             speak_async(f"本地提示：{result}")
                         except Exception:
                             pass
+                else:
+                    now = time.time()
+                    neutral_text = "本机巡检中，当前未发现需要提示的明显异常。"
+                    self.latest_inference_result = {"text": neutral_text, "timestamp": now}
+                    if now - self.last_inference_log_ts >= max(interval * 4, 6.0):
+                        self._log_info(f"本机巡检已执行：事件={event_name}，当前未发现明确异常。")
+                        self.last_inference_log_ts = now
                 last_inference = time.time()
             except Exception as exc:
                 self._log_error(f"本机推理线程异常: {exc}")
@@ -1370,7 +1885,13 @@ class LabDetectorRuntime:
         else:
             self._log_info(f"已发现 {len(topology)} 个树莓派节点")
 
-        self.manager = DashboardMultiPiManager(topology, self._log_info, self._log_error, archive_event=self._record_archive_event)
+        self.manager = DashboardMultiPiManager(
+            topology,
+            self._log_info,
+            self._log_error,
+            selected_model=self.selected_model,
+            archive_event=self._record_archive_event,
+        )
         self.manager_thread = threading.Thread(target=self._manager_loop, daemon=True, name="MultiNodeManager")
         self.manager_thread.start()
 
@@ -1404,6 +1925,7 @@ class LabDetectorRuntime:
 
         self.local_frame = None
         self.latest_inference_result = {"text": "", "timestamp": 0.0}
+        self.last_inference_log_ts = 0.0
         self.topology = {}
         self.demo_sequence = []
         self.demo_index = 0
@@ -1556,7 +2078,7 @@ class LabDetectorRuntime:
         log_dir = Path(resource_path("pc/log"))
         log_dir.mkdir(parents=True, exist_ok=True)
         path = log_dir / f"{time.strftime('%Y%m%d_%H%M%S')}_web_console.log"
-        with path.open("w", encoding="utf-8") as handle:
+        with path.open("w", encoding="utf-8-sig") as handle:
             for row in self.logs:
                 rendered = row.get("rendered")
                 if rendered is not None:
@@ -1576,4 +2098,3 @@ class LabDetectorRuntime:
         exported = self.export_logs()
         if exported:
             self._log_info(f"可视化运行时日志已导出: {exported}")
-

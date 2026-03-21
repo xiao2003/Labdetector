@@ -7,12 +7,12 @@
   "description": "面向科研实验室的多节点感知、专家编排、风险预警、语音交互、知识沉淀与训练闭环一体化桌面平台。",
   "company_name_cn": "NeuroLab Hub 软件研发组",
   "company_name_en": "NeuroLab Hub Software Team",
-  "copyright_cn": "Copyright (C) 2026 NeuroLab Hub 软件研发组. All rights reserved.",
+  "copyright_cn": "Copyright (C) 2026 NeuroLab Hub 软件研发组",
   "copyright_en": "Copyright (C) 2026 NeuroLab Hub Software Team. All rights reserved.",
   "release_prefix": "NeuroLab-Hub",
   "desktop_exe": "NeuroLab Hub.exe",
   "llm_exe": "NeuroLab Hub LLM.exe",
   "vision_exe": "NeuroLab Hub Vision.exe",
-  "manual_doc": "docs/NeuroLab_Hub_软件说明书.md",
+  "manual_doc": "docs/NeuroLab_Hub_PC_PI_测试过程手册.md",
   "copyright_doc": "docs/NeuroLab_Hub_版权声明.md"
 }

@@ -1,5 +1,5 @@
-﻿param(
-  [string]$PythonExe = 'C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe',
+param(
+  [string]$PythonExe = 'C:\Users\yuhua\AppData\Local\Programs\Python\Python311\python.exe',
   [switch]$NoPause
 )
 
@@ -9,7 +9,26 @@ $LogDir = Join-Path $ProjectRoot 'tmp\build_logs'
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $LogFile = Join-Path $LogDir ("build_desktop_exe_{0}.log" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
 $TranscriptStarted = $false
-$CanPause = (-not $NoPause) -and ($Host.Name -eq "ConsoleHost") -and [string]::IsNullOrEmpty($env:CI) -and [string]::IsNullOrEmpty($env:GITHUB_ACTIONS)
+$CanPause = (-not $NoPause) -and ($Host.Name -eq 'ConsoleHost') -and [string]::IsNullOrEmpty($env:CI) -and [string]::IsNullOrEmpty($env:GITHUB_ACTIONS)
+
+function Copy-SourceTree {
+  param(
+    [Parameter(Mandatory = $true)][string]$SourceDir,
+    [Parameter(Mandatory = $true)][string]$DestinationDir
+  )
+
+  if (!(Test-Path $SourceDir)) {
+    throw "Source tree not found: $SourceDir"
+  }
+
+  New-Item -ItemType Directory -Force -Path $DestinationDir | Out-Null
+  foreach ($item in Get-ChildItem -LiteralPath $SourceDir -Force) {
+    if ($item.Name -in @('__pycache__', 'APP', 'log', 'training_runs', '.idea')) {
+      continue
+    }
+    Copy-Item -Path $item.FullName -Destination (Join-Path $DestinationDir $item.Name) -Recurse -Force
+  }
+}
 
 try {
   Start-Transcript -Path $LogFile -Force | Out-Null
@@ -33,7 +52,7 @@ try {
   $PcTrainingRuntimeRoot = Join-Path $PcAppRoot 'training_runtime'
   $PiAppRoot = Join-Path $PiRoot 'APP'
   $ZipPath = Join-Path $ProjectRoot ("NeuroLab-Hub-v$Version.zip")
-  $StageFolder = Join-Path $DistRoot 'NeuroLab Hub'
+  $StageExePath = Join-Path $DistRoot 'NeuroLab Hub.exe'
 
   if (!(Test-Path $PythonExe)) {
     $resolvedPython = Get-Command $PythonExe -ErrorAction SilentlyContinue
@@ -48,32 +67,17 @@ try {
 
   & $PythonExe (Join-Path $ProjectRoot 'scripts\generate_brand_assets.py')
   if ($LASTEXITCODE -ne 0) {
-    throw "Brand asset generation failed."
+    throw 'Brand asset generation failed.'
   }
+
   & $PythonExe (Join-Path $ProjectRoot 'scripts\write_version_info.py')
   if ($LASTEXITCODE -ne 0) {
-    throw "Version resource generation failed."
+    throw 'Version resource generation failed.'
   }
+
   & $PythonExe (Join-Path $ProjectRoot 'scripts\check_source_encoding.py')
   if ($LASTEXITCODE -ne 0) {
-    throw "Source encoding check failed."
-  }
-
-  $ConfigBootstrap = @"
-import sys
-sys.path.insert(0, r'$ProjectRoot')
-from pc.core import config as _
-from pi.config import PiConfig
-PiConfig.init()
-"@
-  & $PythonExe -c $ConfigBootstrap
-  if ($LASTEXITCODE -ne 0) {
-    throw "Default config bootstrap failed."
-  }
-
-  & $PythonExe -m pip show pyinstaller | Out-Null
-  if ($LASTEXITCODE -ne 0) {
-    & $PythonExe -m pip install pyinstaller
+    throw 'Source encoding check failed.'
   }
 
   foreach ($path in @($WorkRoot, $DistRoot, $BundleStageRoot)) {
@@ -83,35 +87,25 @@ PiConfig.init()
     New-Item -ItemType Directory -Force -Path $path | Out-Null
   }
 
-  $buildTargets = @(
-    @{ Name = 'NeuroLab Hub'; OutDir = $DistRoot },
-    @{ Name = 'NeuroLab Hub LLM'; OutDir = (Join-Path $BundleStageRoot 'dist_llm') },
-    @{ Name = 'NeuroLab Hub Vision'; OutDir = (Join-Path $BundleStageRoot 'dist_vision') }
-  )
-
-  foreach ($target in $buildTargets) {
-    $targetDist = $target.OutDir
-    if (Test-Path $targetDist) {
-      Remove-Item -Recurse -Force $targetDist
+  Push-Location $ProjectRoot
+  try {
+    $env:NEUROLAB_EXE_NAME = 'NeuroLab Hub'
+    & $PythonExe -m pip show pyinstaller | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      & $PythonExe -m pip install pyinstaller
     }
-    New-Item -ItemType Directory -Force -Path $targetDist | Out-Null
-
-    Push-Location $ProjectRoot
-    try {
-      $env:NEUROLAB_EXE_NAME = $target.Name
-      & $PythonExe -m PyInstaller --noconfirm --clean --workpath $WorkRoot --distpath $targetDist neurolab_hub.spec
-      if ($LASTEXITCODE -ne 0) {
-        throw "PyInstaller build failed for $($target.Name)."
-      }
-    }
-    finally {
-      Remove-Item Env:NEUROLAB_EXE_NAME -ErrorAction SilentlyContinue
-      Pop-Location
+    & $PythonExe -m PyInstaller --noconfirm --clean --workpath $WorkRoot --distpath $DistRoot neurolab_bootstrap.spec
+    if ($LASTEXITCODE -ne 0) {
+      throw 'PyInstaller bootstrap build failed.'
     }
   }
+  finally {
+    Remove-Item Env:NEUROLAB_EXE_NAME -ErrorAction SilentlyContinue
+    Pop-Location
+  }
 
-  if (!(Test-Path $StageFolder)) {
-    throw "Build output not found: $StageFolder"
+  if (!(Test-Path $StageExePath)) {
+    throw "Build output not found: $StageExePath"
   }
 
   foreach ($artifact in @($PcExePath, $PcLlmExePath, $PcVisionExePath, $PcAppRoot, $PiAppRoot, $BundleRoot, $ZipPath)) {
@@ -119,26 +113,23 @@ PiConfig.init()
       Remove-Item -Recurse -Force $artifact
     }
   }
-  foreach ($legacy in @('LabDetector.exe', 'LabDetectorPanel.exe', 'LabDetectorTraining.exe', 'Lab.exe', 'LabPanel.exe', 'LabTraining.exe')) {
-    $legacyPath = Join-Path $PcRoot $legacy
-    if (Test-Path $legacyPath) {
-      Remove-Item -Force $legacyPath
+
+  Copy-Item -Path $StageExePath -Destination $PcExePath -Force
+  Copy-Item -Path $PcExePath -Destination $PcLlmExePath -Force
+  Copy-Item -Path $PcExePath -Destination $PcVisionExePath -Force
+
+  New-Item -ItemType Directory -Force -Path $PcAppRoot | Out-Null
+  foreach ($file in @('launcher.py', 'config.ini', 'project_identity.json', 'VERSION')) {
+    Copy-Item -Path (Join-Path $ProjectRoot $file) -Destination (Join-Path $PcAppRoot $file) -Force
+  }
+  foreach ($folder in @('assets', 'docs', 'test')) {
+    $sourceFolder = Join-Path $ProjectRoot $folder
+    if (Test-Path $sourceFolder) {
+      Copy-Item -Path $sourceFolder -Destination (Join-Path $PcAppRoot $folder) -Recurse -Force
     }
   }
-
-  $LlmStageFolder = Join-Path (Join-Path $BundleStageRoot 'dist_llm') 'NeuroLab Hub LLM'
-  $VisionStageFolder = Join-Path (Join-Path $BundleStageRoot 'dist_vision') 'NeuroLab Hub Vision'
-  if (!(Test-Path $LlmStageFolder)) {
-    throw "Build output not found: $LlmStageFolder"
-  }
-  if (!(Test-Path $VisionStageFolder)) {
-    throw "Build output not found: $VisionStageFolder"
-  }
-
-  Copy-Item -Path (Join-Path $StageFolder 'NeuroLab Hub.exe') -Destination $PcExePath -Force
-  Copy-Item -Path (Join-Path $LlmStageFolder 'NeuroLab Hub LLM.exe') -Destination $PcLlmExePath -Force
-  Copy-Item -Path (Join-Path $VisionStageFolder 'NeuroLab Hub Vision.exe') -Destination $PcVisionExePath -Force
-  Copy-Item -Path (Join-Path $StageFolder 'APP') -Destination $PcAppRoot -Recurse -Force
+  Copy-SourceTree -SourceDir $PcRoot -DestinationDir (Join-Path $PcAppRoot 'pc')
+  Copy-SourceTree -SourceDir $PiRoot -DestinationDir (Join-Path $PcAppRoot 'pi')
 
   New-Item -ItemType Directory -Force -Path $PcPythonRuntimeRoot | Out-Null
   foreach ($file in @('python.exe', 'pythonw.exe', 'python311.dll', 'python3.dll', 'VCRUNTIME140.dll', 'VCRUNTIME140_1.dll', 'MSVCP140.dll')) {
@@ -182,7 +173,8 @@ PiConfig.init()
     'setup.py',
     'edge_vision',
     'tools',
-    'voice'
+    'voice',
+    'testing'
   )
   New-Item -ItemType Directory -Force -Path $PiAppRoot | Out-Null
   foreach ($item in $PiItems) {
@@ -192,7 +184,6 @@ PiConfig.init()
     }
   }
   Copy-Item -Path (Join-Path $ProjectRoot 'VERSION') -Destination (Join-Path $PiAppRoot 'VERSION') -Force
-
   Get-ChildItem -Path $PiAppRoot -Directory -Recurse -Force -Filter '__pycache__' | Remove-Item -Recurse -Force
   Get-ChildItem -Path $PiAppRoot -Recurse -Force -Include *.pyc,*.pyo | Remove-Item -Force
 
@@ -213,16 +204,16 @@ PiConfig.init()
   $quickStartLines = @(
     'NeuroLab Hub Quick Start',
     '========================',
-    '1. PC 端使用 pc\\NeuroLab Hub.exe 启动主程序。',
-    '2. LLM 微调入口使用 pc\\NeuroLab Hub LLM.exe。',
-    '3. 识别模型训练入口使用 pc\\NeuroLab Hub Vision.exe。',
-    '4. 树莓派端将 pi 目录复制到设备后，执行 pi/start_pi_node.sh start。',
-    '5. 首次运行时先执行软件自检，按需自动安装依赖。',
+    '1. Run pc\NeuroLab Hub.exe as the main desktop entry.',
+    '2. Run pc\NeuroLab Hub LLM.exe for the LLM training entry.',
+    '3. Run pc\NeuroLab Hub Vision.exe for the vision training entry.',
+    '4. Copy the pi folder to the Raspberry Pi and run pi/start_pi_node.sh start.',
+    '5. On first launch, the self-check stage downloads and installs required dependencies automatically.',
     '',
-    '目录说明：',
-    '- pc\\APP 为隐藏运行时目录，请勿删除。',
-    '- pi\\APP 为树莓派运行时目录。',
-    '- 如需安装到 Windows，请使用 NeuroLab-Hub-Setup-v*.exe。'
+    'Directories:',
+    '- pc\APP is the desktop runtime folder.',
+    '- pi\APP is the Raspberry Pi runtime folder.',
+    '- test contains PC/Pi test scripts and the testing manual.'
   )
   Set-Content -Path (Join-Path $BundleRoot 'README_QUICKSTART.txt') -Value $quickStartLines -Encoding UTF8
 
@@ -269,10 +260,10 @@ PiConfig.init()
 }
 catch {
   Write-Host ''
-  Write-Host "桌面构建失败: $($_.Exception.Message)" -ForegroundColor Red
-  Write-Host "日志文件: $LogFile" -ForegroundColor Yellow
+  Write-Host "Desktop packaging failed: $($_.Exception.Message)" -ForegroundColor Red
+  Write-Host "Build log: $LogFile" -ForegroundColor Yellow
   if ($CanPause) {
-    Read-Host '按回车键退出'
+    Read-Host 'Press Enter to exit'
   }
   exit 1
 }

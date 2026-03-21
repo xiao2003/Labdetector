@@ -22,6 +22,7 @@ class VoiceRoundArchive:
         self._session_dir: Optional[Path] = None
         self._session_meta: Dict[str, Any] = {}
         self._round_index = 0
+        self._rounds: list[Dict[str, Any]] = []
 
     def open_session(self, mode: str, source: str, metadata: Optional[Dict[str, Any]] = None) -> str:
         with self._lock:
@@ -31,6 +32,7 @@ class VoiceRoundArchive:
             self._session_dir = self.root_dir / self._session_id
             self._session_dir.mkdir(parents=True, exist_ok=True)
             self._round_index = 0
+            self._rounds = []
             self._session_meta = {
                 "session_id": self._session_id,
                 "mode": mode,
@@ -56,6 +58,7 @@ class VoiceRoundArchive:
             self._session_dir = None
             self._session_meta = {}
             self._round_index = 0
+            self._rounds = []
 
     def ensure_session(self, mode: str, source: str, metadata: Optional[Dict[str, Any]] = None) -> str:
         with self._lock:
@@ -85,7 +88,37 @@ class VoiceRoundArchive:
             self._write_json(self._session_dir / f"{stem}.json", record)
             self._write_markdown(self._session_dir / f"{stem}.md", record)
             self._append_transcript(self._session_dir / "transcript.md", record)
+            self._rounds.append(record)
             return record
+
+    def write_session_summary(
+        self,
+        summary_text: str,
+        knowledge_items: Optional[list[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Path]:
+        with self._lock:
+            if not self._session_dir or not self._session_id:
+                return None
+            payload = dict(self._session_meta)
+            if metadata:
+                payload.update(metadata)
+            payload.update(
+                {
+                    "session_id": self._session_id,
+                    "generated_at": _timestamp(),
+                    "round_count": self._round_index,
+                    "summary_text": summary_text,
+                    "knowledge_items": list(knowledge_items or []),
+                }
+            )
+            self._write_json(self._session_dir / "session_summary.json", payload)
+            self._write_summary_markdown(self._session_dir / "session_summary.md", payload)
+            return self._session_dir / "session_summary.md"
+
+    def get_session_rounds(self) -> list[Dict[str, Any]]:
+        with self._lock:
+            return [dict(item) for item in self._rounds]
 
     @staticmethod
     def _write_json(path: Path, payload: Dict[str, Any]) -> None:
@@ -153,6 +186,26 @@ class VoiceRoundArchive:
         ]
         with path.open("a", encoding="utf-8") as handle:
             handle.write("\n".join(lines))
+
+    @staticmethod
+    def _write_summary_markdown(path: Path, payload: Dict[str, Any]) -> None:
+        knowledge_items = list(payload.get("knowledge_items") or [])
+        lines = [
+            f"# 语音会话总结 {payload.get('session_id', '')}",
+            "",
+            f"- 生成时间: {payload.get('generated_at', '')}",
+            f"- 轮次数: {payload.get('round_count', 0)}",
+            "",
+            "## 会话摘要",
+            str(payload.get("summary_text", "")).strip(),
+            "",
+            "## 提取的有效知识",
+        ]
+        if knowledge_items:
+            lines.extend(f"- {item}" for item in knowledge_items)
+        else:
+            lines.append("- 无明确可回灌知识")
+        path.write_text("\n".join(lines), encoding="utf-8")
 
 
 _voice_round_archive: Optional[VoiceRoundArchive] = None

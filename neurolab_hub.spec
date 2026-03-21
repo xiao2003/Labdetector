@@ -37,6 +37,10 @@ hiddenimports = [
     "pc.experts.safety.ppe_expert",
     "pc.experts.safety.semantic_risk_mapper",
     "pc.experts.safety.spill_detection_expert",
+    "funasr",
+    "modelscope",
+    "torchaudio",
+    "openwakeword",
 ]
 
 icon_file = os.path.join("assets", "branding", "neurolab_hub.ico")
@@ -60,13 +64,13 @@ if os.path.exists("pc/knowledge_base/scopes"):
     datas.append(("pc/knowledge_base/scopes", "pc/pc/knowledge_base/scopes"))
 if os.path.exists("pc/voice/model"):
     datas.append(("pc/voice/model", "pc/pc/voice/model"))
+if os.path.exists("pc/voice/models"):
+    datas.append(("pc/voice/models", "pc/pc/voice/models"))
 if os.path.exists("pc/tools/VERSION"):
     datas.append(("pc/tools/VERSION", "pc/pc/tools"))
 
 excludes = [
-    "torch",
     "torchvision",
-    "torchaudio",
     "easyocr",
     "mediapipe",
     "langchain",
@@ -79,7 +83,6 @@ excludes = [
     "transformers",
     "faiss",
     "faiss_cpu",
-    "modelscope",
     "ultralytics",
 ]
 

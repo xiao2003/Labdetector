@@ -4,8 +4,9 @@ import importlib
 import inspect
 import shutil
 import time
+from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from pc.core.base_expert import BaseExpert
 from pc.core.config import get_config, set_config
@@ -20,6 +21,63 @@ try:
     from pc.knowledge_base.rag_engine import knowledge_manager
 except Exception:
     knowledge_manager = None
+
+
+VOICE_KEYWORD_FALLBACKS = {
+    "safety.chem_safety_expert": (
+        "化学品",
+        "危化品",
+        "试剂",
+        "药品",
+        "标签",
+        "试剂瓶",
+        "药液",
+    ),
+    "equipment_ocr_expert": (
+        "ocr",
+        "读数",
+        "读一下",
+        "识别设备",
+        "仪表",
+        "屏幕",
+        "铭牌",
+        "标签内容",
+    ),
+    "lab_qa_expert": (
+        "什么",
+        "为什么",
+        "如何",
+        "介绍",
+        "说明",
+        "当前系统状态",
+        "系统状态",
+        "帮我看",
+        "问答",
+    ),
+    "nanofluidics.microfluidic_contact_angle_expert": (
+        "接触角",
+        "润湿",
+        "液滴",
+        "微流控",
+        "微纳",
+    ),
+    "nanofluidics.nanofluidics_multimodel_expert": (
+        "微纳",
+        "微流体",
+        "芯片流场",
+        "气泡",
+        "多模态分析",
+    ),
+}
+
+
+VOICE_KEYWORD_FALLBACKS_CN = {
+    "safety.chem_safety_expert": ("化学品", "危化品", "试剂", "药品", "标签", "试剂瓶", "药液"),
+    "equipment_ocr_expert": ("ocr", "读数", "读一下", "识别设备", "仪表", "屏幕", "铭牌", "标签内容"),
+    "lab_qa_expert": ("什么", "为什么", "如何", "介绍", "说明", "当前系统状态", "系统状态", "帮我看", "问答"),
+    "nanofluidics.microfluidic_contact_angle_expert": ("接触角", "润湿", "液滴", "微流控", "微纳"),
+    "nanofluidics.nanofluidics_multimodel_expert": ("微纳", "微流体", "芯片流场", "气泡", "多模态分析"),
+}
 
 
 class ExpertManager:
@@ -102,21 +160,218 @@ class ExpertManager:
                 "knowledge_vector_hits": [],
             }
 
+    def _definition_for_expert(self, expert: BaseExpert):
+        return get_expert_definition(expert.expert_code)
+
+    def _iter_loaded_with_definition(self) -> Iterable[Tuple[BaseExpert, Any]]:
+        for expert in self.experts.values():
+            yield expert, self._definition_for_expert(expert)
+
+    def _focused_closed_loop_codes(self) -> set[str]:
+        raw = str(
+            get_config(
+                "expert_loop.focus_codes",
+                "safety.ppe_expert,safety.chem_safety_expert",
+            )
+            or ""
+        )
+        codes = {item.strip() for item in raw.split(",") if item.strip()}
+        return codes or {"safety.ppe_expert", "safety.chem_safety_expert"}
+
+    def _allowed_closed_loop_events(self, expert_code: str) -> set[str]:
+        mapping = {
+            "safety.ppe_expert": {"PPE穿戴检查"},
+            "safety.chem_safety_expert": {"危化品识别", "化学品容器识别"},
+        }
+        return set(mapping.get(str(expert_code or "").strip(), set()))
+
+    def closed_loop_codes_for_event(self, event_name: str) -> List[str]:
+        name = str(event_name or "").strip()
+        matches: List[str] = []
+        for expert_code in sorted(self._focused_closed_loop_codes()):
+            allowed_names = self._allowed_closed_loop_events(expert_code)
+            if allowed_names and name in allowed_names:
+                matches.append(expert_code)
+        return matches
+
+    def _match_voice_keywords(self, definition: Any, command: str) -> bool:
+        if definition is None:
+            return False
+        keywords = tuple(getattr(definition, "voice_keywords", ()) or ())
+        if not keywords:
+            return False
+        lowered = str(command or "").lower()
+        normalized = lowered
+        for filler in ("一下子", "一下", "帮我", "请帮我", "请", "看看", "识别一下", "读取一下"):
+            normalized = normalized.replace(filler, "")
+        normalized = normalized.replace(" ", "")
+
+        for keyword in keywords:
+            token = str(keyword).strip().lower()
+            if not token:
+                continue
+            token_normalized = token
+            for filler in ("一下子", "一下", "帮我", "请帮我", "请", "看看", "识别一下", "读取一下"):
+                token_normalized = token_normalized.replace(filler, "")
+            token_normalized = token_normalized.replace(" ", "")
+            if token in lowered or token_normalized in normalized:
+                return True
+        return False
+
+    def _match_voice_keywords(self, definition: Any, command: str) -> bool:
+        if definition is None:
+            return False
+        keywords = list(tuple(getattr(definition, "voice_keywords", ()) or ()))
+        keywords.extend(VOICE_KEYWORD_FALLBACKS.get(getattr(definition, "code", ""), ()))
+        if not keywords:
+            return False
+
+        fillers = (
+            "一下子",
+            "一下",
+            "帮我",
+            "请帮我",
+            "请",
+            "看看",
+            "识别一下",
+            "读取一下",
+            "识别",
+            "读取",
+            "帮忙",
+        )
+
+        lowered = str(command or "").strip().lower()
+        normalized = lowered.replace(" ", "")
+        for filler in fillers:
+            normalized = normalized.replace(filler, "")
+
+        for keyword in keywords:
+            token = str(keyword).strip().lower()
+            if not token:
+                continue
+            token_normalized = token.replace(" ", "")
+            for filler in fillers:
+                token_normalized = token_normalized.replace(filler, "")
+            if token in lowered or token_normalized in normalized:
+                return True
+        return False
+
+    def _match_voice_keywords(self, definition: Any, command: str) -> bool:
+        if definition is None:
+            return False
+        keywords = list(tuple(getattr(definition, "voice_keywords", ()) or ()))
+        keywords.extend(VOICE_KEYWORD_FALLBACKS_CN.get(getattr(definition, "code", ""), ()))
+        if not keywords:
+            return False
+
+        fillers = (
+            "一下子",
+            "一下",
+            "帮我",
+            "请帮我",
+            "请",
+            "看看",
+            "识别一下",
+            "读取一下",
+            "识别",
+            "读取",
+            "帮忙",
+        )
+
+        lowered = str(command or "").strip().lower()
+        normalized = lowered.replace(" ", "")
+        for filler in fillers:
+            normalized = normalized.replace(filler, "")
+
+        for keyword in keywords:
+            token = str(keyword).strip().lower()
+            if not token:
+                continue
+            token_normalized = token.replace(" ", "")
+            for filler in fillers:
+                token_normalized = token_normalized.replace(filler, "")
+            if token in lowered or token_normalized in normalized:
+                return True
+        return False
+
+    def list_resident_stream_groups(self, media_type: str = "video") -> Dict[str, List[str]]:
+        groups: Dict[str, List[str]] = defaultdict(list)
+        focused_codes = self._focused_closed_loop_codes()
+        for expert, definition in self._iter_loaded_with_definition():
+            if definition is None:
+                continue
+            if expert.expert_code not in focused_codes:
+                continue
+            if getattr(definition, "trigger_mode", "resident") != "resident":
+                continue
+            if media_type not in tuple(getattr(definition, "media_types", ()) or ()):
+                continue
+            groups[getattr(definition, "stream_group", "default")].append(expert.expert_code)
+        return dict(groups)
+        try:
+            bundle = knowledge_manager.build_scope_bundle(query, expert.knowledge_scope, top_k=3)
+            return {
+                "knowledge_scope": expert.knowledge_scope,
+                "knowledge_scopes": bundle["scopes"],
+                "knowledge_query": query,
+                "knowledge_context": bundle["context"],
+                "knowledge_structured_rows": bundle["structured_rows"],
+                "knowledge_vector_hits": bundle["vector_hits"],
+            }
+        except Exception as exc:
+            console_error(f"知识库检索失败 [{expert.expert_name}]: {exc}")
+            return {
+                "knowledge_scope": expert.knowledge_scope,
+                "knowledge_scopes": ["common", expert.knowledge_scope],
+                "knowledge_query": query,
+                "knowledge_context": "",
+                "knowledge_structured_rows": [],
+                "knowledge_vector_hits": [],
+            }
+
     def get_aggregated_edge_policy(self) -> Dict[str, Any]:
         policies: List[Dict[str, Any]] = []
-        for expert in self.experts.values():
+        focused_codes = self._focused_closed_loop_codes()
+        for expert, definition in self._iter_loaded_with_definition():
+            if expert.expert_code not in focused_codes:
+                continue
             policy = expert.get_edge_policy()
             if not policy:
                 continue
+            raw_items: List[Dict[str, Any]] = []
             if isinstance(policy, list):
-                policies.extend(item for item in policy if isinstance(item, dict))
+                raw_items = [item for item in policy if isinstance(item, dict)]
             elif isinstance(policy, dict):
-                policies.append(policy)
+                raw_items = [policy]
+            allowed_names = self._allowed_closed_loop_events(expert.expert_code)
+            for item in raw_items:
+                event_name = str(item.get("event_name", "") or "").strip()
+                if allowed_names and event_name not in allowed_names:
+                    continue
+                merged = dict(item)
+                merged.setdefault("expert_code", expert.expert_code)
+                merged.setdefault("policy_name", event_name or expert.expert_code)
+                merged.setdefault("trigger_mode", getattr(definition, "trigger_mode", "resident") if definition else "resident")
+                merged.setdefault("stream_group", getattr(definition, "stream_group", "default") if definition else "default")
+                policies.append(merged)
         return {"event_policies": policies}
 
-    def route_and_analyze(self, event_name: str, frame: Any, context: Dict[str, Any]) -> str:
+    def route_and_analyze(
+        self,
+        event_name: str,
+        frame: Any,
+        context: Dict[str, Any],
+        *,
+        allowed_expert_codes: Optional[Iterable[str]] = None,
+        trigger_mode: Optional[str] = None,
+    ) -> str:
         results: List[str] = []
-        for expert in self.experts.values():
+        allowed_codes = {str(item).strip() for item in (allowed_expert_codes or []) if str(item).strip()}
+        for expert, definition in self._iter_loaded_with_definition():
+            if allowed_codes and expert.expert_code not in allowed_codes:
+                continue
+            if trigger_mode and definition is not None and getattr(definition, "trigger_mode", "resident") != trigger_mode:
+                continue
             if expert.match_event(event_name):
                 try:
                     enriched = dict(context or {})
@@ -125,10 +380,182 @@ class ExpertManager:
                     enriched.update(self._build_knowledge_context(expert, event_name, enriched))
                     response = expert.analyze(frame, enriched)
                     if response:
-                        results.append(response)
+                        results.append(self._postprocess_expert_response(expert, frame, enriched, response))
                 except Exception as exc:
                     console_error(f"专家 [{expert.expert_name}] 分析异常: {exc}")
         return " ".join(results) if results else ""
+
+    def _llm_interpreter_codes(self) -> set[str]:
+        return self._focused_closed_loop_codes() & {"safety.ppe_expert", "safety.chem_safety_expert"}
+
+    def _should_use_llm_interpreter(self, expert: BaseExpert, context: Dict[str, Any]) -> bool:
+        if expert.expert_code not in self._llm_interpreter_codes():
+            return False
+        if not (
+            context.get("closed_loop_llm")
+            or context.get("expert_code")
+            or str(context.get("source") or "").strip() in {"pi_websocket", "virtual_pi_closed_loop", "gui_import_test"}
+        ):
+            return False
+        if str(context.get("knowledge_context") or "").strip():
+            return True
+        if context.get("knowledge_structured_rows"):
+            return True
+        if context.get("knowledge_vector_hits"):
+            return True
+        return False
+
+    def _interpreter_prompt(self, expert: BaseExpert, context: Dict[str, Any], raw_response: str) -> str:
+        event_name = str(context.get("event_name") or context.get("event_desc") or "").strip()
+        detected = str(context.get("detected_classes") or "").strip()
+        policy_name = str(context.get("policy_name") or "").strip()
+        facts = [f"专家初步结论：{raw_response.strip()}"]
+        if event_name:
+            facts.append(f"事件类型：{event_name}")
+        if policy_name:
+            facts.append(f"边缘策略：{policy_name}")
+        if detected:
+            facts.append(f"检测类别：{detected}")
+        facts_text = "；".join(item for item in facts if item)
+        if expert.expert_code == "safety.chem_safety_expert":
+            return (
+                "请基于危化品识别事实和实验室危化品知识库，输出一段简洁、专业、可播报的中文安全研判。"
+                "优先说明危险源、缺失防护和立即处置动作，控制在90字内。"
+                f"\n{facts_text}"
+            )
+        if expert.expert_code == "safety.ppe_expert":
+            return (
+                "请基于PPE检测事实和实验室着装规范知识库，输出一段简洁、专业、可播报的中文提醒。"
+                "优先说明缺失防护、风险点和立即整改动作，控制在90字内。"
+                f"\n{facts_text}"
+            )
+        return f"请基于以下事实和知识库内容，给出简洁专业的中文解释：\n{facts_text}"
+
+    def _resolve_interpreter_model(self, context: Dict[str, Any]) -> str:
+        model_name = str(context.get("model") or "").strip()
+        if model_name:
+            return model_name
+        backend_name = str(get_config("ai_backend.type", "ollama") or "ollama").strip()
+        try:
+            from pc.core.ai_backend import default_model_for_backend
+
+            return str(default_model_for_backend(backend_name) or "").strip()
+        except Exception:
+            return ""
+
+    def _run_llm_interpreter(
+        self,
+        expert: BaseExpert,
+        frame: Any,
+        context: Dict[str, Any],
+        raw_response: str,
+    ) -> str:
+        model_name = self._resolve_interpreter_model(context)
+        if not model_name:
+            return raw_response
+        rag_context = str(context.get("knowledge_context") or "").strip()
+        if not rag_context:
+            rows = context.get("knowledge_structured_rows") or []
+            rag_context = "\n".join(
+                f"{row.get('name', '')}: {row.get('value', '')}" for row in rows if isinstance(row, dict)
+            ).strip()
+        if not rag_context:
+            return raw_response
+        prompt = self._interpreter_prompt(expert, context, raw_response)
+        try:
+            from pc.core.ai_backend import ask_assistant_with_rag
+
+            interpreted = str(ask_assistant_with_rag(frame, prompt, rag_context, model_name) or "").strip()
+            return interpreted or raw_response
+        except Exception as exc:
+            console_error(f"LLM 瑙ｉ噴灞傚け璐?[{expert.expert_name}]: {exc}")
+            return raw_response
+
+    def _postprocess_expert_response(
+        self,
+        expert: BaseExpert,
+        frame: Any,
+        context: Dict[str, Any],
+        raw_response: str,
+    ) -> str:
+        text = str(raw_response or "").strip()
+        if not text:
+            return ""
+        if not self._should_use_llm_interpreter(expert, context):
+            return text
+        return self._run_llm_interpreter(expert, frame, context, text)
+
+    def analyze_resident_frame(self, frame: Any, context: Dict[str, Any], *, media_type: str = "video") -> Dict[str, Any]:
+        resident_groups = self.list_resident_stream_groups(media_type=media_type)
+        group_results: Dict[str, str] = {}
+        event_name = str((context or {}).get("event_name") or "").strip() or "综合安全巡检"
+
+        for group_name, expert_codes in resident_groups.items():
+            result = self.route_and_analyze(
+                event_name,
+                frame,
+                dict(context or {}),
+                allowed_expert_codes=expert_codes,
+                trigger_mode="resident",
+            )
+            if result:
+                group_results[group_name] = result
+
+        return {
+            "event_name": event_name,
+            "stream_groups": resident_groups,
+            "group_results": group_results,
+            "text": " ".join(group_results[key] for key in sorted(group_results)).strip(),
+        }
+
+    def _match_voice_keywords_safe(self, definition: Any, command: str) -> bool:
+        text = str(command or "").strip().lower()
+        if not text or definition is None:
+            return False
+        for keyword in VOICE_KEYWORD_FALLBACKS_CN.get(getattr(definition, "code", ""), ()):
+            token = str(keyword).strip().lower()
+            if token and token in text:
+                return True
+        return self._match_voice_keywords(definition, command)
+
+    def route_voice_command(self, command: str, frame: Any, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        context = dict(context or {})
+        context.setdefault("query", command)
+        context.setdefault("question", command)
+
+        matched_codes: List[str] = []
+        group_results: Dict[str, str] = {}
+        focused_codes = self._focused_closed_loop_codes()
+        for expert, definition in self._iter_loaded_with_definition():
+            if definition is None:
+                continue
+            if expert.expert_code not in focused_codes:
+                continue
+            if getattr(definition, "trigger_mode", "resident") != "voice":
+                continue
+            # General QA should stay on the normal assistant path instead of
+            # hijacking generic spoken questions as a "voice expert".
+            if expert.expert_code == "lab_qa_expert":
+                continue
+            if not self._match_voice_keywords_safe(definition, command):
+                continue
+            event_name = expert.supported_events()[0] if expert.supported_events() else f"VOICE::{expert.expert_code}"
+            result = self.route_and_analyze(
+                event_name,
+                frame,
+                context,
+                allowed_expert_codes=[expert.expert_code],
+                trigger_mode="voice",
+            )
+            if result:
+                matched_codes.append(expert.expert_code)
+                group_results[getattr(definition, "stream_group", expert.expert_code)] = result
+
+        return {
+            "matched_expert_codes": matched_codes,
+            "group_results": group_results,
+            "text": " ".join(group_results.values()).strip(),
+        }
 
     def run_self_checks(self) -> List[Dict[str, Any]]:
         reports = []
@@ -180,6 +607,9 @@ class ExpertManager:
                     "model_hint": definition.model_hint if definition else "",
                     "knowledge_hint": definition.knowledge_hint if definition else "",
                     "media_types": list(definition.media_types) if definition else [],
+                    "trigger_mode": getattr(definition, "trigger_mode", "resident") if definition else "resident",
+                    "stream_group": getattr(definition, "stream_group", "default") if definition else "default",
+                    "voice_keywords": list(getattr(definition, "voice_keywords", ()) or ()) if definition else [],
                 }
             )
         return sorted(rows, key=lambda item: item["expert_code"])
@@ -212,6 +642,9 @@ class ExpertManager:
                     "model_hint": definition.model_hint,
                     "knowledge_hint": definition.knowledge_hint,
                     "media_types": list(definition.media_types),
+                    "trigger_mode": definition.trigger_mode,
+                    "stream_group": definition.stream_group,
+                    "voice_keywords": list(definition.voice_keywords),
                     "loaded": loaded is not None,
                     "expert_name": loaded.expert_name if loaded else definition.display_name,
                     "expert_version": loaded.expert_version if loaded else "",

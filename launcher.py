@@ -5,7 +5,10 @@
 from __future__ import annotations
 
 import argparse
+import importlib.machinery
+import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -14,6 +17,24 @@ from pc.tools.version_manager import get_app_version
 
 
 APP_VERSION = get_app_version()
+
+
+def _load_desktop_app_launcher():
+    try:
+        from pc.desktop_app import launch_desktop_app
+
+        return launch_desktop_app
+    except SyntaxError:
+        pyc_path = Path(__file__).resolve().parent / "pc" / "__pycache__" / "desktop_app.cpython-311.pyc"
+        if not pyc_path.exists():
+            raise
+        loader = importlib.machinery.SourcelessFileLoader("pc.desktop_app_fallback", str(pyc_path))
+        spec = importlib.util.spec_from_loader("pc.desktop_app_fallback", loader)
+        if spec is None or spec.loader is None:
+            raise
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.launch_desktop_app
 
 
 def run_cli_entry() -> int:
@@ -34,7 +55,7 @@ def run_cli_entry() -> int:
         cli_main()
         return 0
     except KeyboardInterrupt:
-        print("\n[INFO] 已收到退出信号")
+        print("\n[INFO] 已收到退出信号。")
         return 0
 
 
@@ -52,22 +73,43 @@ def run_smoke_test(output_path: str) -> int:
     return 0
 
 
+def run_voice_test_entry() -> int:
+    from pc.webui.runtime import LabDetectorRuntime
+
+    runtime = LabDetectorRuntime()
+    print("=" * 56)
+    print(f"{APP_NAME} v{APP_VERSION} 本地语音快速测试")
+    print("=" * 56)
+    result = runtime.run_voice_test()
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    runtime.shutdown()
+    return 0 if str(result.get("status") or "").lower() == "pass" else 1
+
+
+def run_annotation_panel_entry() -> int:
+    from pc.tools.training_annotation_panel import main as run_annotation_panel
+
+    return run_annotation_panel()
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=f"{APP_NAME} Launcher")
     parser.add_argument("--cli", action="store_true", help="使用旧版控制台入口")
     parser.add_argument("--web", action="store_true", help="使用浏览器控制台")
     parser.add_argument("--training-workbench", action="store_true", help="直接打开综合训练工作台")
     parser.add_argument("--llm-workbench", action="store_true", help="直接打开 LLM 微调工作台")
-    parser.add_argument("--vision-workbench", action="store_true", help="直接打开识别模型训练工作台")
+    parser.add_argument("--vision-workbench", action="store_true", help="直接打开视觉模型训练工作台")
+    parser.add_argument("--annotation-panel", action="store_true", help="直接打开图片导入、标注与 YOLO 训练面板")
     parser.add_argument("--host", default="127.0.0.1", help="Web 控制台监听地址")
     parser.add_argument("--port", default=8765, type=int, help="Web 控制台监听端口")
     parser.add_argument("--open-browser", action="store_true", help="启动 Web 模式后自动打开浏览器")
+    parser.add_argument("--voice-test", action="store_true", help="直接运行本地语音快速测试")
     parser.add_argument("--smoke-test-file", default="", help="写出初始化 JSON 后退出，用于打包产物验收")
     return parser.parse_args(argv)
 
 
 def _infer_mode_from_exe_name() -> str:
-    exe_name = Path(sys.argv[0]).name.lower()
+    exe_name = str(os.environ.get("NEUROLAB_BOOTSTRAP_EXE_NAME") or Path(sys.argv[0]).name).lower()
     if "llm" in exe_name:
         return "llm"
     if "vision" in exe_name or "detector" in exe_name:
@@ -83,6 +125,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.smoke_test_file:
         return run_smoke_test(args.smoke_test_file)
+    if args.voice_test:
+        return run_voice_test_entry()
+    if args.annotation_panel:
+        return run_annotation_panel_entry()
     if args.cli:
         return run_cli_entry()
     if args.web:
@@ -100,8 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         training_focus = ""
 
-    from pc.desktop_app import launch_desktop_app
-
+    launch_desktop_app = _load_desktop_app_launcher()
     return launch_desktop_app(
         open_training_workbench=bool(training_focus),
         training_focus=training_focus,

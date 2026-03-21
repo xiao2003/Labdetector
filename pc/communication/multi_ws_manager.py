@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import os
 import time
 from collections import deque
@@ -7,6 +7,7 @@ import numpy as np
 import cv2
 import json
 from pc.app_identity import resource_path
+from pc.core.ai_backend import _STATE
 from pc.core.logger import console_info, console_error
 from pc.core.config import get_config
 from pc.core.expert_manager import expert_manager
@@ -25,7 +26,7 @@ class MultiPiManager:
         self.send_queues = {pid: asyncio.Queue() for pid in pi_dict}
         self.running = True
 
-        # ★ 新增：独立跟踪每个节点的状态
+        # Track per-node connectivity state for the dashboard and runtime.
         self.node_status = {pid: "connecting" for pid in pi_dict}
         self.node_caps = {pid: {"has_mic": False, "has_speaker": False} for pid in pi_dict}
         self.loop = None
@@ -38,6 +39,10 @@ class MultiPiManager:
         self.pending_result_acks = {}
         self.ack_timeout = float(get_config("expert_loop.ack_timeout", 2.0))
         self.ack_retries = int(get_config("expert_loop.ack_retries", 2))
+        self.event_queue = asyncio.Queue(maxsize=int(get_config("expert_loop.max_pending_events", 32) or 32))
+        self.event_worker_count = max(1, int(get_config("expert_loop.worker_count", 1) or 1))
+        self.event_cooldown = float(get_config("expert_loop.event_cooldown_seconds", 6.0) or 6.0)
+        self.recent_policy_hits = {}
 
         self.audit_log_dir = str(resource_path("pc/log"))
         os.makedirs(self.audit_log_dir, exist_ok=True
@@ -51,30 +56,120 @@ class MultiPiManager:
     async def _send_with_ack(self, ws, pi_id: str, result: ExpertResult):
         cmd = build_expert_result_command(result)
         for attempt in range(self.ack_retries + 1):
-            await ws.send(cmd)
+            await self.send_queues[pi_id].put(cmd)
             self.pending_result_acks[(pi_id, result.event_id)] = time.time()
             await asyncio.sleep(self.ack_timeout)
             if (pi_id, result.event_id) not in self.pending_result_acks:
                 return True
         return False
 
+    async def _dispatch_expert_result(self, pi_id: str, event_name: str, result: ExpertResult):
+        if not self.running or self.node_status.get(pi_id) != "online":
+            return
+        acked = await self._send_with_ack(None, pi_id, result)
+        self._write_audit(
+            f"node={pi_id} event={event_name} event_id={result.event_id} acked={acked} text={result.text}"
+        )
+        if not acked:
+            console_error(f"节点 [{pi_id}] 未确认专家结论 ACK: {result.event_id}")
+
+    def _should_skip_event(self, pi_id: str, event) -> bool:
+        expert_code = str(event.expert_code or "").strip() or "|".join(expert_manager.closed_loop_codes_for_event(event.event_name))
+        key = (str(pi_id), expert_code or str(event.event_name or "").strip())
+        now = time.time()
+        last_ts = float(self.recent_policy_hits.get(key, 0.0) or 0.0)
+        if now - last_ts < self.event_cooldown:
+            return True
+        self.recent_policy_hits[key] = now
+        return False
+
+    async def _enqueue_edge_event(self, pi_id: str, event) -> None:
+        if self._should_skip_event(pi_id, event):
+            console_info(f"节点 [{pi_id}] 相同策略事件处于冷却期，已跳过: {event.event_name}")
+            return
+        try:
+            self.event_queue.put_nowait((pi_id, event))
+        except asyncio.QueueFull:
+            console_error(f"节点 [{pi_id}] 边缘事件队列已满，已丢弃事件: {event.event_name}")
+
+    async def _event_worker(self):
+        from pc.voice.voice_interaction import get_voice_interaction
+
+        while self.running or not self.event_queue.empty():
+            try:
+                pi_id, event = await asyncio.wait_for(self.event_queue.get(), timeout=0.5)
+            except asyncio.TimeoutError:
+                continue
+            try:
+                if not self.running:
+                    continue
+                console_info(f"收到节点 [{pi_id}] 边缘高优告警: {event.event_name} ({event.event_id})")
+                agent = get_voice_interaction()
+                if agent and agent.is_active:
+                    console_info("语音助手处于活跃状态，暂缓播报边缘告警。")
+                    continue
+
+                allowed_codes = []
+                if event.expert_code:
+                    allowed_codes = [event.expert_code]
+                else:
+                    allowed_codes = expert_manager.closed_loop_codes_for_event(event.event_name)
+
+                context = {
+                    "event_desc": event.event_name,
+                    "detected_classes": event.detected_classes,
+                    "metrics": event.capture_metrics,
+                    "expert_code": event.expert_code,
+                    "policy_name": event.policy_name,
+                    "policy_action": event.policy_action,
+                    "closed_loop_llm": True,
+                    "source": "pi_websocket",
+                    "model": _STATE.get("selected_model", ""),
+                }
+                tts_text = await asyncio.to_thread(
+                    expert_manager.route_and_analyze,
+                    event.event_name,
+                    event.frame,
+                    context,
+                    allowed_expert_codes=allowed_codes,
+                    trigger_mode=None if allowed_codes else "resident",
+                )
+                if tts_text:
+                    result = ExpertResult(
+                        event_id=event.event_id,
+                        text=tts_text,
+                        severity="warning",
+                        speak=self.node_caps.get(pi_id, {}).get("has_speaker", False),
+                    )
+                    await self._dispatch_expert_result(pi_id, event.event_name, result)
+            except Exception as exc:
+                console_error(f"节点 [{pi_id}] 边缘事件处理失败: {exc}")
+            finally:
+                self.event_queue.task_done()
+
     async def _node_handler(self, pi_id, ip):
-        uri = f"ws://{ip}:8001"
-        # ★ 修复：将节点连接放入死循环中，实现断线后无限重连
+        endpoint = str(ip).strip()
+        if endpoint.startswith("ws://") or endpoint.startswith("wss://"):
+            uri = endpoint
+        elif ":" in endpoint:
+            uri = f"ws://{endpoint}"
+        else:
+            uri = f"ws://{endpoint}:8001"
+        # 将节点连接置于死循环中，断线后继续自动重连。
         while self.running:
             try:
                 self.node_status[pi_id] = "connecting"
                 async with websockets.connect(uri, ping_interval=None) as ws:
                     self.node_status[pi_id] = "online"
                     console_info(f"节点 [{pi_id}] ({ip}) 握手成功")
-                    await ws.send(f"CMD:SET_FPS:{self.target_fps}")
+                    await self.send_queues[pi_id].put(f"CMD:SET_FPS:{self.target_fps}")
 
                     sync_data = {"wake_word": get_config("voice_interaction.wake_word", "小爱同学")}
-                    await ws.send(f"CMD:SYNC_CONFIG:{json.dumps(sync_data)}")
+                    await self.send_queues[pi_id].put(f"CMD:SYNC_CONFIG:{json.dumps(sync_data)}")
 
                     policies = expert_manager.get_aggregated_edge_policy()
-                    await ws.send(f"CMD:SYNC_POLICY:{json.dumps(policies)}")
-                    console_info(f"已下发 {len(policies['event_policies'])} 条专家策略至节点 [{pi_id}]")
+                    await self.send_queues[pi_id].put(f"CMD:SYNC_POLICY:{json.dumps(policies)}")
+                    console_info(f"已向节点 [{pi_id}] 下发 {len(policies['event_policies'])} 条专家策略")
 
                     async def recv_stream_task():
                         async for data in ws:
@@ -99,7 +194,7 @@ class MultiPiManager:
                                     self.pending_result_acks.pop((pi_id, ack_event_id), None)
                                     self._write_audit(f"node={pi_id} event_id={ack_event_id} ack={ack}")
 
-                                # 修复：恢复完整的数据接收与解码逻辑
+                                # 处理完整的边缘事件接收与解码逻辑。
                                 elif data.startswith("PI_EXPERT_EVENT:") or data.startswith("PI_YOLO_EVENT:"):
                                     event, parse_error = parse_pi_expert_packet(data)
                                     if parse_error or event is None:
@@ -115,42 +210,10 @@ class MultiPiManager:
                                         expired = self.recent_event_queue.popleft()
                                         self.recent_event_ids.discard(expired)
 
-                                    console_info(f"收到节点 [{pi_id}] 边缘端高优告警: {event.event_name} ({event.event_id})")
-
-                                    from pc.voice.voice_interaction import get_voice_interaction
-                                    agent = get_voice_interaction()
-                                    if agent and agent.is_active:
-                                        console_info("语音助手正活跃，安防播报暂缓。")
-                                        continue
-
-                                    # 将 event_str 组装成上下文，确保通用安防专家能提取到具体的违规内容
-                                    context = {"event_desc": event.event_name, "detected_classes": event.detected_classes, "metrics": event.capture_metrics}
-
-                                    # 抛给专家矩阵进行分析和 RAG 日志归档
-                                    tts_text = await asyncio.to_thread(
-                                        expert_manager.route_and_analyze,
-                                        event.event_name,
-                                        event.frame,
-                                        context
-                                    )
-
-                                    # 研判结论始终回传 Pi 端；有扬声器则同时触发语音播报
-                                    if tts_text:
-                                        result = ExpertResult(
-                                            event_id=event.event_id,
-                                            text=tts_text,
-                                            severity="warning",
-                                            speak=self.node_caps.get(pi_id, {}).get("has_speaker", False),
-                                        )
-                                        acked = await self._send_with_ack(ws, pi_id, result)
-                                        self._write_audit(
-                                            f"node={pi_id} event={event.event_name} event_id={event.event_id} acked={acked} text={tts_text}"
-                                        )
-                                        if not acked:
-                                            console_error(f"节点 [{pi_id}] 对专家结论未确认 ACK: {event.event_id}")
+                                    await self._enqueue_edge_event(pi_id, event)
                                 continue
 
-                            # 处理常规预览视频流的渲染
+                            # 处理常规预览视频流的解码。
                             arr = np.frombuffer(data, np.uint8)
                             frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
                             if frame is not None:
@@ -164,9 +227,9 @@ class MultiPiManager:
                     await asyncio.gather(recv_stream_task(), send_command_task())
             except Exception as e:
                 if self.running:
-                    # ★ 修复：断线后不再退出程序，而是标记为离线，等待5秒后进入下一次循环尝试重连
+                    # 断线后不退出程序，而是标记为离线并继续后台重连。
                     self.node_status[pi_id] = "offline"
-                    console_error(f"节点 [{pi_id}] ({ip}) 通信断开，其他节点不受影响。正在后台尝试重连...")
+                    console_error(f"节点 [{pi_id}] ({ip}) 通信断开，正在后台尝试重连...")
                     await asyncio.sleep(5)
 
     def _handle_remote_voice(self, pi_id, data):
@@ -182,6 +245,8 @@ class MultiPiManager:
             message = str(answer or "").strip()
             if not message:
                 return
+            preview = message if len(message) <= 120 else f"{message[:117]}..."
+            console_info(f"已回传节点 {pi_id} 语音播报: {preview}")
             self._write_audit(f"node={pi_id} voice_command={cmd_text} reply={message}")
             self.send_to_node(pi_id, f"CMD:TTS:{message}")
 
@@ -191,6 +256,7 @@ class MultiPiManager:
     async def start(self):
         self.loop = asyncio.get_running_loop()
         tasks = [self._node_handler(pid, ip) for pid, ip in self.pi_dict.items()]
+        tasks.extend(self._event_worker() for _ in range(self.event_worker_count))
         await asyncio.gather(*tasks)
 
     def send_to_node(self, pi_id, text):
@@ -204,3 +270,12 @@ class MultiPiManager:
 
     def stop(self):
         self.running = False
+        self.pending_result_acks.clear()
+        self.recent_policy_hits.clear()
+        while not self.event_queue.empty():
+            try:
+                self.event_queue.get_nowait()
+                self.event_queue.task_done()
+            except Exception:
+                break
+

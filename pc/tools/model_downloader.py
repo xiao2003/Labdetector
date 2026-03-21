@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Download and prepare the bundled offline Vosk speech model when missing."""
+"""Download and prepare bundled speech models when missing."""
 
 from __future__ import annotations
 
@@ -11,8 +11,14 @@ import zipfile
 
 from pc.app_identity import resource_path
 
+try:
+    from modelscope import snapshot_download
+except ImportError:
+    snapshot_download = None
+
 
 VOSK_MODEL_URL = "https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip"
+SENSEVOICE_MODEL_REPO = "iic/SenseVoiceSmall"
 
 
 def check_and_download_vosk() -> bool:
@@ -70,4 +76,41 @@ def check_and_download_vosk() -> bool:
                 os.remove(zip_path)
         except OSError:
             pass
+        return False
+
+
+def check_and_download_sensevoice() -> bool:
+    """Ensure the bundled SenseVoice model directory exists and is ready to use."""
+    target_dir = str(resource_path("pc/voice/models/SenseVoiceSmall"))
+    model_file = os.path.join(target_dir, "configuration.json")
+
+    if os.path.exists(model_file):
+        return True
+
+    print("\n[INFO] 正在检查 SenseVoice 语音模型目录...")
+    print(f"[INFO] 目标路径: {target_dir}")
+    os.makedirs(target_dir, exist_ok=True)
+
+    if snapshot_download is None:
+        print("[ERROR] 未安装 modelscope，无法自动下载 SenseVoice 模型。")
+        return False
+
+    try:
+        print("[INFO] 开始下载 SenseVoiceSmall 语音模型（首次下载体积较大，请耐心等待）...")
+        download_kwargs = {
+            "model_id": SENSEVOICE_MODEL_REPO,
+            "local_dir": target_dir,
+        }
+        try:
+            downloaded_dir = snapshot_download(
+                local_dir_use_symlinks=False,
+                **download_kwargs,
+            )
+        except TypeError:
+            # Older modelscope versions do not support local_dir_use_symlinks.
+            downloaded_dir = snapshot_download(**download_kwargs)
+        print(f"[INFO] SenseVoice 模型下载完成: {downloaded_dir}")
+        return os.path.exists(model_file)
+    except Exception as exc:
+        print(f"[ERROR] SenseVoice 模型下载失败: {exc}")
         return False

@@ -404,19 +404,29 @@ async def handle_client(websocket, path=""):
                     hd_encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), int(profile.event_jpeg_quality)]
 
                     triggered_events = yolo_detector.process_frame(flipped, _PI_STATE["policies"])
-                    for event_name, event_frame, detected_str in triggered_events:
+                    for event_name, event_frame, detected_str, policy_meta in triggered_events:
                         ret, buf = cv2.imencode('.jpg', event_frame, hd_encode_param)
                         if ret:
                             b64_img = base64.b64encode(buf.tobytes()).decode('utf-8')
                             payload = {
                                 "event_id": str(uuid.uuid4()),
                                 "event_name": event_name,
+                                "expert_code": str((policy_meta or {}).get("expert_code", "") or ""),
+                                "policy_name": str((policy_meta or {}).get("policy_name", event_name) or event_name),
+                                "policy_action": str((policy_meta or {}).get("policy_action", "") or ""),
                                 "detected_classes": detected_str,
                                 "timestamp": time.time(),
-                                "capture_metrics": metrics,
+                                "capture_metrics": {
+                                    **metrics,
+                                    "expert_code": str((policy_meta or {}).get("expert_code", "") or ""),
+                                    "policy_name": str((policy_meta or {}).get("policy_name", event_name) or event_name),
+                                    "policy_action": str((policy_meta or {}).get("policy_action", "") or ""),
+                                },
                             }
                             await websocket.send(f"PI_EXPERT_EVENT:{json.dumps(payload, ensure_ascii=False)}:{b64_img}")
-                            console_info(f"捕捉违规，上传关键帧 [{event_name}] classes={detected_str}")
+                            console_info(
+                                f"捕捉违规，上传关键帧 [{event_name}] expert={payload['expert_code'] or 'unknown'} classes={detected_str}"
+                            )
 
                     if len(_PI_STATE["expert_results"]) > 200:
                         oldest = sorted(_PI_STATE["expert_results"].items(), key=lambda kv: kv[1].get("received_at", 0))[:80]
@@ -629,4 +639,3 @@ if __name__ == '__main__':
         except KeyboardInterrupt:
             running = False
             print("\n[INFO] 正在关闭 Pi 边缘节点...")
-

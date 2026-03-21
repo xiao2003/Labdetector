@@ -7,15 +7,17 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
 
-
 @dataclass
 class ExpertEvent:
     event_id: str
     event_name: str
+    expert_code: str
     detected_classes: str
     timestamp: float
     frame: Any
     capture_metrics: Dict[str, Any]
+    policy_name: str = ""
+    policy_action: str = ""
 
 
 @dataclass
@@ -28,12 +30,7 @@ class ExpertResult:
 
 
 def parse_pi_expert_packet(packet: str) -> Tuple[Optional[ExpertEvent], Optional[str]]:
-    """解析 PI 端上报事件。
-
-    支持格式:
-    - PI_EXPERT_EVENT:{json_meta}:{base64_jpeg}
-    - PI_YOLO_EVENT:{json_meta}:{base64_jpeg}
-    """
+    """解析 PI 端上报事件。"""
     if not packet.startswith("PI_EXPERT_EVENT:") and not packet.startswith("PI_YOLO_EVENT:"):
         return None, "unsupported prefix"
 
@@ -42,9 +39,8 @@ def parse_pi_expert_packet(packet: str) -> Tuple[Optional[ExpertEvent], Optional
         meta_raw, b64_img = payload.rsplit(":", 1)
         meta = json.loads(meta_raw)
 
-        # 延迟导入，避免未安装视觉依赖时影响纯协议逻辑
-        import numpy as np
         import cv2
+        import numpy as np
 
         image_bytes = base64.b64decode(b64_img)
         arr = np.frombuffer(image_bytes, np.uint8)
@@ -53,13 +49,20 @@ def parse_pi_expert_packet(packet: str) -> Tuple[Optional[ExpertEvent], Optional
             return None, "failed to decode frame"
 
         event_id = str(meta.get("event_id") or uuid.uuid4())
+        capture_metrics = meta.get("capture_metrics", {})
+        if not isinstance(capture_metrics, dict):
+            capture_metrics = {}
+
         return ExpertEvent(
             event_id=event_id,
-            event_name=meta.get("event_name", "未知事件"),
-            detected_classes=meta.get("detected_classes", ""),
+            event_name=str(meta.get("event_name", "未知事件") or "未知事件"),
+            expert_code=str(meta.get("expert_code", "") or ""),
+            detected_classes=str(meta.get("detected_classes", "") or ""),
             timestamp=float(meta.get("timestamp", 0.0)),
             frame=frame,
-            capture_metrics=meta.get("capture_metrics", {}) if isinstance(meta, dict) else {},
+            capture_metrics=capture_metrics,
+            policy_name=str(meta.get("policy_name", "") or ""),
+            policy_action=str(meta.get("policy_action", "") or ""),
         ), None
     except Exception as exc:
         return None, str(exc)

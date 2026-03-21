@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 from ultralytics import YOLO
+from .policy_engine import apply_policies_to_detections
 
 try:
     from ..config import get_pi_config
@@ -38,7 +39,8 @@ class SemanticEdgeEngine:
     def process_frame(self, frame, policies):
         """
         接收一帧画面和 N 个专家策略。
-        返回触发的事件列表: [(event_name, image_to_send, detected_classes_str), ...]
+        返回触发的事件列表:
+        [(event_name, image_to_send, detected_classes_str, policy_meta), ...]
         """
         if not policies:
             return []
@@ -52,44 +54,14 @@ class SemanticEdgeEngine:
                 cls_name = self.model.names[int(box.cls[0])]
                 detected_objects.append(cls_name)
                 boxes_dict.setdefault(cls_name, []).append(list(map(int, box.xyxy[0])))
-
-        detected_set = set(detected_objects)
-        detected_str = ",".join(sorted(detected_set))
-        triggered_events = []
-        current_time = time.time()
-
-        for policy in policies:
-            event_name = policy.get("event_name")
-            targets = set(policy.get("trigger_classes", []))
-            condition = policy.get("condition", "any")
-            action = policy.get("action", "full_frame")
-            cooldown = float(policy.get("cooldown", 5.0) or 5.0)
-
-            if not event_name or not targets:
-                continue
-            if current_time - self.last_triggers.get(event_name, 0.0) < cooldown:
-                continue
-
-            is_match = False
-            if condition == "all" and targets.issubset(detected_set):
-                is_match = True
-            elif condition == "any" and not targets.isdisjoint(detected_set):
-                is_match = True
-
-            if not is_match:
-                continue
-
-            self.last_triggers[event_name] = current_time
-            if action == "crop_target":
-                target_cls = list(targets.intersection(detected_set))[0]
-                x1, y1, x2, y2 = boxes_dict[target_cls][0]
-                h, w = frame.shape[:2]
-                crop_img = frame[max(0, y1 - 20):min(h, y2 + 20), max(0, x1 - 20):min(w, x2 + 20)]
-                triggered_events.append((event_name, crop_img, detected_str))
-            else:
-                triggered_events.append((event_name, frame.copy(), detected_str))
-
-        return triggered_events
+        return apply_policies_to_detections(
+            frame,
+            policies,
+            detected_objects,
+            boxes_dict,
+            last_triggers=self.last_triggers,
+            current_time=time.time(),
+        )
 
 
 class GeneralYoloDetector:

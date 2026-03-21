@@ -30,10 +30,12 @@ pc/communication/.idea/
 build/
 dist/
 .pyi_work/
+.pyi_work*/
 .pyi_dist/
 .bundle_stage/
 tmp/
 release/
+exe_build/
 pc/APP/
 pc/LabDetector.exe
 pc/LabDetectorPanel.exe
@@ -66,3 +68,4 @@ pc/NeuroLab Hub Vision.exe
 NeuroLab-Hub-Setup-v*.exe
 NeuroLab-Hub-v*.zip
 NeuroLab-Hub-Portable-v*.zip
+NeuroLab-Hub-source-v*.zip
