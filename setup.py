@@ -10,7 +10,7 @@ IDENTITY = json.loads((PROJECT_ROOT / "project_identity.json").read_text(encodin
 
 setup(
     name="neurolab-hub",
-    version="3.0.9",
+    version="1.0.0",
     description=IDENTITY["formal_name"],
     author=IDENTITY["company_name_en"],
     packages=find_packages(),

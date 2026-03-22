@@ -1,4 +1,4 @@
-# NeuroLab Hub —— 基于可编排专家模型的实验室多模态智能中枢 (V3.0.9)
+# NeuroLab Hub —— 基于可编排专家模型的实验室多模态智能中枢 (V1.0.0)
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Windows Desktop](https://img.shields.io/badge/Delivery-Windows%20Desktop-1f6feb)](docs/NeuroLab_Hub_用户手册.md)
@@ -401,7 +401,7 @@ python pi_cli.py --help
 * 训练结果注册与回灌
 
 ### 5. 自动化测试与发布验收
-当前版本 `V3.0.9` 已完成：
+当前版本 `V1.0.0` 已完成：
 
 * GUI 静默回归
 * 模块总回归（21 pass / 0 warn / 0 fail）
