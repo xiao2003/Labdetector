@@ -7,10 +7,11 @@ from setuptools import find_packages, setup
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 IDENTITY = json.loads((PROJECT_ROOT / "project_identity.json").read_text(encoding="utf-8"))
+APP_VERSION = (PROJECT_ROOT / "VERSION").read_text(encoding="utf-8").strip()
 
 setup(
     name="neurolab-hub",
-    version="1.0.0",
+    version=APP_VERSION,
     description=IDENTITY["formal_name"],
     author=IDENTITY["company_name_en"],
     packages=find_packages(),

@@ -461,7 +461,7 @@ class DesktopApp:
             ("模型配置", self._show_cloud_backend_window),
             ("训练中心", self._show_training_window),
             ("使用手册", self._show_manual_window),
-            ("关于系统", self._show_about_and_copyright),
+            ("关于系统", self._show_about_window),
         ]
         for column in range(len(actions)):
             action_strip.columnconfigure(column, weight=1, minsize=self._scaled(108))
@@ -2490,7 +2490,7 @@ class DesktopApp:
             "open_model_config": (self._show_cloud_backend_window, "好的，正在打开模型配置。"),
             "open_training_center": (self._show_training_window, "好的，正在打开训练中心。"),
             "open_manual": (self._show_manual_window, "好的，正在打开使用手册。"),
-            "open_about": (self._show_about_and_copyright, "好的，正在打开关于系统。"),
+            "open_about": (self._show_about_window, "好的，正在打开关于系统。"),
             "toggle_sidebar": (self._toggle_left_panel, "好的，正在切换界面侧栏。"),
             "shutdown_app": (self._on_close, "好的，正在关闭软件。"),
         }

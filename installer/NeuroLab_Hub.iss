@@ -7,7 +7,7 @@
 #define MyLlmExeName "NeuroLab Hub LLM.exe"
 #define MyVisionExeName "NeuroLab Hub Vision.exe"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.0.0"
+  #define MyAppVersion Trim(FileRead("..\\VERSION"))
 #endif
 #ifndef ReleaseDir
   #define ReleaseDir "..\\pc"
