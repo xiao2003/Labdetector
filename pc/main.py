@@ -279,7 +279,10 @@ def select_model() -> bool:
 
     safe_console_prompt("\n===== 模型选择 =====")
     local_models = list_ollama_models() if list_ollama_models else []
-    raw_defaults = get_config("ollama.default_models", ["llava:7b-v1.5-q4_K_M"])
+    raw_defaults = get_config(
+        "ollama.default_models",
+        ["gemma3:4b", "llama3.2-vision:11b", "qwen3.5:4b", "qwen3.5:9b", "qwen3.5:27b", "qwen3.5:35b"],
+    )
 
     if isinstance(raw_defaults, str):
         default_models = [m.strip() for m in raw_defaults.split(',') if m.strip()]

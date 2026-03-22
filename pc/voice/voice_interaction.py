@@ -21,6 +21,7 @@ from pc.app_identity import resource_path
 from pc.core.ai_backend import ask_assistant_with_rag
 from pc.core.config import get_config
 from pc.core.logger import console_error, console_info
+from pc.core.runtime_assets import sensevoice_model_dir, vosk_model_dir
 from pc.core.voice_round_archive import get_voice_round_archive
 from pc.knowledge_base.rag_engine import knowledge_manager
 
@@ -129,11 +130,11 @@ class VoiceInteractionConfig:
         self.command_timeout = float(get_config("voice_interaction.command_timeout", 6.0))
         self.command_phrase_time_limit = float(get_config("voice_interaction.command_phrase_time_limit", 12.0))
         self.online_recognition = str(get_config("voice_interaction.online_recognition", True)).lower() == "true"
-        self.vosk_model_path = str(get_config("voice_interaction.vosk_model_path", os.path.join(os.path.dirname(__file__), "model")))
+        self.vosk_model_path = str(get_config("voice_interaction.vosk_model_path", str(vosk_model_dir())))
 
         self.asr_engine = str(get_config("voice_interaction.asr_engine", "auto")).lower()
         self.wake_engine = str(get_config("voice_interaction.wake_engine", "auto")).lower()
-        self.funasr_model = str(get_config("voice_interaction.funasr_model", os.path.join(os.path.dirname(__file__), "models", "SenseVoiceSmall")))
+        self.funasr_model = str(get_config("voice_interaction.funasr_model", str(sensevoice_model_dir())))
         self.funasr_model_repo_id = str(get_config("voice_interaction.funasr_model_repo_id", "iic/SenseVoiceSmall"))
         self.funasr_vad_model = str(get_config("voice_interaction.funasr_vad_model", "fsmn-vad"))
         self.funasr_punc_model = str(get_config("voice_interaction.funasr_punc_model", "ct-punc-c"))
@@ -151,7 +152,7 @@ def _existing_model_dir(*relative_candidates: str) -> str:
         path = resource_path(candidate)
         if path.exists():
             return str(path)
-    return str(resource_path(relative_candidates[0]))
+        return str(resource_path(relative_candidates[0]))
 
 
 class VoiceInteraction:
@@ -230,7 +231,7 @@ class VoiceInteraction:
         configured = str(self.config.funasr_model or "").strip()
         local_candidates = [
             configured,
-            _existing_model_dir("pc/voice/models/SenseVoiceSmall"),
+            str(sensevoice_model_dir()),
         ]
         for candidate in local_candidates:
             if not candidate:

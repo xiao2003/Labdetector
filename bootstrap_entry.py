@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+import shutil
 from pathlib import Path
 from typing import Dict, Iterable, List
 
@@ -27,6 +28,17 @@ GUI_CORE_DEPENDENCY_MAP: Dict[str, str] = {
     "requests": "requests",
 }
 
+PYTHON_INSTALL_COMMAND = [
+    "winget",
+    "install",
+    "--id",
+    "Python.Python.3.11",
+    "-e",
+    "--accept-package-agreements",
+    "--accept-source-agreements",
+    "--disable-interactivity",
+]
+
 
 def _launcher_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -43,11 +55,39 @@ def _python_root() -> Path:
     return _app_root() / "python_runtime"
 
 
-def _python_exe(windowed: bool = False) -> Path:
+def _python_exe(windowed: bool = False) -> str:
     preferred = _python_root() / ("pythonw.exe" if windowed else "python.exe")
     if preferred.exists():
-        return preferred
-    return Path(sys.executable).resolve()
+        return str(preferred)
+    candidates = ["pythonw.exe", "python.exe", "py.exe"] if windowed else ["python.exe", "py.exe", "pythonw.exe"]
+    for candidate in candidates:
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    if not getattr(sys, "frozen", False):
+        return str(Path(sys.executable).resolve())
+    raise RuntimeError("未检测到可用 Python 运行时，请先安装 Python 3.11 后重新启动。")
+
+
+def _find_system_python() -> str:
+    """查找系统可用 Python，用于轻量入口首次拉起主程序。"""
+    for candidate in ("python.exe", "py.exe"):
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    return ""
+
+
+def _ensure_system_python(progress: BootstrapProgress) -> None:
+    """确保系统已安装 Python 3.11；轻量入口不再随包携带完整运行时。"""
+    if _find_system_python():
+        return
+    progress.update(28, "正在安装 Python 运行环境", "首次启动：检测到系统缺少 Python 3.11，正在自动安装")
+    result = _run_hidden(PYTHON_INSTALL_COMMAND, timeout=3600)
+    if result.returncode != 0:
+        raise RuntimeError("未检测到 Python 3.11，且自动安装失败，请联网后重试。")
+    if not _find_system_python():
+        raise RuntimeError("Python 3.11 安装完成后仍未检测到解释器，请重新启动软件。")
 
 
 def _launcher_script() -> Path:
@@ -268,7 +308,7 @@ def _install_packages(packages: Iterable[str], progress: BootstrapProgress) -> N
 def _launch_main() -> None:
     python_gui = _python_exe(windowed=True)
     python_cli = _python_exe(windowed=False)
-    command = [str(python_gui if python_gui.exists() else python_cli), str(_launcher_script()), *sys.argv[1:]]
+    command = [python_gui or python_cli, str(_launcher_script()), *sys.argv[1:]]
     creation_flags = 0x08000000 if os.name == "nt" else 0
     subprocess.Popen(command, cwd=str(_app_root()), env=_runtime_env(), creationflags=creation_flags)
 
@@ -277,6 +317,7 @@ def main() -> int:
     progress = BootstrapProgress()
     try:
         progress.update(18, "正在检查运行环境", "环境准备：正在检查核心桌面组件")
+        _ensure_system_python(progress)
         missing_modules = _probe_missing_modules(GUI_CORE_DEPENDENCY_MAP.keys())
         if missing_modules:
             packages = [GUI_CORE_DEPENDENCY_MAP[name] for name in missing_modules]

@@ -33,18 +33,13 @@ from pc.app_identity import (
     manual_path,
 )
 from pc.core.config import get_config, set_config
+from pc.core.runtime_assets import DEFAULT_OLLAMA_MODELS
 from pc.training.annotation_store import annotation_store
 from pc.tools.version_manager import get_app_version
 
 CUSTOM_MODEL_OPTION = "添加自定义模型..."
 RECOMMENDED_MODEL_NAMES: Dict[str, List[str]] = {
-    "ollama": [
-        "minicpm-v:8b",
-        "gemma3:12b",
-        "gemma3:27b",
-        "llama3.2-vision:11b",
-        "gemma3:4b",
-    ],
+    "ollama": list(DEFAULT_OLLAMA_MODELS),
 }
 VISIBLE_BACKENDS: List[str] = ["ollama", "qwen", "deepseek", "kimi", "local_adapter"]
 CONFIG_BACKENDS: List[str] = ["qwen", "deepseek", "kimi"]
@@ -4097,6 +4092,30 @@ class DesktopApp:
 
     def _on_close(self) -> None:
         try:
+            if self.resize_after_id is not None:
+                try:
+                    self.root.after_cancel(self.resize_after_id)
+                except Exception:
+                    pass
+                self.resize_after_id = None
+            if self.stream_refresh_after_id is not None:
+                try:
+                    self.root.after_cancel(self.stream_refresh_after_id)
+                except Exception:
+                    pass
+                self.stream_refresh_after_id = None
+            if self.window_state_after_id is not None:
+                try:
+                    self.root.after_cancel(self.window_state_after_id)
+                except Exception:
+                    pass
+                self.window_state_after_id = None
+            if self.tooltip_after_id is not None:
+                try:
+                    self.root.after_cancel(self.tooltip_after_id)
+                except Exception:
+                    pass
+                self.tooltip_after_id = None
             for window in list(self.window_refs):
                 try:
                     window.destroy()

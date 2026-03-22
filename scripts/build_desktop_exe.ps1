@@ -23,7 +23,13 @@ function Copy-SourceTree {
 
   New-Item -ItemType Directory -Force -Path $DestinationDir | Out-Null
   foreach ($item in Get-ChildItem -LiteralPath $SourceDir -Force) {
-    if ($item.Name -in @('__pycache__', 'APP', 'log', 'training_runs', '.idea')) {
+    if ($item.Name -in @('__pycache__', 'APP', 'log', 'training_runs', 'training_assets', '.idea')) {
+      continue
+    }
+    if ($SourceDir -eq $PcRoot -and $item.Name -like 'NeuroLab Hub*.exe') {
+      continue
+    }
+    if ($SourceDir -like '*\pc\voice' -and $item.Name -in @('model', 'models')) {
       continue
     }
     Copy-Item -Path $item.FullName -Destination (Join-Path $DestinationDir $item.Name) -Recurse -Force
@@ -47,11 +53,8 @@ try {
   $PcExePath = Join-Path $PcRoot 'NeuroLab Hub.exe'
   $PcLlmExePath = Join-Path $PcRoot 'NeuroLab Hub LLM.exe'
   $PcVisionExePath = Join-Path $PcRoot 'NeuroLab Hub Vision.exe'
-  $PcAppRoot = Join-Path $PcRoot 'APP'
-  $PcPythonRuntimeRoot = Join-Path $PcAppRoot 'python_runtime'
-  $PcTrainingRuntimeRoot = Join-Path $PcAppRoot 'training_runtime'
-  $PiAppRoot = Join-Path $PiRoot 'APP'
   $ZipPath = Join-Path $ProjectRoot ("NeuroLab-Hub-v$Version.zip")
+  $SourceZipPath = Join-Path $ProjectRoot ("NeuroLab-Hub-source-v$Version.zip")
   $StageExePath = Join-Path $DistRoot 'NeuroLab Hub.exe'
 
   if (!(Test-Path $PythonExe)) {
@@ -63,7 +66,6 @@ try {
   if (!(Test-Path $PythonExe)) {
     throw "Python interpreter not found: $PythonExe"
   }
-  $PythonHome = Split-Path -Parent $PythonExe
 
   & $PythonExe (Join-Path $ProjectRoot 'scripts\generate_brand_assets.py')
   if ($LASTEXITCODE -ne 0) {
@@ -108,7 +110,7 @@ try {
     throw "Build output not found: $StageExePath"
   }
 
-  foreach ($artifact in @($PcExePath, $PcLlmExePath, $PcVisionExePath, $PcAppRoot, $PiAppRoot, $BundleRoot, $ZipPath)) {
+  foreach ($artifact in @($PcExePath, $PcLlmExePath, $PcVisionExePath, $BundleRoot, $ZipPath, $SourceZipPath)) {
     if (Test-Path $artifact) {
       Remove-Item -Recurse -Force $artifact
     }
@@ -118,123 +120,69 @@ try {
   Copy-Item -Path $PcExePath -Destination $PcLlmExePath -Force
   Copy-Item -Path $PcExePath -Destination $PcVisionExePath -Force
 
-  New-Item -ItemType Directory -Force -Path $PcAppRoot | Out-Null
-  foreach ($file in @('launcher.py', 'config.ini', 'project_identity.json', 'VERSION')) {
-    Copy-Item -Path (Join-Path $ProjectRoot $file) -Destination (Join-Path $PcAppRoot $file) -Force
-  }
-  foreach ($folder in @('assets', 'docs', 'test')) {
-    $sourceFolder = Join-Path $ProjectRoot $folder
-    if (Test-Path $sourceFolder) {
-      Copy-Item -Path $sourceFolder -Destination (Join-Path $PcAppRoot $folder) -Recurse -Force
-    }
-  }
-  Copy-SourceTree -SourceDir $PcRoot -DestinationDir (Join-Path $PcAppRoot 'pc')
-  Copy-SourceTree -SourceDir $PiRoot -DestinationDir (Join-Path $PcAppRoot 'pi')
-
-  New-Item -ItemType Directory -Force -Path $PcPythonRuntimeRoot | Out-Null
-  foreach ($file in @('python.exe', 'pythonw.exe', 'python311.dll', 'python3.dll', 'VCRUNTIME140.dll', 'VCRUNTIME140_1.dll', 'MSVCP140.dll')) {
-    $source = Join-Path $PythonHome $file
-    if (Test-Path $source) {
-      Copy-Item -Path $source -Destination (Join-Path $PcPythonRuntimeRoot $file) -Force
-    }
-  }
-  foreach ($dirName in @('Lib', 'DLLs')) {
-    $sourceDir = Join-Path $PythonHome $dirName
-    if (Test-Path $sourceDir) {
-      Copy-Item -Path $sourceDir -Destination (Join-Path $PcPythonRuntimeRoot $dirName) -Recurse -Force
-    }
-  }
-  foreach ($trimPath in @(
-    (Join-Path $PcPythonRuntimeRoot 'Lib\site-packages'),
-    (Join-Path $PcPythonRuntimeRoot 'Lib\test'),
-    (Join-Path $PcPythonRuntimeRoot 'Lib\idlelib'),
-    (Join-Path $PcPythonRuntimeRoot 'Lib\tkinter\test')
-  )) {
-    if (Test-Path $trimPath) {
-      Remove-Item -Recurse -Force $trimPath
-    }
-  }
-  Get-ChildItem -Path $PcPythonRuntimeRoot -Directory -Recurse -Force -Filter '__pycache__' | Remove-Item -Recurse -Force
-  Get-ChildItem -Path $PcPythonRuntimeRoot -Recurse -Force -Include *.pyc,*.pyo | Remove-Item -Force
-
-  New-Item -ItemType Directory -Force -Path $PcTrainingRuntimeRoot | Out-Null
-  foreach ($file in @('training_worker.py', 'llm_finetune.py', 'pi_detector_finetune.py')) {
-    $source = Join-Path $ProjectRoot (Join-Path 'pc\training' $file)
-    if (Test-Path $source) {
-      Copy-Item -Path $source -Destination (Join-Path $PcTrainingRuntimeRoot $file) -Force
-    }
-  }
-
-  $PiItems = @(
-    'config.ini',
-    'config.py',
-    'pisend_receive.py',
-    'pi_cli.py',
-    'setup.py',
-    'edge_vision',
-    'tools',
-    'voice',
-    'testing'
-  )
-  New-Item -ItemType Directory -Force -Path $PiAppRoot | Out-Null
-  foreach ($item in $PiItems) {
-    $source = Join-Path $PiRoot $item
-    if (Test-Path $source) {
-      Copy-Item -Path $source -Destination (Join-Path $PiAppRoot $item) -Recurse -Force
-    }
-  }
-  Copy-Item -Path (Join-Path $ProjectRoot 'VERSION') -Destination (Join-Path $PiAppRoot 'VERSION') -Force
-  Get-ChildItem -Path $PiAppRoot -Directory -Recurse -Force -Filter '__pycache__' | Remove-Item -Recurse -Force
-  Get-ChildItem -Path $PiAppRoot -Recurse -Force -Include *.pyc,*.pyo | Remove-Item -Force
-
-  $BundlePcRoot = Join-Path $BundleRoot 'pc'
-  $BundlePiRoot = Join-Path $BundleRoot 'pi'
-  New-Item -ItemType Directory -Force -Path $BundlePcRoot | Out-Null
-  New-Item -ItemType Directory -Force -Path $BundlePiRoot | Out-Null
+  New-Item -ItemType Directory -Force -Path $BundleRoot | Out-Null
   foreach ($launcher in @('NeuroLab Hub.exe', 'NeuroLab Hub LLM.exe', 'NeuroLab Hub Vision.exe')) {
     $source = Join-Path $PcRoot $launcher
     if (Test-Path $source) {
-      Copy-Item -Path $source -Destination (Join-Path $BundlePcRoot $launcher) -Force
+      Copy-Item -Path $source -Destination (Join-Path $BundleRoot $launcher) -Force
     }
   }
-  Copy-Item -Path $PcAppRoot -Destination (Join-Path $BundlePcRoot 'APP') -Recurse -Force
-  Copy-Item -Path (Join-Path $PiRoot 'start_pi_node.sh') -Destination (Join-Path $BundlePiRoot 'start_pi_node.sh') -Force
-  Copy-Item -Path $PiAppRoot -Destination (Join-Path $BundlePiRoot 'APP') -Recurse -Force
+
+  foreach ($file in @('launcher.py', 'bootstrap_entry.py', 'project_identity.json', 'VERSION', 'README.md')) {
+    $source = Join-Path $ProjectRoot $file
+    if (Test-Path $source) {
+      Copy-Item -Path $source -Destination (Join-Path $BundleRoot $file) -Force
+    }
+  }
+
+  foreach ($folder in @('assets', 'docs', 'installer')) {
+    $sourceFolder = Join-Path $ProjectRoot $folder
+    if (Test-Path $sourceFolder) {
+      Copy-Item -Path $sourceFolder -Destination (Join-Path $BundleRoot $folder) -Recurse -Force
+    }
+  }
+
+  Copy-SourceTree -SourceDir $PcRoot -DestinationDir (Join-Path $BundleRoot 'pc')
+  Copy-SourceTree -SourceDir $PiRoot -DestinationDir (Join-Path $BundleRoot 'pi')
 
   $quickStartLines = @(
     'NeuroLab Hub Quick Start',
     '========================',
-    '1. Run pc\NeuroLab Hub.exe as the main desktop entry.',
-    '2. Run pc\NeuroLab Hub LLM.exe for the LLM training entry.',
-    '3. Run pc\NeuroLab Hub Vision.exe for the vision training entry.',
-    '4. Copy the pi folder to the Raspberry Pi and run pi/start_pi_node.sh start.',
-    '5. On first launch, the self-check stage downloads and installs required dependencies automatically.',
+    '1. 运行根目录中的 NeuroLab Hub.exe 进入主界面。',
+    '2. 首次启动时，入口会检查 Python 和核心 GUI 依赖。',
+    '3. 进入软件后执行系统自检，自检会自动下载语音模型和缺失依赖。',
+    '4. 若使用 Ollama，本地模型会在首次选择时自动拉取。',
+    '5. 如需 Pi 节点，请将 pi 目录复制到 Raspberry Pi 后执行 pi/start_pi_node.sh。',
     '',
-    'Directories:',
-    '- pc\APP is the desktop runtime folder.',
-    '- pi\APP is the Raspberry Pi runtime folder.',
-    '- test contains PC/Pi test scripts and the testing manual.'
+    '说明：',
+    '- 交付包不再内置本地语音模型。',
+    '- 交付包不再内置完整 Python 运行时。',
+    '- 语音模型和必要依赖统一在首次启动 / 自检阶段补齐。'
   )
   Set-Content -Path (Join-Path $BundleRoot 'README_QUICKSTART.txt') -Value $quickStartLines -Encoding UTF8
 
   Add-Type -AssemblyName System.IO.Compression.FileSystem
   [System.IO.Compression.ZipFile]::CreateFromDirectory($BundleRoot, $ZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $true)
 
-  if (Test-Path $PcAppRoot) {
-    attrib +h +s $PcAppRoot | Out-Null
+  $SourceStageRoot = Join-Path $BundleStageRoot 'NeuroLab Hub Source'
+  New-Item -ItemType Directory -Force -Path $SourceStageRoot | Out-Null
+  foreach ($file in @('.gitignore', 'README.md', 'LICENSE', 'requirements.txt', 'setup.py', 'launcher.py', 'bootstrap_entry.py', 'VERSION', 'project_identity.json', 'neurolab_bootstrap.spec', 'neurolab_hub.spec')) {
+    $source = Join-Path $ProjectRoot $file
+    if (Test-Path $source) {
+      Copy-Item -Path $source -Destination (Join-Path $SourceStageRoot $file) -Force
+    }
   }
-  if (Test-Path $PiAppRoot) {
-    attrib +h +s $PiAppRoot | Out-Null
+  foreach ($folder in @('assets', 'docs', 'installer', 'scripts', 'test')) {
+    $sourceFolder = Join-Path $ProjectRoot $folder
+    if (Test-Path $sourceFolder) {
+      Copy-Item -Path $sourceFolder -Destination (Join-Path $SourceStageRoot $folder) -Recurse -Force
+    }
   }
+  Copy-SourceTree -SourceDir $PcRoot -DestinationDir (Join-Path $SourceStageRoot 'pc')
+  Copy-SourceTree -SourceDir $PiRoot -DestinationDir (Join-Path $SourceStageRoot 'pi')
+  [System.IO.Compression.ZipFile]::CreateFromDirectory($SourceStageRoot, $SourceZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $true)
 
-  foreach ($artifact in @(
-    $WorkRoot,
-    $DistRoot,
-    $BundleStageRoot,
-    (Join-Path $ProjectRoot 'build'),
-    (Join-Path $ProjectRoot 'dist'),
-    (Join-Path $ProjectRoot 'release')
-  )) {
+  foreach ($artifact in @($WorkRoot, $DistRoot, $BundleStageRoot, (Join-Path $ProjectRoot 'build'), (Join-Path $ProjectRoot 'dist'), (Join-Path $ProjectRoot 'release'))) {
     if (Test-Path $artifact) {
       Remove-Item -Recurse -Force $artifact
     }
@@ -247,14 +195,10 @@ try {
   Write-Host $PcLlmExePath -ForegroundColor Green
   Write-Host 'Vision executable:' -ForegroundColor Green
   Write-Host $PcVisionExePath -ForegroundColor Green
-  Write-Host 'PC runtime:' -ForegroundColor Green
-  Write-Host $PcAppRoot -ForegroundColor Green
-  Write-Host 'PI launcher:' -ForegroundColor Green
-  Write-Host (Join-Path $PiRoot 'start_pi_node.sh') -ForegroundColor Green
-  Write-Host 'PI runtime:' -ForegroundColor Green
-  Write-Host $PiAppRoot -ForegroundColor Green
-  Write-Host 'Zip package:' -ForegroundColor Green
+  Write-Host 'User package:' -ForegroundColor Green
   Write-Host $ZipPath -ForegroundColor Green
+  Write-Host 'Source package:' -ForegroundColor Green
+  Write-Host $SourceZipPath -ForegroundColor Green
   Write-Host 'Build log:' -ForegroundColor Green
   Write-Host $LogFile -ForegroundColor Green
 }

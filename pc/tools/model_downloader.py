@@ -9,7 +9,7 @@ import time
 import urllib.request
 import zipfile
 
-from pc.app_identity import resource_path
+from pc.core.runtime_assets import sensevoice_model_dir, vosk_model_dir
 
 try:
     from modelscope import snapshot_download
@@ -22,8 +22,8 @@ SENSEVOICE_MODEL_REPO = "iic/SenseVoiceSmall"
 
 
 def check_and_download_vosk() -> bool:
-    """Ensure the bundled Vosk model directory exists and is ready to use."""
-    target_dir = str(resource_path("pc/voice/model"))
+    """确保 Vosk 模型存在于运行时目录。"""
+    target_dir = str(vosk_model_dir())
     zip_path = os.path.join(target_dir, "model_temp.zip")
 
     if os.path.exists(zip_path):
@@ -80,8 +80,8 @@ def check_and_download_vosk() -> bool:
 
 
 def check_and_download_sensevoice() -> bool:
-    """Ensure the bundled SenseVoice model directory exists and is ready to use."""
-    target_dir = str(resource_path("pc/voice/models/SenseVoiceSmall"))
+    """确保 SenseVoice 模型存在于运行时目录。"""
+    target_dir = str(sensevoice_model_dir())
     model_file = os.path.join(target_dir, "configuration.json")
 
     if os.path.exists(model_file):

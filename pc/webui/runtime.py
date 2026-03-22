@@ -16,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+import shutil
 from collections import deque
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -37,6 +38,7 @@ from pc.core import logger as core_logger
 from pc.core.ai_backend import (
     configured_model_catalog,
     default_model_for_backend,
+    ensure_ollama_model_available,
     get_backend_runtime_config,
     provider_choices,
     save_backend_runtime_config,
@@ -44,6 +46,7 @@ from pc.core.ai_backend import (
     set_ai_backend,
 )
 from pc.core.config import get_config, set_config
+from pc.core.runtime_assets import sensevoice_model_dir, vosk_model_dir
 from pc.core.experiment_archive import get_experiment_archive
 from pc.training import training_manager
 from pc.training.runtime_env import (
@@ -662,6 +665,7 @@ class LabDetectorRuntime:
     ) -> List[Dict[str, Any]]:
         checks = [
             ("dependencies", "Python 依赖环境", self._check_dependencies),
+            ("ollama_runtime", "Ollama 本地模型环境", self._check_ollama_runtime),
             ("gpu", "GPU 算力环境", self._check_gpu),
             ("training_runtime", "训练运行时环境", self._check_training_runtime),
             ("voice_ai_runtime", "增强语音识别运行时", self._check_voice_ai_runtime),
@@ -1118,6 +1122,75 @@ class LabDetectorRuntime:
             "raw_output": "\n".join(logs),
         }
 
+    def _find_ollama_executable(self) -> str:
+        """定位本机 Ollama 可执行文件。"""
+        candidates = [
+            shutil.which("ollama") or "",
+            r"C:\Users\Administrator\AppData\Local\Programs\Ollama\ollama.exe",
+            r"C:\Users\yuhua\AppData\Local\Programs\Ollama\ollama.exe",
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Ollama", "ollama.exe"),
+        ]
+        for candidate in candidates:
+            if candidate and os.path.exists(candidate):
+                return candidate
+        return ""
+
+    def _install_ollama_runtime(self) -> Dict[str, Any]:
+        """通过系统包管理器自动安装 Ollama。"""
+        command = [
+            "winget",
+            "install",
+            "--id",
+            "Ollama.Ollama",
+            "-e",
+            "--accept-package-agreements",
+            "--accept-source-agreements",
+            "--disable-interactivity",
+        ]
+        proc = run_hidden(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        output = self._decode_subprocess_output(proc.stdout)
+        return {
+            "ok": proc.returncode == 0,
+            "output": output,
+            "command": " ".join(command),
+        }
+
+    def _check_ollama_runtime(self) -> Dict[str, Any]:
+        logs: List[str] = []
+        ollama_exe = self._find_ollama_executable()
+        if not ollama_exe:
+            auto_install = bool(get_config("self_check.pc_auto_install_ollama", True))
+            logs.append("[WARN] 未检测到本机 Ollama。")
+            if auto_install:
+                logs.append("[INFO] 开始自动安装 Ollama，本步骤仅在首次使用本地模型时执行。")
+                install_report = self._install_ollama_runtime()
+                logs.append(f"[INFO] 安装命令: {install_report.get('command', '')}")
+                tail_lines = [line for line in str(install_report.get("output") or "").splitlines() if line.strip()][-12:]
+                for line in tail_lines:
+                    logs.append(f"[INFO] {line}")
+                ollama_exe = self._find_ollama_executable()
+                if install_report.get("ok") and ollama_exe:
+                    return {
+                        "status": "pass",
+                        "summary": "Ollama 已自动补齐",
+                        "detail": ollama_exe,
+                        "raw_output": "\n".join(logs),
+                    }
+            return {
+                "status": "warn",
+                "summary": "未检测到 Ollama",
+                "detail": "如需使用本地模型，请先安装 Ollama。",
+                "raw_output": "\n".join(logs),
+            }
+
+        logs.append(f"[INFO] 已检测到 Ollama: {ollama_exe}")
+        return {
+            "status": "pass",
+            "summary": "Ollama 本地模型环境已就绪",
+            "detail": ollama_exe,
+            "raw_output": "\n".join(logs),
+        }
+
     def _ensure_training_dependencies_ready(self) -> None:
         self._log_raw_line("[INFO] Checking training dependencies on demand before starting the job.")
         missing_training, probe_logs, probe = self._missing_dependencies_in_training_env(TRAINING_DEPENDENCY_MAP)
@@ -1256,7 +1329,7 @@ class LabDetectorRuntime:
         }
 
     def _check_vosk_assets(self) -> Dict[str, Any]:
-        model_root = Path(resource_path("pc/voice/model"))
+        model_root = vosk_model_dir()
         model_am = model_root / "am"
         if model_am.exists():
             return {
@@ -1310,7 +1383,7 @@ class LabDetectorRuntime:
         }
 
     def _check_sensevoice_assets(self) -> Dict[str, Any]:
-        model_root = Path(resource_path("pc/voice/models/SenseVoiceSmall"))
+        model_root = sensevoice_model_dir()
         config_file = model_root / "configuration.json"
         if config_file.exists():
             return {
@@ -1679,12 +1752,14 @@ class LabDetectorRuntime:
         set_ai_backend(self.ai_backend, self.selected_model)
         if self.ai_backend == "ollama":
             self._ensure_ollama_service()
+            if self.selected_model:
+                if ensure_ollama_model_available(self.selected_model):
+                    self._log_info(f"Ollama 模型已就绪: {self.selected_model}")
+                else:
+                    raise RuntimeError(f"Ollama 模型拉取失败：{self.selected_model}")
 
     def _ensure_ollama_service(self) -> None:
-        ollama_exe = "ollama"
-        default_path = Path(r"C:\Users\Administrator\AppData\Local\Programs\Ollama\ollama.exe")
-        if os.name == "nt" and default_path.exists():
-            ollama_exe = str(default_path)
+        ollama_exe = self._find_ollama_executable() or "ollama"
         creation_flags = 0x08000000 if os.name == "nt" else 0
         try:
             popen_hidden(

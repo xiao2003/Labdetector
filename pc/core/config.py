@@ -9,6 +9,7 @@ import os
 from typing import Any
 
 from pc.app_identity import resource_path
+from pc.core.runtime_assets import DEFAULT_OLLAMA_MODELS, sensevoice_model_dir, vosk_model_dir
 
 
 project_root = str(resource_path("pc"))
@@ -24,7 +25,7 @@ _DEFAULT_CONFIG = {
         "url": "http://127.0.0.1:11434",
         "api_base": "http://127.0.0.1:11434",
         "base_url": "http://127.0.0.1:11434",
-        "default_models": "llava:13b-v1.5-q4_K_M, llava:7b-v1.5-q4_K_M, llava:latest, qwen-vl",
+        "default_models": ", ".join(DEFAULT_OLLAMA_MODELS),
     },
     "local_llm": {
         "active_model": "",
@@ -102,14 +103,14 @@ _DEFAULT_CONFIG = {
         "online_recognition": "True",
         "asr_engine": "auto",
         "wake_engine": "auto",
-        "funasr_model": str(resource_path("pc/voice/models/SenseVoiceSmall")),
+        "funasr_model": str(sensevoice_model_dir()),
         "funasr_model_repo_id": "iic/SenseVoiceSmall",
         "funasr_vad_model": "",
         "funasr_punc_model": "",
         "funasr_device": "auto",
         "funasr_language": "zh",
         "funasr_use_itn": "False",
-        "vosk_model_path": str(resource_path("pc/voice/model")),
+        "vosk_model_path": str(vosk_model_dir()),
         "openwakeword_model_path": "",
         "openwakeword_threshold": "0.45",
         "openwakeword_chunk_size": "1280",
@@ -163,6 +164,7 @@ _DEFAULT_CONFIG = {
         "pc_auto_install_optional": "False",
         "pc_auto_install_voice_ai": "True",
         "pc_auto_install_gpu_runtime": "True",
+        "pc_auto_install_ollama": "True",
         "pi_auto_install_dependencies": "True",
     },
     "gpu_runtime": {
@@ -209,6 +211,18 @@ def _init_config() -> None:
                 if missing_items:
                     _config.set(section, key, ", ".join(existing_list + missing_items))
                     needs_save = True
+
+    old_sensevoice_path = str(resource_path("pc/voice/models/SenseVoiceSmall"))
+    new_sensevoice_path = str(sensevoice_model_dir())
+    if _config.get("voice_interaction", "funasr_model", fallback="") == old_sensevoice_path:
+        _config.set("voice_interaction", "funasr_model", new_sensevoice_path)
+        needs_save = True
+
+    old_vosk_path = str(resource_path("pc/voice/model"))
+    new_vosk_path = str(vosk_model_dir())
+    if _config.get("voice_interaction", "vosk_model_path", fallback="") == old_vosk_path:
+        _config.set("voice_interaction", "vosk_model_path", new_vosk_path)
+        needs_save = True
 
     if needs_save or not os.path.exists(config_file):
         _save_config()

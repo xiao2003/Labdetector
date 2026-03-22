@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -11,6 +12,7 @@ import requests
 
 from pc.core.config import get_config, set_config
 from pc.core.logger import console_error, console_info
+from pc.core.runtime_assets import DEFAULT_OLLAMA_MODELS, ollama_model_options
 from pc.core.subprocess_utils import run_hidden
 from pc.training.model_linker import model_linker
 
@@ -19,7 +21,7 @@ PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
         "label": "Ollama（本地私有化模型）",
         "section": "ollama",
         "model_key": "default_model",
-        "default_model": "llava:7b-v1.5-q4_K_M",
+        "default_model": "gemma3:4b",
         "base_url": "http://127.0.0.1:11434",
         "kind": "local_builtin",
     },
@@ -145,6 +147,23 @@ _STATE: Dict[str, str] = {
 }
 
 _LOCAL_MODEL_CACHE: Dict[Tuple[str, str], Dict[str, Any]] = {}
+_OLLAMA_SESSION: requests.Session | None = None
+
+
+def ollama_host() -> str:
+    return str(
+        get_config("ollama.base_url", get_config("ollama.api_base", get_config("ollama.url", "http://127.0.0.1:11434")))
+    ).rstrip("/")
+
+
+def _ollama_session() -> requests.Session:
+    """本地 Ollama 请求固定绕过系统代理，避免 127.0.0.1 被错误转发到本机代理端口。"""
+    global _OLLAMA_SESSION
+    if _OLLAMA_SESSION is None:
+        session = requests.Session()
+        session.trust_env = False
+        _OLLAMA_SESSION = session
+    return _OLLAMA_SESSION
 
 
 def provider_choices() -> List[Dict[str, str]]:
@@ -258,13 +277,39 @@ def list_ollama_models() -> List[str]:
         console_error(f"获取 Ollama 模型列表失败: {exc}")
 
     try:
-        host = str(get_config("ollama.base_url", get_config("ollama.url", "http://127.0.0.1:11434"))).rstrip("/")
-        response = requests.get(f"{host}/api/tags", timeout=5)
+        response = _ollama_session().get(f"{ollama_host()}/api/tags", timeout=5)
         response.raise_for_status()
         models = [str(item.get("name", "")) for item in response.json().get("models", []) if item.get("name")]
         return sorted(set(models))
     except Exception:
         return []
+
+
+def ensure_ollama_model_available(model: str) -> bool:
+    target_model = str(model or "").strip()
+    if not target_model:
+        return False
+    installed = list_ollama_models()
+    if target_model in installed:
+        return True
+    console_info(f"[OLLAMA] 本地未检测到模型 {target_model}，正在首次拉取，请稍候...")
+    try:
+        response = _ollama_session().post(
+            f"{ollama_host()}/api/pull",
+            json={"name": target_model, "stream": False},
+            timeout=1800,
+        )
+        response.raise_for_status()
+    except Exception as exc:
+        console_error(f"[OLLAMA] 模型拉取失败: {target_model} -> {exc}")
+        return False
+    installed = list_ollama_models()
+    ready = target_model in installed
+    if ready:
+        console_info(f"[OLLAMA] 模型已就绪: {target_model}")
+    else:
+        console_error(f"[OLLAMA] 模型拉取结束后仍未出现在本地列表中: {target_model}")
+    return ready
 
 
 def list_local_adapter_models() -> List[str]:
@@ -275,7 +320,7 @@ def list_local_adapter_models() -> List[str]:
 def configured_model_catalog() -> Dict[str, List[str]]:
     catalog = {"ollama": list_ollama_models()}
     if not catalog["ollama"]:
-        raw_defaults = get_config("ollama.default_models", "llava:7b-v1.5-q4_K_M")
+        raw_defaults = get_config("ollama.default_models", ", ".join(DEFAULT_OLLAMA_MODELS))
         catalog["ollama"] = [item.strip() for item in str(raw_defaults).split(",") if item.strip()]
     catalog["local_adapter"] = list_local_adapter_models()
     for backend, preset in PROVIDER_PRESETS.items():
@@ -319,6 +364,64 @@ def _encode_frame(frame: Any) -> str:
     if not ok:
         raise RuntimeError("图像编码失败")
     return base64.b64encode(encoded.tobytes()).decode("utf-8")
+
+
+def _extract_answer_from_thinking(thinking: str) -> str:
+    """当 Qwen3.5 把最终答案仅放进 thinking 字段时，提取最后一条像正式回答的中文句子。"""
+    text = str(thinking or "").strip()
+    if not text:
+        return ""
+
+    lines = [line.strip(" -*•\t") for line in text.splitlines()]
+    sentence_candidates: List[str] = []
+    for line in lines:
+        if not line:
+            continue
+        lowered = line.lower()
+        if lowered.startswith(("thinking process", "final check", "final output", "final decision", "wait,", "okay", "draft", "content:")):
+            continue
+        if "characters" in lowered or "char count" in lowered or "final string" in lowered:
+            continue
+        if not any("\u4e00" <= ch <= "\u9fff" for ch in line):
+            continue
+        if len(line) > 160:
+            continue
+        if line.endswith(("。", "！", "？")):
+            sentence_candidates.append(line)
+    if sentence_candidates:
+        return sentence_candidates[-1]
+
+    quoted_matches = re.findall(r"[“\"]([^”\"\n]{8,160})[”\"]", text)
+    quoted_candidates = [item.strip() for item in quoted_matches if any("\u4e00" <= ch <= "\u9fff" for ch in item)]
+    if quoted_candidates:
+        return quoted_candidates[-1]
+    return ""
+
+
+def _recover_answer_from_thinking(model: str, thinking: str) -> str:
+    """当模型把正文全部写进 thinking 时，再做一次轻量答案提取。"""
+    source = str(thinking or "").strip()
+    if not source:
+        return ""
+    prompt = (
+        "请根据下面已有的思考过程，只输出最终中文答案，不要复述推理，不要输出英文，不要输出“思考过程”字样。\n\n"
+        f"{source[:2400]}"
+    )
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+            "temperature": 0.1,
+            "num_ctx": 2048,
+            "num_predict": 96,
+            "repeat_penalty": 1.0,
+        },
+    }
+    response = _ollama_session().post(f"{ollama_host()}/api/generate", json=payload, timeout=_timeout_seconds())
+    response.raise_for_status()
+    data = response.json()
+    return str(data.get("response", "")).strip()
 
 
 def _openai_chat_completion(
@@ -369,21 +472,38 @@ def _openai_chat_completion(
 
 
 def _ollama_generate(prompt: str, model: str, frame: Any | None = None) -> str:
-    host = str(
-        get_config("ollama.base_url", get_config("ollama.api_base", get_config("ollama.url", "http://127.0.0.1:11434")))
-    ).rstrip("/")
+    if not ensure_ollama_model_available(model):
+        raise RuntimeError(f"Ollama 模型不可用：{model}")
+    host = ollama_host()
+    options = {
+        "temperature": 0.3,
+    }
+    options.update(ollama_model_options(model))
     payload: Dict[str, Any] = {
         "model": model,
         "prompt": prompt,
         "stream": False,
-        "options": {"temperature": 0.3},
+        "options": options,
     }
+    # Qwen3.5 在本项目场景下更适合直接给最终答案，避免把时间耗在 thinking 轨迹上。
+    if str(model or "").strip().startswith("qwen3.5:"):
+        payload["think"] = False
     if frame is not None:
         payload["images"] = [_encode_frame(frame)]
-    response = requests.post(f"{host}/api/generate", json=payload, timeout=_timeout_seconds())
+    response = _ollama_session().post(f"{host}/api/generate", json=payload, timeout=_timeout_seconds())
     response.raise_for_status()
-    result = str(response.json().get("response", "")).strip()
-    return result or "本地模型未返回文本内容。"
+    payload_data = response.json()
+    result = str(payload_data.get("response", "")).strip()
+    if result:
+        return result
+    thinking_answer = _extract_answer_from_thinking(str(payload_data.get("thinking", "") or ""))
+    if thinking_answer:
+        return thinking_answer
+    if str(payload_data.get("thinking", "") or "").strip():
+        recovered = _recover_answer_from_thinking(model, str(payload_data.get("thinking", "") or ""))
+        if recovered:
+            return recovered
+    return "本地模型未返回文本内容。"
 
 
 def _load_local_adapter_runtime(base_model: str, adapter_path: str) -> Dict[str, Any]:

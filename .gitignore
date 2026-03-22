@@ -10,13 +10,14 @@ pc/log/
 
 # Knowledge base runtime artifacts
 pc/knowledge_base/faiss_index/
-pc/knowledge_base/docs/*.txt
+pc/knowledge_base/docs/
 pc/knowledge_base/scopes/
 pc/knowledge_base/structured_kb.sqlite3
 
 # Local models and large assets
 models/
 pc/voice/model/
+pc/voice/models/
 *.pt
 
 # Local environment and IDE
