@@ -421,6 +421,7 @@ python test/pi/test_pc_pi_llm_interpreter_closed_loop.py
 ```
 
 ### 6. 文档索引
+* `docs/NeuroLab_Hub_完整手册.md`
 * `docs/NeuroLab_Hub_用户手册.md`
 * `docs/NeuroLab_Hub_软件说明书.md`
 * `docs/NeuroLab_Hub_测试实例.md`
