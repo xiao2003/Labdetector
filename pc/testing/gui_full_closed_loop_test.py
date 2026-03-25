@@ -209,7 +209,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="执行 GUI 全模块与 PC-Pi 虚拟闭环测试")
     parser.add_argument(
         "--report-file",
-        default=str(Path("D:/NeuroLab/_machine_switch_test/gui_full_closed_loop_report.json")),
+        default=str(Path("release/gui_full_closed_loop_report.json")),
         help="测试报告输出路径",
     )
     return parser.parse_args()

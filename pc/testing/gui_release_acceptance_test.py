@@ -30,7 +30,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="执行 GUI 发布验收闭环测试")
     parser.add_argument(
         "--report-file",
-        default=str(Path("D:/NeuroLab/_machine_switch_test/gui_release_acceptance_report.json")),
+        default=str(Path("release/gui_release_acceptance_report.json")),
         help="测试报告输出路径",
     )
     parser.add_argument(

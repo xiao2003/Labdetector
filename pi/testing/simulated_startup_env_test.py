@@ -18,7 +18,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="执行仿真树莓派启动环境测试")
     parser.add_argument(
         "--report-file",
-        default=str(Path("D:/NeuroLab/_machine_switch_test/pi_simulated_startup_env_report.json")),
+        default="pi_simulated_startup_env_report.json",
         help="测试报告输出路径",
     )
     return parser.parse_args()

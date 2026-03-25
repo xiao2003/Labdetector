@@ -68,7 +68,7 @@ python -m pc.testing.virtual_text_voice_closed_loop_test
 ### 4.3 单节点 GUI 发布验收
 
 ```powershell
-python -m pc.testing.gui_release_acceptance_test --node-count 1 --report-file D:\NeuroLab\_machine_switch_test\gui_release_acceptance_single.json
+python -m pc.testing.gui_release_acceptance_test --node-count 1 --report-file release/gui_release_acceptance_single.json
 ```
 
 预期：
@@ -80,7 +80,7 @@ python -m pc.testing.gui_release_acceptance_test --node-count 1 --report-file D:
 ### 4.4 四节点 GUI 发布验收
 
 ```powershell
-python -m pc.testing.gui_release_acceptance_test --node-count 4 --report-file D:\NeuroLab\_machine_switch_test\gui_release_acceptance_multi4.json
+python -m pc.testing.gui_release_acceptance_test --node-count 4 --report-file release/gui_release_acceptance_multi4.json
 ```
 
 预期：
@@ -139,9 +139,9 @@ python -m pc.testing.gui_release_acceptance_test --node-count 4 --report-file D:
 
 ## 7. 当前报告文件
 
-- `D:\NeuroLab\_machine_switch_test\virtual_text_voice_closed_loop_report.json`
-- `D:\NeuroLab\_machine_switch_test\gui_release_acceptance_single.json`
-- `D:\NeuroLab\_machine_switch_test\gui_release_acceptance_multi4.json`
+- `release/virtual_text_voice_closed_loop_report.json`
+- `release/gui_release_acceptance_single.json`
+- `release/gui_release_acceptance_multi4.json`
 
 ## 8. 放行标准
 

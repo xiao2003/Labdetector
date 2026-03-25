@@ -2,7 +2,7 @@
 
 软件全称：NeuroLab Hub——可编排专家模型的实验室多模态智能中枢  
 软件简称：NeuroLab Hub  
-版本号：3.0.6  
+版本号：1.0.1  
 完成日期：2026 年 3 月  
 著作权人：NeuroLab Hub 软件研发组
 
@@ -10,7 +10,7 @@
 
 NeuroLab Hub 是一套可编排专家模型的实验室多模态智能中枢软件系统。软件以 AI for Science 为技术导向，融合计算机视觉、大语言模型、语音识别、语音播报、知识库管理、实验档案沉淀和模型训练能力，为实验室监控、风险预警、智能问答、知识传承和私有模型迭代提供统一的软件化平台。
 
-软件采用 “PC 中心端 + Raspberry Pi 边缘节点 + 专家模型体系 + 多知识库体系 + 训练工作台” 的整体架构，可直接以 Windows 安装包、便携 ZIP 和源码仓库三种方式交付。对普通用户而言，可通过安装包或 ZIP 直接启动主程序；对科研团队和开发者而言，可继续在 `pc/`、`pi/`、`docs/` 和 `scripts/` 目录基础上扩展业务能力、知识管线和训练流程。
+软件采用 “PC 中心端 + Raspberry Pi 边缘节点 + 专家模型体系 + 多知识库体系 + 训练工作台” 的整体架构。当前正式推荐交付基线为 Windows 轻量 `SilentDir/onedir` 包与 Raspberry Pi `pi/` 目录协同部署。对普通用户而言，可通过解压包直接启动主程序；对科研团队和开发者而言，可继续在 `pc/`、`pi/`、`docs/` 和 `scripts/` 目录基础上扩展业务能力、知识管线和训练流程。
 
 ## 二、研发背景
 
@@ -68,16 +68,18 @@ NeuroLab Hub 采用中心端与边缘端解耦的系统架构：
 
 ### 6.1 交付形态
 
-- `NeuroLab-Hub-Setup-vX.Y.Z.exe`：Windows 引导式安装包
-- `NeuroLab-Hub-vX.Y.Z.zip`：完整闭环部署包
-- `NeuroLab-Hub-Portable-vX.Y.Z.zip`：Windows 便携包
+- Windows：`NeuroLab Hub SilentDir.exe` + `_internal/` + `APP/`
+- Raspberry Pi：`pi/` 目录整体复制
+- 分发方式：`zip`
 
-### 6.2 安装后的主要入口
+当前版本不再以 `onefile` 作为正式交付目标。
 
-- `pc/NeuroLab Hub.exe`：主程序入口
-- `pc/NeuroLab Hub LLM.exe`：LLM 微调工作台入口
-- `pc/NeuroLab Hub Vision.exe`：识别模型训练入口
-- `pi/start_pi_node.sh`：Pi 节点启动脚本
+### 6.2 主要入口
+
+- Windows 主程序入口：`NeuroLab Hub SilentDir.exe`
+- Raspberry Pi 一键接入入口：`pc/一键配置树莓派.cmd`
+- Pi 节点状态入口：`python3 pi_cli.py install-status`
+- Pi 节点启动入口：`bash start_pi_node.sh`
 
 ### 6.3 源码结构
 
@@ -264,12 +266,12 @@ NeuroLab Hub 采用中心端与边缘端解耦的系统架构：
 
 ## 十三、已验证的基础测试结论
 
-截至 2026 年 3 月 8 日，当前版本已完成以下基础验证：
+截至 `1.0.1` 当前基线，项目已完成以下基础验证：
 
 - 主程序 EXE 启动烟测通过
 - LLM 训练入口 EXE 启动烟测通过
 - 识别模型训练入口 EXE 启动烟测通过
-- Pi CLI `self-check --help` 与 `start --help` 可正常运行
+- Pi 自治安装入口与状态查询入口可正常运行
 - 关键 Python 入口文件语法编译通过
 - Windows 桌面 EXE 打包成功
 - 便携 ZIP 打包成功
@@ -277,10 +279,9 @@ NeuroLab Hub 采用中心端与边缘端解耦的系统架构：
 
 更详细的测试矩阵、测试实例和测试记录见：
 
-- `docs/NeuroLab_Hub_测试实例.md`
-- `docs/NeuroLab_Hub_测试报告.md`
+- `docs/NeuroLab_Hub_测试报告_1.0.1.md`
+- `docs/NeuroLab_Hub_PC_PI_测试过程手册.md`
 
 ## 十四、结论
 
 NeuroLab Hub 已形成一套可安装、可运行、可扩展、可训练、可演示和可申报的软件系统。它不仅提供实验室实时监控和语音交互能力，也提供面向知识管理、模型训练和实验档案沉淀的完整工程闭环，可作为实验室智能化建设和 AI for Science 场景落地的软件基础平台。
-

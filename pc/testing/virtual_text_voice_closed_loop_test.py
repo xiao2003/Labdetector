@@ -159,7 +159,7 @@ class VirtualAudioVoicePiServer:
                 await websocket.send(f"PI_EXPERT_ACK:{json.dumps(ack, ensure_ascii=False)}")
 
     async def _emit_audio_commands(self, websocket, wake_word: str) -> None:
-        asset_root = Path("D:/NeuroLab/_machine_switch_test/virtual_audio_voice_assets") / f"node_{self.node_id}"
+        asset_root = Path("release/virtual_audio_voice_assets") / f"node_{self.node_id}"
         self.audio_suite = build_dynamic_voice_suite(asset_root, wake_word=wake_word)
         release_root = _resolve_release_root_with_pi()
         if release_root is None:
@@ -215,7 +215,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="执行虚拟音频语音 + 视觉闭环测试")
     parser.add_argument(
         "--report-file",
-        default=str(Path("D:/NeuroLab/_machine_switch_test/virtual_text_voice_closed_loop_report.json")),
+        default=str(Path("release/virtual_text_voice_closed_loop_report.json")),
         help="测试报告输出路径",
     )
     return parser.parse_args()

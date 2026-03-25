@@ -166,9 +166,9 @@ bash start_pi_node.sh
 
 报告文件：
 
-- `D:\NeuroLab\_machine_switch_test\virtual_text_voice_closed_loop_report.json`
-- `D:\NeuroLab\_machine_switch_test\gui_release_acceptance_single.json`
-- `D:\NeuroLab\_machine_switch_test\gui_release_acceptance_multi4.json`
+- `release/virtual_text_voice_closed_loop_report.json`
+- `release/gui_release_acceptance_single.json`
+- `release/gui_release_acceptance_multi4.json`
 
 ## 10. 当前边界
 
