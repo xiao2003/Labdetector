@@ -93,7 +93,7 @@ class MultiPiManager:
             console_error(f"节点 [{pi_id}] 边缘事件队列已满，已丢弃事件: {event.event_name}")
 
     async def _event_worker(self):
-        from pc.voice.voice_interaction import get_voice_interaction
+        from pc.voice.voice_interaction import get_remote_text_router
 
         while self.running or not self.event_queue.empty():
             try:
@@ -104,7 +104,7 @@ class MultiPiManager:
                 if not self.running:
                     continue
                 console_info(f"收到节点 [{pi_id}] 边缘高优告警: {event.event_name} ({event.event_id})")
-                agent = get_voice_interaction()
+                agent = get_remote_text_router()
                 if agent and agent.is_active:
                     console_info("语音助手处于活跃状态，暂缓播报边缘告警。")
                     continue
@@ -159,7 +159,7 @@ class MultiPiManager:
         while self.running:
             try:
                 self.node_status[pi_id] = "connecting"
-                async with websockets.connect(uri, ping_interval=None) as ws:
+                async with websockets.connect(uri, ping_interval=None, proxy=None) as ws:
                     self.node_status[pi_id] = "online"
                     console_info(f"节点 [{pi_id}] ({ip}) 握手成功")
                     await self.send_queues[pi_id].put(f"CMD:SET_FPS:{self.target_fps}")
@@ -235,8 +235,8 @@ class MultiPiManager:
     def _handle_remote_voice(self, pi_id, data):
         cmd_text = data.replace("PI_VOICE_COMMAND:", "")
         console_info(f"收到节点 {pi_id} 语音指令: {cmd_text}")
-        from pc.voice.voice_interaction import get_voice_interaction
-        agent = get_voice_interaction()
+        from pc.voice.voice_interaction import get_remote_text_router
+        agent = get_remote_text_router()
         if not agent:
             self.send_to_node(pi_id, "CMD:TTS:PC 端语音助手未就绪，请检查依赖环境。")
             return

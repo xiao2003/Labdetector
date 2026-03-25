@@ -4,17 +4,36 @@
 tools/model_downloader.py - 独立的模型资源自愈管理器 (带静默清理机制)
 """
 import os
+import shutil
 import time
 import urllib.request
 import zipfile
+from typing import Optional
 
 VOSK_MODEL_URL = "https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip"
 
 
-def check_and_download_vosk():
-    """检查当前端点的 Vosk 模型，缺失则自动下载，并清理历史僵尸文件"""
+def _offline_model_dir(base_dir: str) -> str:
+    return os.path.join(base_dir, "offline", "models", "vosk-model-small-cn-0.22")
+
+
+def _copy_tree(source_dir: str, target_dir: str) -> bool:
+    if not os.path.isdir(source_dir):
+        return False
+    os.makedirs(target_dir, exist_ok=True)
+    for root, _dirs, files in os.walk(source_dir):
+        rel_root = os.path.relpath(root, source_dir)
+        current_target = target_dir if rel_root == "." else os.path.join(target_dir, rel_root)
+        os.makedirs(current_target, exist_ok=True)
+        for filename in files:
+            shutil.copy2(os.path.join(root, filename), os.path.join(current_target, filename))
+    return os.path.exists(os.path.join(target_dir, "am"))
+
+
+def check_and_download_vosk(target_dir: Optional[str] = None, allow_download: bool = False):
+    """检查当前端点的 Vosk 模型，优先使用离线包，必要时再按显式授权下载。"""
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    target_dir = os.path.join(base_dir, "voice", "model")
+    target_dir = os.path.normpath(target_dir or os.path.join(base_dir, "voice", "model"))
     zip_path = os.path.join(target_dir, "model_temp.zip")
 
     # =========================================================
@@ -30,6 +49,15 @@ def check_and_download_vosk():
     model_am_path = os.path.join(target_dir, "am")
     if os.path.exists(model_am_path):
         return True
+
+    offline_model_dir = _offline_model_dir(base_dir)
+    if _copy_tree(offline_model_dir, target_dir):
+        print(f"[INFO] 已从离线包恢复 Vosk 模型: {offline_model_dir}")
+        return True
+
+    if not allow_download:
+        print("[WARN] 未检测到离线语音模型，且当前禁止联网下载。")
+        return False
 
     print(f"\n[INFO] 未检测到离线语音模型，正在自动获取...")
     print(f"[INFO] 目标路径: {target_dir}")

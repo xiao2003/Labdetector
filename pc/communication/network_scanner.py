@@ -30,21 +30,23 @@ def scan_multi_nodes(expected_count: int, timeout: float = 3.0) -> dict:
     sock.settimeout(timeout)
 
     msg = json.dumps({"type": "pc_discovery", "service": "video_analysis"}).encode("utf-8")
-    found_ips = set()
+    found_endpoints: dict[str, str] = {}
 
     try:
         sock.sendto(msg, ("<broadcast>", 50000))
         start_time = time.time()
-        while (time.time() - start_time) < timeout and len(found_ips) < expected_count:
+        while (time.time() - start_time) < timeout and len(found_endpoints) < expected_count:
             try:
                 data, addr = sock.recvfrom(1024)
                 payload = data.decode("utf-8", errors="ignore")
                 resp = json.loads(payload)
                 if resp.get("type") == "raspberry_pi_response":
-                    ip = resp.get("ip", addr[0])
-                    if ip not in found_ips:
-                        found_ips.add(ip)
-                        console_info(f"发现节点: {ip} ({len(found_ips)}/{expected_count})")
+                    ip = str(resp.get("ip", addr[0]) or addr[0]).strip()
+                    ws_port = str(resp.get("ws_port", "") or "").strip()
+                    endpoint = f"{ip}:{ws_port}" if ws_port else ip
+                    if ip and endpoint not in found_endpoints.values():
+                        found_endpoints[ip] = endpoint
+                        console_info(f"发现节点: {endpoint} ({len(found_endpoints)}/{expected_count})")
             except socket.timeout:
                 break
             except Exception:
@@ -52,7 +54,8 @@ def scan_multi_nodes(expected_count: int, timeout: float = 3.0) -> dict:
     finally:
         sock.close()
 
-    return {str(i + 1): ip for i, ip in enumerate(sorted(found_ips))}
+    ordered = [found_endpoints[ip] for ip in sorted(found_endpoints)]
+    return {str(i + 1): endpoint for i, endpoint in enumerate(ordered)}
 
 
 def get_lab_topology() -> dict:

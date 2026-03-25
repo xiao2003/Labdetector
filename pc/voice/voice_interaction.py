@@ -156,8 +156,14 @@ def _existing_model_dir(*relative_candidates: str) -> str:
 
 
 class VoiceInteraction:
-    def __init__(self, config: Optional[VoiceInteractionConfig] = None) -> None:
+    def __init__(
+        self,
+        config: Optional[VoiceInteractionConfig] = None,
+        *,
+        initialize_audio_models: bool = True,
+    ) -> None:
         self.config = config or VoiceInteractionConfig()
+        self.initialize_audio_models = bool(initialize_audio_models)
         self.recognizer = sr.Recognizer() if sr else None
         self.microphone = None
         self.is_active = False
@@ -182,7 +188,8 @@ class VoiceInteraction:
         self.openwakeword_model = None
 
         self._configure_recognizer()
-        self._init_voice_models()
+        if self.initialize_audio_models:
+            self._init_voice_models()
 
     def _configure_recognizer(self) -> None:
         if not self.recognizer:
@@ -239,7 +246,9 @@ class VoiceInteraction:
             config_file = os.path.join(candidate, "configuration.json")
             if os.path.exists(config_file):
                 return candidate
-        return self.config.funasr_model_repo_id or configured
+        if self.config.asr_engine == "funasr":
+            return self.config.funasr_model_repo_id or configured
+        raise FileNotFoundError("未检测到本地 SenseVoice 模型，自动模式将回退到其他识别链路。")
 
     def _build_funasr_model(self, kwargs: dict[str, Any]) -> Any:
         # Suppress third-party startup chatter so the runtime log keeps only our own status lines.
@@ -1127,7 +1136,7 @@ class VoiceInteraction:
                 return response
 
             local_intent = self._match_local_command_intent(text)
-            if local_intent and self.local_command_handler is not None:
+            if local_origin and local_intent and self.local_command_handler is not None:
                 try:
                     response = str(self.local_command_handler(text, local_intent) or "").strip()
                 except Exception as exc:
@@ -1368,6 +1377,15 @@ class VoiceInteraction:
 
 
 _voice_interaction: Optional[VoiceInteraction] = None
+_remote_text_router: Optional[VoiceInteraction] = None
+_pending_local_command_handler: Optional[Callable[[str, str], Optional[str]]] = None
+
+
+def set_voice_local_command_handler(handler: Optional[Callable[[str, str], Optional[str]]]) -> None:
+    global _pending_local_command_handler
+    _pending_local_command_handler = handler
+    if _voice_interaction is not None:
+        _voice_interaction.set_local_command_handler(handler)
 
 
 def get_voice_interaction() -> Optional[VoiceInteraction]:
@@ -1376,4 +1394,14 @@ def get_voice_interaction() -> Optional[VoiceInteraction]:
         return None
     if _voice_interaction is None:
         _voice_interaction = VoiceInteraction()
+        if _pending_local_command_handler is not None:
+            _voice_interaction.set_local_command_handler(_pending_local_command_handler)
     return _voice_interaction
+
+
+def get_remote_text_router() -> Optional[VoiceInteraction]:
+    """返回仅用于远端文本指令处理的轻量语音路由器。"""
+    global _remote_text_router
+    if _remote_text_router is None:
+        _remote_text_router = VoiceInteraction(initialize_audio_models=False)
+    return _remote_text_router

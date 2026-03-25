@@ -1,150 +1,160 @@
 # NeuroLab Hub PC-Pi 测试过程手册
 
+版本：1.0.1
+
 ## 1. 目的
 
-本手册用于指导交付前验收，覆盖以下范围：
+本手册用于说明 `1.0.1` 发布前的正式验收流程。验收口径已经统一为“普通用户从下载 `zip` 到在实验室成功部署”的完整旅程，而不是单纯源码冒烟。
 
-- PC 单机功能测试
-- GUI 静默回归
-- 语音状态机测试
-- 视觉训练与标注测试
-- PC-Pi 单节点闭环测试
-- PC-Pi 多节点压力闭环测试
+## 2. 验收范围
 
-测试目标是确认：
+当前正式验收覆盖：
 
-- 生产功能不依赖 `tmp/` 中的临时测试脚本
-- `pc/` 与 `pi/` 可独立交付
-- 所有测试逻辑统一归档到 `test/pc` 与 `test/pi`
+- 新机首启与轻量 `exe` 交付
+- GUI 全模块实测
+- 模型选择、知识导入、专家模型编排、专家知识导入
+- `LLM` 训练与视觉训练
+- `PC-Pi` 单节点闭环
+- `PC-Pi` `4` 节点闭环
+- 音频文件驱动的 `Pi` 本地识别上行
+- 视觉事件上送、专家分析、结果回传与 ACK
 
-## 2. 环境要求
+## 3. 测试前提
 
-- Windows 10 / 11
+### 3.1 Windows 端
+
+- Windows 10/11
 - Python 3.11
-- 可用 GPU 优先，但 CPU 也应能完成基础验证
-- 已安装 Ollama，并至少存在一个本地可用模型
-- 麦克风、扬声器、摄像头可用
+- 可用 GPU 优先
+- 已安装或允许自检安装 Ollama
 
-## 3. 测试分层
+### 3.2 Pi 端
 
-### 3.1 PC 单机功能
-- GUI 启动
-- 系统自检
-- 单机监控
-- 语音唤醒与控制词
-- 标注与训练面板
-- 知识库导入
+正式验收阶段先使用虚拟 `Pi`，真实硬件接入作为后续阶段。
 
-### 3.2 Pi 闭环功能
-- 单节点闭环
-- 多节点闭环
-- 视觉事件上送
-- 语音命令上送
-- PC 结果回传与 Pi 播报
+### 3.3 音频格式
 
-### 3.3 压力与稳定性
-- 多节点并发
-- 弱预览帧 + 关键帧裁剪
-- 训练任务冒烟
-- GUI 静默点击回归
+所有语音样本统一采用：
 
-## 4. 推荐执行顺序
+- `wav`
+- `16kHz`
+- `mono`
+- `PCM16`
 
-1. `python test/pc/auto_module_test.py`
-2. `python test/pc/run_gui_silent_test.py`
-3. `python test/pc/test_visual_training_pipeline.py`
-4. `python test/pi/test_pc_pi_integrated_bridge.py`
-5. `python test/pi/test_pc_pi_llm_interpreter_closed_loop.py`
+## 4. 当前正式测试入口
 
-## 5. 具体测试项
-
-### 5.1 模块总回归
-
-命令：
+### 4.1 Pi 音频回放链路测试
 
 ```powershell
-python test/pc/auto_module_test.py
+python -m unittest pi.testing.test_audio_replay
 ```
 
 预期：
-- `pass_count > 0`
-- `fail_count = 0`
 
-### 5.2 GUI 静默回归
+- `Pi` 侧真实离线识别链路可以从音频文件得到唤醒与命令文本
 
-命令：
+### 4.2 音频 + 视觉闭环基础验证
 
 ```powershell
-python test/pc/run_gui_silent_test.py
+python -m pc.testing.virtual_text_voice_closed_loop_test
 ```
 
 预期：
-- 所有步骤均为 `pass`
 
-### 5.3 视觉训练冒烟
+- 至少 1 条音频驱动语音闭环通过
+- 至少 1 条视觉闭环通过
+- `CMD:TTS`、`CMD:EXPERT_RESULT` 与 `ACK` 成功
 
-命令：
+### 4.3 单节点 GUI 发布验收
 
 ```powershell
-python test/pc/test_visual_training_pipeline.py
+python -m pc.testing.gui_release_acceptance_test --node-count 1 --report-file D:\NeuroLab\_machine_switch_test\gui_release_acceptance_single.json
 ```
 
 预期：
-- `ok = true`
-- `best_weights` 文件存在
 
-### 5.4 聚焦知识图像测试
+- GUI 主界面与核心窗口可打开
+- 模型选择、知识导入、专家导入、训练、标注、档案、模型配置通过
+- 单节点语音 + 视觉闭环通过
 
-命令：
+### 4.4 四节点 GUI 发布验收
 
 ```powershell
-python test/pc/test_focused_knowledge_image.py
+python -m pc.testing.gui_release_acceptance_test --node-count 4 --report-file D:\NeuroLab\_machine_switch_test\gui_release_acceptance_multi4.json
 ```
 
 预期：
-- PPE 知识域与危化品知识域都能命中新导入知识
-- 合成图像仍能触发对应专家结果
 
-### 5.5 PC-Pi 单节点 / 多节点闭环
+- `4` 个虚拟 `Pi` 全部上线
+- 每个节点至少完成 1 条语音闭环和 1 条视觉闭环
+- 节点数统计、状态栏、事件流和结果归属一致
 
-命令：
+## 5. 正式执行顺序
 
-```powershell
-python test/pi/test_pc_pi_integrated_bridge.py
-```
+1. 清理运行时缓存，模拟新机
+2. 运行 `pi.testing.test_audio_replay`
+3. 运行 `pc.testing.virtual_text_voice_closed_loop_test`
+4. 运行单节点 GUI 发布验收
+5. 运行 `4` 节点 GUI 发布验收
+6. 汇总测试报告
+7. 重打 `SilentDir` 发布包
+8. 从发布 `zip` 独立目录解压并再次回归
+9. 白名单清扫目录
 
-预期：
-- `single_node_pass = pass`
-- `multi_node_stress = pass`
+## 6. 本轮重点验证点
 
-### 5.6 知识库 + 统一解释层闭环
+### 6.1 GUI 真实操作链
 
-命令：
+当前 GUI 验收固定包含：
 
-```powershell
-python test/pi/test_pc_pi_llm_interpreter_closed_loop.py
-```
+- 主程序首启
+- 模型选择
+- 公共知识导入
+- 专家资产导入
+- 专家知识导入
+- 专家编排
+- `LLM` 训练工作区与数据导入
+- 视觉训练工作区与数据导入
+- 标注窗口最小交互
+- 档案刷新
+- 模型配置窗口打开
+- 开始监控
 
-预期：
-- 所有子项 `pass`
+### 6.2 语音闭环
 
-## 6. 人工验收要点
+当前语音链路要求：
 
-- 启动页排版正常
-- 单机模式下不显示节点日志区
-- WebSocket 模式下主系统事件流与节点日志区分离
-- 语音控制词优先级正确
-- Pi 侧可收到 PC 回传播报
+- 禁止纯文本伪造命令替代 `Pi` 端识别
+- 必须从音频文件进入 `PiVoiceRecognizer`
+- 验收以关键词匹配为准，不要求逐字完全相等
 
-## 7. 交付前清单
+### 6.3 视觉闭环
 
-- [ ] 测试脚本已归档到 `test/pc`、`test/pi`
-- [ ] `tmp/` 不再存放测试入口脚本
-- [ ] GUI 静默测试通过
-- [ ] 模块总回归通过
-- [ ] 视觉训练冒烟通过
-- [ ] PC-Pi 单节点与压力闭环通过
-- [ ] 生成轻量 EXE
-- [ ] 生成安装包
-- [ ] 清扫本地临时残留
-- [ ] 确认 `.gitignore` 生效
+当前视觉链路要求：
+
+- 触发专家策略
+- 上送视觉事件
+- `PC` 输出结构化专家结果
+- `Pi` 完成 ACK
+
+## 7. 当前报告文件
+
+- `D:\NeuroLab\_machine_switch_test\virtual_text_voice_closed_loop_report.json`
+- `D:\NeuroLab\_machine_switch_test\gui_release_acceptance_single.json`
+- `D:\NeuroLab\_machine_switch_test\gui_release_acceptance_multi4.json`
+
+## 8. 放行标准
+
+只有以下条件全部满足，才允许进入发布收口：
+
+- 新机首启通过
+- 单节点 GUI 验收通过
+- `4` 节点 GUI 验收通过
+- 音频文件驱动语音闭环通过
+- 视觉闭环通过
+- 文档基线更新完成
+- `SilentDir` 小体量发布包重打通过
+
+## 9. 当前阻塞说明
+
+当前工作区不是 `git` 仓库，因此正式“推送远端”不属于当前可执行动作。发布阶段只能停在“已验证的发布产物与文档”这一层。

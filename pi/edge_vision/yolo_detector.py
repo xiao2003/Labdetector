@@ -17,7 +17,9 @@ class SemanticEdgeEngine:
     def __init__(self) -> None:
         weights_path = str(get_pi_config("detector.weights_path", "yolov8n.pt") or "yolov8n.pt")
         conf = float(get_pi_config("detector.conf", 0.4) or 0.4)
+        imgsz = int(get_pi_config("detector.imgsz", 640) or 640)
         self.conf = max(0.05, min(conf, 0.95))
+        self.imgsz = max(320, min(imgsz, 1280))
         self.weights_path = self._resolve_weights_path(weights_path)
         self.model = YOLO(self.weights_path)
         self.last_triggers = {}
@@ -45,7 +47,8 @@ class SemanticEdgeEngine:
         if not policies:
             return []
 
-        results = self.model(frame, verbose=False, conf=self.conf)
+        # 在树莓派 5 上显式传入 imgsz，避免默认推理尺寸失控导致负载飘高。
+        results = self.model(frame, verbose=False, conf=self.conf, imgsz=self.imgsz)
         detected_objects = []
         boxes_dict = {}
 

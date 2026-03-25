@@ -1,0 +1,17 @@
+{
+  "preferred_host": "",
+  "candidate_hosts": [
+    "raspberrypi.local"
+  ],
+  "ssh": {
+    "user": "your_pi_user",
+    "password": "your_pi_password",
+    "hostkey": ""
+  },
+  "wifi": {
+    "ssid": "",
+    "password": ""
+  },
+  "poll_interval_seconds": 60,
+  "install_timeout_seconds": 14400
+}

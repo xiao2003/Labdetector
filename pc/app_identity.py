@@ -132,7 +132,13 @@ def pi_bundle_root() -> Path:
         candidate = runtime_root() / "pi"
         if candidate.exists():
             return candidate
-    return project_root() / "pi"
+    primary = project_root() / "pi"
+    if primary.exists():
+        return primary
+    sibling = project_root().parent / "pi"
+    if sibling.exists():
+        return sibling
+    return primary
 
 
 def resource_path(relative_path: str) -> Path:

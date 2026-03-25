@@ -1,0 +1,44 @@
+Pi 一键配置说明
+
+1. 打开同目录下的 pi_one_click_setup.json
+2. 按真实现场环境填写以下字段：
+
+- preferred_host
+  - 可选
+  - 如果你已经知道树莓派当前 IP，就填这里
+  - 不知道可以留空，脚本会继续尝试 raspberrypi.local 和 ARP 扫描结果
+
+- ssh.user
+  - 树莓派当前 SSH 用户名
+
+- ssh.password
+  - 树莓派当前 SSH 密码
+
+- ssh.hostkey
+  - 可选
+  - 留空时，脚本会优先复用本机已缓存的 SSH host key
+  - 如果本机还没缓存，会自动信任第一次发现到的树莓派 SSH host key 并缓存
+  - 如果你希望更严格控制，也可以手动填写
+  - 格式示例：
+    ssh-ed25519 256 SHA256:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+- wifi.ssid
+  - 可选
+  - 留空时，脚本会自动读取当前 PC 已连接的 Wi‑Fi 名称
+
+- wifi.password
+  - 可选
+  - 留空时，脚本会自动读取当前 PC 当前 Wi‑Fi 配置里保存的密码
+  - 该动作依赖管理员权限，所以双击脚本时会自动提权
+
+3. 保存后，双击：
+- 一键配置树莓派.cmd
+
+4. 运行结果会写到：
+- pc/log/pi_one_click_setup_*.log
+- pc/log/pi_one_click_setup_*.json
+
+5. 如果配置没填完整，脚本会直接拒绝执行，不会盲目重置或部署树莓派项目环境。
+6. 当前最低必填项只有：
+- ssh.user
+- ssh.password

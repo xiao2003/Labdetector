@@ -64,7 +64,6 @@ from pc.core.expert_closed_loop import (
     parse_pi_expert_packet,
 )
 from pc.tools.model_downloader import check_and_download_vosk
-from pc.tools.model_downloader import check_and_download_sensevoice
 from pc.tools.gpu_runtime_helper import detect_gpu_environment, install_cuda_enabled_pytorch
 from pc.tools.version_manager import get_app_version
 from pc.knowledge_base.rag_engine import knowledge_manager
@@ -198,7 +197,7 @@ class DashboardMultiPiManager:
             self.log_error(f"节点 [{pi_id}] 边缘事件队列已满，已丢弃: {event.event_name}")
 
     async def _event_worker(self) -> None:
-        from pc.voice.voice_interaction import get_voice_interaction
+        from pc.voice.voice_interaction import get_remote_text_router
 
         while self.running or not self.event_queue.empty():
             try:
@@ -207,7 +206,7 @@ class DashboardMultiPiManager:
                 continue
             try:
                 self.log_info(f"收到节点 [{pi_id}] 边缘高优告警: {event.event_name} ({event.event_id})")
-                agent = get_voice_interaction()
+                agent = get_remote_text_router()
                 if agent and agent.is_active:
                     self.log_info("语音助手正在活跃，安防播报暂缓")
                     continue
@@ -271,7 +270,6 @@ class DashboardMultiPiManager:
 
     async def _node_handler(self, pi_id: str, ip: str) -> None:
         from pc.core.expert_manager import expert_manager
-        from pc.voice.voice_interaction import get_voice_interaction
 
         endpoint = str(ip).strip()
         if endpoint.startswith("ws://") or endpoint.startswith("wss://"):
@@ -283,7 +281,7 @@ class DashboardMultiPiManager:
         while self.running:
             try:
                 self.node_status[pi_id] = "connecting"
-                async with websockets.connect(uri, ping_interval=None) as ws:
+                async with websockets.connect(uri, ping_interval=None, proxy=None) as ws:
                     self.node_status[pi_id] = "online"
                     self.log_info(f"节点 [{pi_id}] ({ip}) 握手成功")
                     await self.send_queues[pi_id].put(f"CMD:SET_FPS:{self.target_fps}")
@@ -417,11 +415,11 @@ class DashboardMultiPiManager:
                     await asyncio.sleep(5)
 
     def _handle_remote_voice(self, pi_id: str, data: str) -> None:
-        from pc.voice.voice_interaction import get_voice_interaction
+        from pc.voice.voice_interaction import get_remote_text_router
 
         cmd_text = data.replace("PI_VOICE_COMMAND:", "", 1).strip()
         self.log_info(f"收到节点 {pi_id} 语音指令: {cmd_text}")
-        agent = get_voice_interaction()
+        agent = get_remote_text_router()
         if not agent:
             self.send_to_node(pi_id, "CMD:TTS:语音助手未就绪，请先检查 PC 端依赖。")
             return
@@ -619,10 +617,16 @@ class LabDetectorRuntime:
 
     def get_state(self) -> Dict[str, Any]:
         streams = self._build_streams()
+        online_nodes = sum(1 for item in streams if item["status"] == "online")
+        if self.mode == "websocket":
+            expected_nodes = max(1, int(self.expected_nodes or 1))
+            offline_nodes = max(0, expected_nodes - online_nodes)
+        else:
+            offline_nodes = sum(1 for item in streams if item["status"] == "offline")
         summary = {
             "session_active": self.session_active,
-            "online_nodes": sum(1 for item in streams if item["status"] == "online"),
-            "offline_nodes": sum(1 for item in streams if item["status"] == "offline"),
+            "online_nodes": online_nodes,
+            "offline_nodes": offline_nodes,
             "stream_count": len(streams),
             "voice_running": bool(self.voice_agent and getattr(self.voice_agent, "is_running", False)),
         }
@@ -662,17 +666,21 @@ class LabDetectorRuntime:
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         *,
         include_microphone: bool = False,
+        include_voice_assets: bool = True,
     ) -> List[Dict[str, Any]]:
         checks = [
             ("dependencies", "Python 依赖环境", self._check_dependencies),
             ("ollama_runtime", "Ollama 本地模型环境", self._check_ollama_runtime),
             ("gpu", "GPU 算力环境", self._check_gpu),
             ("training_runtime", "训练运行时环境", self._check_training_runtime),
-            ("voice_ai_runtime", "增强语音识别运行时", self._check_voice_ai_runtime),
-            ("sensevoice", "SenseVoice 模型资产", self._check_sensevoice_assets),
-            ("vosk", "离线语音模型资产", self._check_vosk_assets),
             ("rag", "实验室知识库目录 (RAG)", self._check_rag_assets),
         ]
+        if include_voice_assets:
+            checks.extend([
+                ("voice_ai_runtime", "增强语音识别运行时（可选）", self._check_voice_ai_runtime),
+                ("sensevoice", "SenseVoice 模型资产（可选）", lambda: self._check_sensevoice_assets(allow_download=False)),
+                ("vosk", "离线语音模型资产", lambda: self._check_vosk_assets(allow_download=False)),
+            ])
         if include_microphone:
             checks.append(("microphone", "PC 麦克风与语音链路", self._check_microphone))
 
@@ -751,6 +759,7 @@ class LabDetectorRuntime:
             }
 
         try:
+            self._ensure_local_voice_assets_ready()
             import pc.voice.voice_interaction as voice_module
 
             original_console_info = voice_module.console_info
@@ -1328,7 +1337,7 @@ class LabDetectorRuntime:
             "raw_output": output or "[WARN] 麦克风检查脚本未返回输出",
         }
 
-    def _check_vosk_assets(self) -> Dict[str, Any]:
+    def _check_vosk_assets(self, allow_download: bool = True) -> Dict[str, Any]:
         model_root = vosk_model_dir()
         model_am = model_root / "am"
         if model_am.exists():
@@ -1337,6 +1346,14 @@ class LabDetectorRuntime:
                 "summary": "离线语音模型已就绪",
                 "detail": str(model_root),
                 "raw_output": f"[INFO] 已检测到 Vosk 离线语音模型目录: {model_root}",
+            }
+
+        if not allow_download:
+            return {
+                "status": "warn",
+                "summary": "离线语音模型尚未就绪",
+                "detail": str(model_root),
+                "raw_output": f"[WARN] 未检测到 Vosk 离线语音模型目录: {model_root}",
             }
 
         buffer = io.StringIO()
@@ -1382,7 +1399,7 @@ class LabDetectorRuntime:
             "raw_output": output,
         }
 
-    def _check_sensevoice_assets(self) -> Dict[str, Any]:
+    def _check_sensevoice_assets(self, allow_download: bool = False) -> Dict[str, Any]:
         model_root = sensevoice_model_dir()
         config_file = model_root / "configuration.json"
         if config_file.exists():
@@ -1393,48 +1410,30 @@ class LabDetectorRuntime:
                 "raw_output": f"[INFO] 已检测到 SenseVoice 模型目录: {model_root}",
             }
 
-        buffer = io.StringIO()
-        result_holder: Dict[str, Any] = {"ready": False, "error": ""}
-
-        def worker() -> None:
-            try:
-                with redirect_stdout(buffer), redirect_stderr(buffer):
-                    result_holder["ready"] = check_and_download_sensevoice()
-            except Exception as exc:
-                result_holder["error"] = str(exc)
-
-        thread = threading.Thread(target=worker, daemon=True, name="SenseVoiceAssetCheck")
-        thread.start()
-        thread.join(45)
-
-        output = buffer.getvalue().strip()
-        if thread.is_alive():
-            timeout_text = "[WARN] SenseVoice 模型自动补齐超时，已跳过本次下载。"
-            output = f"{output}\n{timeout_text}".strip()
+        if not allow_download:
             return {
                 "status": "warn",
-                "summary": "SenseVoice 模型尚未就绪",
-                "detail": str(model_root),
-                "raw_output": output,
+                "summary": "SenseVoice 模型未安装",
+                "detail": "SenseVoice 属于增强识别模型，缺失时不影响主界面启动，语音链路会优先回退到本地轻量识别方案。",
+                "raw_output": f"[WARN] 未检测到 SenseVoice 模型目录: {model_root}",
             }
-
-        if result_holder["error"]:
-            output = f"{output}\n[ERROR] {result_holder['error']}".strip()
-            return {
-                "status": "error",
-                "summary": "SenseVoice 模型补齐失败",
-                "detail": str(model_root),
-                "raw_output": output,
-            }
-
-        if not output:
-            output = "[INFO] 已完成 SenseVoice 模型资产检查。"
         return {
-            "status": "pass" if result_holder["ready"] else "warn",
-            "summary": "SenseVoice 模型已自动补齐" if result_holder["ready"] else "SenseVoice 模型尚未就绪",
-            "detail": str(model_root),
-            "raw_output": output,
+            "status": "warn",
+            "summary": "SenseVoice 模型未安装",
+            "detail": "当前未启用自动补齐。",
+            "raw_output": f"[WARN] 未检测到 SenseVoice 模型目录: {model_root}",
         }
+
+    def _ensure_local_voice_assets_ready(self) -> None:
+        checks = [
+            self._check_vosk_assets(allow_download=True),
+        ]
+        for result in checks:
+            raw_output = str(result.get("raw_output") or "").strip()
+            for line in raw_output.splitlines():
+                self._log_raw_line(line, level="INFO" if "[ERROR]" not in line else "ERROR")
+            if str(result.get("status") or "").lower() != "pass":
+                raise RuntimeError(str(result.get("detail") or result.get("summary") or "本地语音资产未就绪。"))
 
     def _check_rag_assets(self) -> Dict[str, Any]:
         scopes = knowledge_manager.list_scopes(include_known_experts=True)
@@ -1785,8 +1784,13 @@ class LabDetectorRuntime:
 
     def _ensure_voice_agent(self, start_local_microphone: bool) -> None:
         try:
-            from pc.voice.voice_interaction import get_voice_interaction
-            agent = get_voice_interaction()
+            if start_local_microphone:
+                self._ensure_local_voice_assets_ready()
+                from pc.voice.voice_interaction import get_voice_interaction
+                agent = get_voice_interaction()
+            else:
+                from pc.voice.voice_interaction import get_remote_text_router
+                agent = get_remote_text_router()
             self.voice_agent = agent
             if not agent:
                 return

@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """NeuroLab Hub Raspberry Pi CLI entrypoint."""
 
@@ -12,10 +12,24 @@ from pathlib import Path
 from typing import Any, Optional
 
 try:
-    from .config import get_pi_config, set_pi_config
+    from .config import get_pi_config, get_pi_path_config, set_pi_config
+    from .tools.runtime_installer import (
+        build_status_payload,
+        is_install_completed,
+        read_install_log_tail,
+        run_install,
+        trigger_background_install,
+    )
     from .tools.version_manager import get_app_version
 except ImportError:
-    from config import get_pi_config, set_pi_config
+    from config import get_pi_config, get_pi_path_config, set_pi_config
+    from tools.runtime_installer import (
+        build_status_payload,
+        is_install_completed,
+        read_install_log_tail,
+        run_install,
+        trigger_background_install,
+    )
     from tools.version_manager import get_app_version
 
 APP_VERSION = get_app_version()
@@ -57,6 +71,7 @@ def _config_snapshot() -> dict[str, Any]:
             "wake_word": str(get_pi_config("voice.wake_word", "小爱同学") or "小爱同学"),
             "online_recognition": bool(get_pi_config("voice.online_recognition", True)),
             "model_path": str(get_pi_config("voice.model_path", "voice/model") or "voice/model"),
+            "resolved_model_path": get_pi_path_config("voice.model_path", "voice/model"),
         },
         "detector": {
             "weights_path": str(get_pi_config("detector.weights_path", "yolov8n.pt") or "yolov8n.pt"),
@@ -75,6 +90,7 @@ def _print_block(data: dict[str, Any]) -> None:
     print(f"唤醒词: {data['voice']['wake_word']}")
     print(f"在线语音识别: {_bool_text(data['voice']['online_recognition'])}")
     print(f"离线模型目录: {data['voice']['model_path']}")
+    print(f"离线模型绝对目录: {data['voice']['resolved_model_path']}")
     print(f"检测权重: {data['detector']['weights_path']}")
     print(f"检测阈值: {data['detector']['conf']}")
     print(f"检测尺寸: {data['detector']['imgsz']}")
@@ -126,6 +142,12 @@ def apply_start_overrides(args: argparse.Namespace) -> None:
 
 
 def start_node(skip_self_check: bool = False, auto_install_deps: Optional[bool] = None) -> int:
+    if not is_install_completed():
+        payload = build_status_payload()
+        print("Pi 运行时尚未安装完成，请先查看安装状态。")
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 3
+
     runtime = _load_runtime()
     snapshot = _config_snapshot()
     print("准备启动 NeuroLab Hub 树莓派边缘端")
@@ -144,11 +166,43 @@ def start_node(skip_self_check: bool = False, auto_install_deps: Optional[bool] 
 
 
 def run_self_check(auto_install_deps: Optional[bool] = None) -> int:
+    if not is_install_completed():
+        payload = build_status_payload()
+        print("Pi 运行时尚未安装完成，当前仅支持查看安装状态。")
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 3
     runtime = _load_runtime()
     if auto_install_deps is None:
         auto_install_deps = bool(get_pi_config("self_check.auto_install_dependencies", True))
     ok = runtime.run_pi_self_check(auto_install=auto_install_deps)
     return 0 if ok else 2
+
+
+def install_runtime(background: bool = False, force: bool = False) -> int:
+    if background:
+        payload = trigger_background_install(force=force)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+    return run_install()
+
+
+def install_status(as_json: bool = False) -> int:
+    payload = build_status_payload()
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print("Pi 运行时安装状态")
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
+def install_log(tail_lines: int = 40) -> int:
+    content = read_install_log_tail(tail_lines)
+    if content:
+        print(content)
+    else:
+        print("当前没有可用安装日志。")
+    return 0
 
 
 def interactive_config_wizard() -> int:
@@ -244,6 +298,16 @@ def build_parser() -> argparse.ArgumentParser:
     start_parser.add_argument("--detector-conf", type=float, help="覆盖检测阈值，并写入配置文件")
     start_parser.add_argument("--detector-imgsz", type=int, help="覆盖检测尺寸，并写入配置文件")
 
+    install_runtime_parser = subparsers.add_parser("install-runtime", help="执行或触发 Pi 运行时安装")
+    install_runtime_parser.add_argument("--background", action="store_true", help="后台触发安装后立即返回")
+    install_runtime_parser.add_argument("--force", action="store_true", help="即使已完成也强制重新执行")
+
+    install_status_parser = subparsers.add_parser("install-status", help="查看 Pi 运行时安装状态")
+    install_status_parser.add_argument("--json", action="store_true", help="以 JSON 输出")
+
+    install_log_parser = subparsers.add_parser("install-log", help="查看 Pi 运行时安装日志")
+    install_log_parser.add_argument("--tail", type=int, default=40, help="输出最后 N 行日志")
+
     subparsers.add_parser("version", help="输出版本号")
     return parser
 
@@ -268,6 +332,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "start":
             apply_start_overrides(args)
             return start_node(skip_self_check=args.skip_self_check, auto_install_deps=getattr(args, "auto_install_deps", None))
+        if args.command == "install-runtime":
+            return install_runtime(background=args.background, force=args.force)
+        if args.command == "install-status":
+            return install_status(as_json=args.json)
+        if args.command == "install-log":
+            return install_log(tail_lines=args.tail)
         if args.command == "version":
             print(APP_VERSION)
             return 0
@@ -280,4 +350,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -19,7 +19,7 @@ class EquipmentOCRExpert(BaseExpert):
 
     @property
     def expert_version(self) -> str:
-        return "1.0.0"
+        return "3.0.2"
 
     def supported_events(self) -> List[str]:
         return ["ocr_read", "读取仪表"]

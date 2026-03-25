@@ -1,0 +1,44 @@
+[
+  {
+    "sample_id": "qa_status",
+    "text": "介绍当前系统状态",
+    "category": "qa",
+    "expected_keywords": [
+      "系统",
+      "状态"
+    ],
+    "path": "D:\\NeuroLab\\NeuroLab Hub\\pc\\testing\\assets\\audio_fixtures\\qa_status.wav",
+    "speaker_type": "fixed_fixture"
+  },
+  {
+    "sample_id": "model_risk",
+    "text": "分析当前实验风险并给出处置建议",
+    "category": "model_call",
+    "expected_keywords": [
+      "风险",
+      "建议"
+    ],
+    "path": "D:\\NeuroLab\\NeuroLab Hub\\pc\\testing\\assets\\audio_fixtures\\model_risk.wav",
+    "speaker_type": "fixed_fixture"
+  },
+  {
+    "sample_id": "expert_hf",
+    "text": "HF且未戴手套怎么办",
+    "category": "expert_voice",
+    "expected_keywords": [
+      "手套"
+    ],
+    "path": "D:\\NeuroLab\\NeuroLab Hub\\pc\\testing\\assets\\audio_fixtures\\expert_hf.wav",
+    "speaker_type": "fixed_fixture"
+  },
+  {
+    "sample_id": "expert_ppe",
+    "text": "查看PPE风险",
+    "category": "expert_voice",
+    "expected_keywords": [
+      "风险"
+    ],
+    "path": "D:\\NeuroLab\\NeuroLab Hub\\pc\\testing\\assets\\audio_fixtures\\expert_ppe.wav",
+    "speaker_type": "fixed_fixture"
+  }
+]

@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 pisend_receive.py - 树莓派全双工收发器 (支持 QoS 动态帧率均衡版)
@@ -20,12 +20,23 @@ import importlib.util
 from typing import List, Optional, Tuple
 
 try:
-    from .config import get_pi_config
+    from .config import get_pi_config, get_pi_path_config
     from .tools.version_manager import get_app_version
 except ImportError:
-    from config import get_pi_config
+    from config import get_pi_config, get_pi_path_config
     from tools.version_manager import get_app_version
 APP_VERSION = get_app_version()
+
+def _get_voice_model_dir() -> str:
+    return get_pi_path_config("voice.model_path", "voice/model")
+
+
+def _get_ws_port() -> int:
+    try:
+        port = int(get_pi_config("network.ws_port", 8001) or 8001)
+    except Exception:
+        return 8001
+    return port if 1 <= port <= 65535 else 8001
 
 cv2 = None
 websockets = None
@@ -46,6 +57,9 @@ PI_CORE_DEPENDENCY_MAP = {
     "numpy": "numpy",
     "cv2": "opencv-python-headless",
     "websockets": "websockets",
+    "torch": "torch",
+    "torchvision": "torchvision",
+    "ultralytics": "ultralytics",
 }
 
 PI_OPTIONAL_DEPENDENCY_MAP = {
@@ -66,12 +80,12 @@ running = True
 
 # ★ 默认帧率状态字典，可被 PC 动态修改 ★
 _PI_STATE = {
-    "sleep_time": 0.033,  # 默认 30fps = 1/30
+    "sleep_time": 0.2,  # 默认先以 5fps 稳定档启动，避免 Pi 5 首轮初始化抖动过大
     "policies": [],  # 新增：缓存策略
     "has_mic": False,
     "has_speaker": False,
     "expert_results": {},
-    "storage_budget_mb_per_hour": 500.0
+    "storage_budget_mb_per_hour": 400.0
 }
 
 
@@ -282,6 +296,7 @@ class NetworkDiscoveryResponder:
     def __init__(self):
         self.port = 50000
         self.local_ip = get_local_ip()
+        self.ws_port = _get_ws_port()
 
     def start(self):
         def _loop():
@@ -293,7 +308,7 @@ class NetworkDiscoveryResponder:
                     try:
                         data, addr = sock.recvfrom(1024)
                         if json.loads(data.decode())['type'] == 'pc_discovery':
-                            resp = json.dumps({'type': 'raspberry_pi_response', 'ip': self.local_ip})
+                            resp = json.dumps({'type': 'raspberry_pi_response', 'ip': self.local_ip, 'ws_port': self.ws_port})
                             sock.sendto(resp.encode(), addr)
                     except:
                         pass
@@ -331,12 +346,22 @@ async def handle_client(websocket, path=""):
                     if msg.startswith("CMD:SET_FPS:"):
                         target_fps = float(msg.split(":")[-1])
                         _PI_STATE["sleep_time"] = 1.0 / max(1.0, target_fps)
+                    elif msg.startswith("CMD:SYNC_CONFIG:"):
+                        config_str = msg.replace("CMD:SYNC_CONFIG:", "", 1)
+                        try:
+                            payload = json.loads(config_str)
+                        except Exception:
+                            payload = {}
+                        wake_word = str(payload.get("wake_word", "") or "").strip()
+                        if wake_word:
+                            _PI_STATE["wake_word"] = wake_word
+                            console_info(f"已同步 Pi 唤醒词: {wake_word}")
                     elif msg.startswith("CMD:SYNC_POLICY:"):
                         policy_str = msg.replace("CMD:SYNC_POLICY:", "")
                         payload = json.loads(policy_str)
                         _PI_STATE["policies"] = payload.get("event_policies", [])
                         if "storage_budget_mb_per_hour" in payload:
-                            _PI_STATE["storage_budget_mb_per_hour"] = float(payload.get("storage_budget_mb_per_hour", 500.0))
+                            _PI_STATE["storage_budget_mb_per_hour"] = float(payload.get("storage_budget_mb_per_hour", 400.0))
                         console_info(f"已同步策略 {len(_PI_STATE['policies'])} 条。")
                     elif msg.startswith("CMD:TTS:"):
                         tts_text = msg.replace("CMD:TTS:", "")
@@ -395,7 +420,7 @@ async def handle_client(websocket, path=""):
                     metrics = capture_controller.evaluate_frame(flipped)
                     profile = capture_controller.suggest_profile(
                         metrics,
-                        storage_budget_mb_per_hour=float(_PI_STATE.get("storage_budget_mb_per_hour", 500.0)),
+                        storage_budget_mb_per_hour=float(_PI_STATE.get("storage_budget_mb_per_hour", 400.0)),
                     )
 
                     # 动态收敛至建议fps，同时保留PC下发上限能力
@@ -459,7 +484,7 @@ async def main_async():
 
     try:
         if check_and_download_vosk is not None:
-            check_and_download_vosk()
+            check_and_download_vosk(_get_voice_model_dir())
     except Exception as exc:
         console_info(f"[WARN] 离线语音模型检查失败: {exc}")
 
@@ -487,8 +512,9 @@ async def main_async():
 
         asyncio.create_task(_tts_worker())
 
-    async with websockets.serve(handle_client, "0.0.0.0", 8001, ping_interval=20, ping_timeout=20, max_size=None):
-        console_info(f"WebSocket 服务已就绪: ws://{get_local_ip()}:8001")
+    ws_port = _get_ws_port()
+    async with websockets.serve(handle_client, "0.0.0.0", ws_port, ping_interval=20, ping_timeout=20, max_size=None):
+        console_info(f"WebSocket 服务已就绪: ws://{get_local_ip()}:{ws_port}")
         while running: await asyncio.sleep(1)
 
 
@@ -511,9 +537,12 @@ def main():
 async def voice_thread(websocket):
     """独立的语音采集与识别协程，麦克风不可用时自动跳过。"""
     try:
-        model_dir = os.path.join(os.path.dirname(__file__), "voice", "model")
+        model_dir = _get_voice_model_dir()
         recognizer = PiVoiceRecognizer(model_dir)
-        interaction = PiVoiceInteraction(recognizer)
+        interaction = PiVoiceInteraction(
+            recognizer,
+            wake_word=str(_PI_STATE.get("wake_word") or "小爱同学"),
+        )
 
         p = pyaudio.PyAudio()
         stream = p.open(
@@ -532,6 +561,9 @@ async def voice_thread(websocket):
     while running:
         try:
             data = await asyncio.to_thread(stream.read, 4000, exception_on_overflow=False)
+            synced_wake_word = str(_PI_STATE.get("wake_word") or "").strip()
+            if synced_wake_word and interaction.wake_word != synced_wake_word:
+                interaction.wake_word = synced_wake_word
             event = interaction.process_audio(data)
             if event == "EVENT:WOKEN":
                 speak_async("我在。")
@@ -598,7 +630,7 @@ def run_pi_self_check(auto_install: Optional[bool] = None) -> bool:
     try:
         _load_runtime_modules()
         if check_and_download_vosk is not None:
-            check_and_download_vosk()
+            check_and_download_vosk(_get_voice_model_dir())
             vosk_ready = True
             print("[INFO] 离线语音模型检查完成。")
         else:

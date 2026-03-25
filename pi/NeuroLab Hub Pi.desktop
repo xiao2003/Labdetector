@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=NeuroLab Hub Pi
+Comment=启动 NeuroLab Hub 树莓派边缘节点
+Terminal=true
+Path=
+Exec=sh -c 'cd "$(dirname "%k")" && chmod +x "./start_pi_node.sh" && ./start_pi_node.sh'
+Icon=utilities-terminal
+Categories=Utility;

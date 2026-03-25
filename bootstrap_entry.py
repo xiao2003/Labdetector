@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import shutil
+import time
 from pathlib import Path
 from typing import Dict, Iterable, List
 
@@ -40,6 +41,36 @@ PYTHON_INSTALL_COMMAND = [
 ]
 
 
+def _is_usable_python(path: str) -> bool:
+    candidate = str(path or "").strip()
+    if not candidate:
+        return False
+    try:
+        resolved = Path(candidate).resolve()
+    except Exception:
+        return False
+    # WindowsApps 中的 python 别名在部分机器上不可直接用于子进程拉起。
+    if "windowsapps" in str(resolved).lower():
+        return False
+    if not resolved.exists():
+        return False
+    creation_flags = 0x08000000 if os.name == "nt" else 0
+    try:
+        probe = subprocess.run(
+            [str(resolved), "-c", "import sys; print(sys.version_info[:2])"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+            timeout=8,
+            creationflags=creation_flags,
+        )
+        return probe.returncode == 0
+    except Exception:
+        return False
+
+
 def _launcher_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
@@ -55,14 +86,42 @@ def _python_root() -> Path:
     return _app_root() / "python_runtime"
 
 
+def _system_python_candidates(windowed: bool = False) -> List[str]:
+    exe_name = "pythonw.exe" if windowed else "python.exe"
+    candidates: List[Path] = []
+    local_appdata = str(os.environ.get("LOCALAPPDATA") or "").strip()
+    program_files = str(os.environ.get("ProgramFiles") or "").strip()
+    program_files_x86 = str(os.environ.get("ProgramFiles(x86)") or "").strip()
+    for root in (local_appdata, program_files, program_files_x86):
+        if not root:
+            continue
+        root_path = Path(root)
+        candidates.extend(
+            [
+                root_path / "Programs" / "Python" / "Python311" / exe_name,
+                root_path / "Programs" / "Python" / "Python312" / exe_name,
+                root_path / "Programs" / "Python" / "Python313" / exe_name,
+                root_path / "Python311" / exe_name,
+                root_path / "Python312" / exe_name,
+                root_path / "Python313" / exe_name,
+            ]
+        )
+    return [str(item) for item in candidates]
+
+
 def _python_exe(windowed: bool = False) -> str:
     preferred = _python_root() / ("pythonw.exe" if windowed else "python.exe")
-    if preferred.exists():
+    if _is_usable_python(str(preferred)):
         return str(preferred)
+    if not getattr(sys, "frozen", False) and _is_usable_python(str(Path(sys.executable).resolve())):
+        return str(Path(sys.executable).resolve())
+    for candidate in _system_python_candidates(windowed=windowed):
+        if _is_usable_python(candidate):
+            return candidate
     candidates = ["pythonw.exe", "python.exe", "py.exe"] if windowed else ["python.exe", "py.exe", "pythonw.exe"]
     for candidate in candidates:
         resolved = shutil.which(candidate)
-        if resolved:
+        if resolved and _is_usable_python(resolved):
             return resolved
     if not getattr(sys, "frozen", False):
         return str(Path(sys.executable).resolve())
@@ -71,9 +130,12 @@ def _python_exe(windowed: bool = False) -> str:
 
 def _find_system_python() -> str:
     """查找系统可用 Python，用于轻量入口首次拉起主程序。"""
+    for candidate in _system_python_candidates(windowed=False):
+        if _is_usable_python(candidate):
+            return candidate
     for candidate in ("python.exe", "py.exe"):
         resolved = shutil.which(candidate)
-        if resolved:
+        if resolved and _is_usable_python(resolved):
             return resolved
     return ""
 
@@ -100,15 +162,29 @@ def _launcher_script() -> Path:
 def _runtime_env() -> Dict[str, str]:
     env = os.environ.copy()
     app_root = _app_root()
+    deps_root = _deps_root()
     python_root = _python_root()
-    env["PYTHONPATH"] = str(app_root)
+    # 先加载用户目录依赖，再加载应用目录，避免安装目录只读导致首次启动失败。
+    python_path_parts = [str(deps_root), str(app_root)]
+    existing_pythonpath = str(env.get("PYTHONPATH") or "").strip()
+    if existing_pythonpath:
+        python_path_parts.append(existing_pythonpath)
+    env["PYTHONPATH"] = os.pathsep.join(python_path_parts)
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
     env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
     env["NEUROLAB_BOOTSTRAP_EXE_NAME"] = Path(sys.argv[0]).name
+    env["NEUROLAB_SKIP_DESKTOP_SPLASH"] = "1"
     if python_root.exists():
         env["PYTHONHOME"] = str(python_root)
     return env
+
+
+def _deps_root() -> Path:
+    local_appdata = str(os.environ.get("LOCALAPPDATA") or "").strip()
+    if local_appdata:
+        return Path(local_appdata) / "NeuroLab Hub" / "python_deps"
+    return _app_root()
 
 
 def _run_hidden(command: List[str], timeout: int = 1200) -> subprocess.CompletedProcess[str]:
@@ -124,6 +200,32 @@ def _run_hidden(command: List[str], timeout: int = 1200) -> subprocess.Completed
         env=_runtime_env(),
         creationflags=creation_flags,
     )
+
+
+def _launcher_creation_flags() -> int:
+    if os.name != "nt":
+        return 0
+    create_no_window = 0x08000000
+    detached_process = 0x00000008
+    create_new_process_group = 0x00000200
+    return create_no_window | detached_process | create_new_process_group
+
+
+def _wait_for_child_ready(
+    process: subprocess.Popen[str],
+    timeout: float = 12.0,
+    settle_seconds: float = 1.2,
+) -> None:
+    """确认主进程未在启动瞬间退出，避免启动器无意义地长时间停留。"""
+    deadline = time.time() + timeout
+    settle_deadline = time.time() + max(0.2, settle_seconds)
+    while time.time() < deadline:
+        return_code = process.poll()
+        if return_code is not None:
+            raise RuntimeError(f"主程序启动失败，退出码 {return_code}。")
+        if time.time() >= settle_deadline:
+            return
+        time.sleep(0.15)
 
 
 def _load_identity() -> Dict[str, str]:
@@ -150,6 +252,30 @@ def _version_text() -> str:
 
 def _title_text() -> str:
     return str(_load_identity().get("short_name") or "NeuroLab Hub")
+
+
+def _is_silent_bootstrap() -> bool:
+    args = [str(item).strip().lower() for item in sys.argv[1:]]
+    if "--silent-bootstrap" in args:
+        return True
+    if "--smoke-test-file" in args:
+        return True
+    env_value = str(os.environ.get("NEUROLAB_BOOTSTRAP_SILENT") or "").strip().lower()
+    return env_value in {"1", "true", "yes", "on"}
+
+
+def _smoke_test_output_path() -> str:
+    args = sys.argv[1:]
+    for index, item in enumerate(args):
+        if str(item).strip().lower() == "--smoke-test-file":
+            if index + 1 < len(args):
+                return str(args[index + 1]).strip()
+            return ""
+    return str(os.environ.get("NEUROLAB_SMOKE_TEST_FILE") or "").strip()
+
+
+def _is_smoke_test_mode() -> bool:
+    return bool(_smoke_test_output_path())
 
 
 def _ensure_pip() -> None:
@@ -186,6 +312,8 @@ class BootstrapProgress:
         self.detail_var = None
         self._closed = False
 
+        if _is_silent_bootstrap():
+            return
         if tk is None or ttk is None:
             return
 
@@ -286,6 +414,8 @@ def _install_packages(packages: Iterable[str], progress: BootstrapProgress) -> N
     package_list = [item for item in packages if item]
     if not package_list:
         return
+    deps_root = _deps_root()
+    deps_root.mkdir(parents=True, exist_ok=True)
     progress.update(52, "正在准备桌面依赖", "核心依赖：正在准备 pip 环境")
     _ensure_pip()
     command = [
@@ -295,22 +425,38 @@ def _install_packages(packages: Iterable[str], progress: BootstrapProgress) -> N
         "install",
         "--upgrade",
         "--no-warn-script-location",
+        "--disable-pip-version-check",
         "--target",
-        str(_app_root()),
+        str(deps_root),
         *package_list,
     ]
     progress.update(68, "正在下载必需依赖", "核心依赖：首次启动将自动补齐桌面组件")
     result = _run_hidden(command, timeout=3600)
     if result.returncode != 0:
-        raise RuntimeError("首次依赖安装失败，请检查网络后重新执行软件自检。")
+        lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        summary = "；".join(lines[-3:]) if lines else "无可用安装日志"
+        raise RuntimeError(f"首次依赖安装失败，请检查网络或写入权限后重试。安装日志：{summary}")
 
 
 def _launch_main() -> None:
     python_gui = _python_exe(windowed=True)
     python_cli = _python_exe(windowed=False)
-    command = [python_gui or python_cli, str(_launcher_script()), *sys.argv[1:]]
-    creation_flags = 0x08000000 if os.name == "nt" else 0
-    subprocess.Popen(command, cwd=str(_app_root()), env=_runtime_env(), creationflags=creation_flags)
+    forward_args = [str(item) for item in sys.argv[1:]]
+    smoke_file = _smoke_test_output_path()
+    lower_args = [item.strip().lower() for item in forward_args]
+    if smoke_file and "--smoke-test-file" not in lower_args:
+        forward_args.extend(["--smoke-test-file", smoke_file])
+    creation_flags = _launcher_creation_flags()
+    env = _runtime_env()
+    command = [python_gui or python_cli, str(_launcher_script()), *forward_args]
+    process = subprocess.Popen(
+        command,
+        cwd=str(_app_root()),
+        env=env,
+        creationflags=creation_flags,
+        close_fds=(os.name != "nt"),
+    )
+    _wait_for_child_ready(process)
 
 
 def main() -> int:
@@ -318,10 +464,11 @@ def main() -> int:
     try:
         progress.update(18, "正在检查运行环境", "环境准备：正在检查核心桌面组件")
         _ensure_system_python(progress)
-        missing_modules = _probe_missing_modules(GUI_CORE_DEPENDENCY_MAP.keys())
-        if missing_modules:
-            packages = [GUI_CORE_DEPENDENCY_MAP[name] for name in missing_modules]
-            _install_packages(packages, progress)
+        if not _is_smoke_test_mode():
+            missing_modules = _probe_missing_modules(GUI_CORE_DEPENDENCY_MAP.keys())
+            if missing_modules:
+                packages = [GUI_CORE_DEPENDENCY_MAP[name] for name in missing_modules]
+                _install_packages(packages, progress)
         progress.update(99, "正在启动工作台界面", "界面加载：核心依赖已就绪")
         _launch_main()
         progress.update(100, "主界面准备完成", "启动完成：NeuroLab Hub 即将显示主界面")

@@ -1,11 +1,14 @@
-﻿import configparser
+import configparser
 import os
 from typing import Any
 
 
+PI_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
 class PiConfig:
     _config = None
-    _config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.ini")
+    _config_path = os.path.join(PI_BASE_DIR, "config.ini")
 
     @classmethod
     def init(cls) -> None:
@@ -32,7 +35,7 @@ class PiConfig:
             "imgsz": "640",
         }
         config["self_check"] = {
-            "auto_install_dependencies": "True",
+            "auto_install_dependencies": "False",
         }
         with open(cls._config_path, "w", encoding="utf-8-sig") as handle:
             config.write(handle)
@@ -52,7 +55,7 @@ class PiConfig:
                 "imgsz": "640",
             },
             "self_check": {
-                "auto_install_dependencies": "True",
+                "auto_install_dependencies": "False",
             },
         }
         changed = False
@@ -105,3 +108,17 @@ def get_pi_config(key, default=None):
 
 def set_pi_config(key, value):
     PiConfig.set(key, value)
+
+
+def resolve_pi_path(path_value: Any, default_relative: str = "") -> str:
+    raw_value = str(path_value or default_relative or "").strip()
+    if not raw_value:
+        return PI_BASE_DIR
+    expanded = os.path.expandvars(os.path.expanduser(raw_value))
+    if os.path.isabs(expanded):
+        return os.path.normpath(expanded)
+    return os.path.normpath(os.path.join(PI_BASE_DIR, expanded))
+
+
+def get_pi_path_config(key: str, default_relative: str = "") -> str:
+    return resolve_pi_path(get_pi_config(key, default_relative), default_relative=default_relative)

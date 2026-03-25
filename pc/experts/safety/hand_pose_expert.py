@@ -46,7 +46,7 @@ class HandPoseExpert(BaseExpert):
 
     @property
     def expert_version(self) -> str:
-        return "1.0.0"
+        return "3.0.3"
 
     def supported_events(self) -> List[str]:
         return [
