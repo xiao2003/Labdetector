@@ -145,6 +145,6 @@ bash start_pi_node.sh
 
 ## 10. 常用入口
 
-- 完整说明：[`docs/NeuroLab_Hub_完整手册.md`](./NeuroLab_Hub_完整手册.md)
-- 测试过程：[`docs/NeuroLab_Hub_PC_PI_测试过程手册.md`](./NeuroLab_Hub_PC_PI_测试过程手册.md)
-- 测试报告：[`docs/NeuroLab_Hub_测试报告_1.0.1.md`](./NeuroLab_Hub_测试报告_1.0.1.md)
+- 完整说明：[`docs/product/NeuroLab_Hub_完整手册.md`](./NeuroLab_Hub_完整手册.md)
+- 测试过程：[`docs/release/NeuroLab_Hub_PC_PI_测试过程手册.md`](../release/NeuroLab_Hub_PC_PI_测试过程手册.md)
+- 测试报告：[`docs/release/NeuroLab_Hub_测试报告_1.0.1.md`](../release/NeuroLab_Hub_测试报告_1.0.1.md)

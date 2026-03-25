@@ -279,8 +279,8 @@ NeuroLab Hub 采用中心端与边缘端解耦的系统架构：
 
 更详细的测试矩阵、测试实例和测试记录见：
 
-- `docs/NeuroLab_Hub_测试报告_1.0.1.md`
-- `docs/NeuroLab_Hub_PC_PI_测试过程手册.md`
+- `docs/release/NeuroLab_Hub_测试报告_1.0.1.md`
+- `docs/release/NeuroLab_Hub_PC_PI_测试过程手册.md`
 
 ## 十四、结论
 

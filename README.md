@@ -1,8 +1,8 @@
 # NeuroLab Hub —— 基于可编排专家模型的实验室多模态智能中枢 (V1.0.1)
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Windows Desktop](https://img.shields.io/badge/Delivery-Windows%20Desktop-1f6feb)](docs/NeuroLab_Hub_用户手册.md)
-[![Raspberry Pi](https://img.shields.io/badge/Edge-Raspberry%20Pi-green)](docs/NeuroLab_Hub_完整手册.md)
+[![Windows Desktop](https://img.shields.io/badge/Delivery-Windows%20Desktop-1f6feb)](docs/product/NeuroLab_Hub_用户手册.md)
+[![Raspberry Pi](https://img.shields.io/badge/Edge-Raspberry%20Pi-green)](docs/product/NeuroLab_Hub_完整手册.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 NeuroLab Hub 是面向科研实验室场景构建的分布式多模态智能系统。系统采用 `PC` 中心端与 `Raspberry Pi` 边缘节点协同架构，覆盖实验现场监控、专家模型编排、知识导入、训练工作台、语音交互、视觉闭环和实验档案沉淀。
@@ -146,7 +146,8 @@ bash start_pi_node.sh
 
 ## 文档入口
 
-- [用户手册](docs/NeuroLab_Hub_用户手册.md)
-- [完整手册](docs/NeuroLab_Hub_完整手册.md)
-- [PC-Pi 测试过程手册](docs/NeuroLab_Hub_PC_PI_测试过程手册.md)
-- [测试报告](docs/NeuroLab_Hub_测试报告_1.0.1.md)
+- [文档索引](docs/README.md)
+- [用户手册](docs/product/NeuroLab_Hub_用户手册.md)
+- [完整手册](docs/product/NeuroLab_Hub_完整手册.md)
+- [PC-Pi 测试过程手册](docs/release/NeuroLab_Hub_PC_PI_测试过程手册.md)
+- [测试报告](docs/release/NeuroLab_Hub_测试报告_1.0.1.md)
