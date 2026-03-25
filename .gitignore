@@ -35,7 +35,7 @@ dist/
 .pyi_dist/
 .bundle_stage/
 tmp/
-release/
+/release/
 exe_build/
 pc/APP/
 pi/APP/
