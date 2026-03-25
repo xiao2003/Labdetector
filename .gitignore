@@ -38,12 +38,7 @@ tmp/
 release/
 exe_build/
 pc/APP/
-pc/LabDetector.exe
-pc/LabDetectorPanel.exe
-pc/LabDetectorTraining.exe
 pi/APP/
-LabDetector-Setup-v*.exe
-LabDetector-v*.zip
 
 # Generated caches
 scripts/__pycache__/
@@ -55,17 +50,14 @@ pc/training_assets/
 pc/models/llm_adapters/
 pc/models/registry/
 pi/models/detectors/
-LabDetector-Portable-v*.zip
-
-
-pc/Lab.exe
-pc/LabPanel.exe
-pc/LabTraining.exe
+pi/runtime_state/
+pi/.venv/
 
 # NeuroLab Hub release artifacts
 pc/NeuroLab Hub.exe
 pc/NeuroLab Hub LLM.exe
 pc/NeuroLab Hub Vision.exe
+pc/NeuroLab Hub SilentDir.exe
 NeuroLab-Hub-Setup-v*.exe
 NeuroLab-Hub-v*.zip
 NeuroLab-Hub-Portable-v*.zip
