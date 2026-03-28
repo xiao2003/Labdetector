@@ -185,6 +185,8 @@ class DesktopApp:
         self.node_log_cards: Dict[str, ttk.Treeview] = {}
         self.node_log_cache: Dict[str, List[str]] = {}
         self.main_splitter: tk.PanedWindow | None = None
+        self.main_splitter_user_resized = False
+        self.main_splitter_mode = "idle"
         self.model_delete_button: ttk.Button | None = None
         self.session_badge: tk.Label | None = None
         self.hero_message_label: ttk.Label | None = None
@@ -198,6 +200,8 @@ class DesktopApp:
         self.demo_restore_geometry: str | None = None
         self.demo_restore_state: str = "normal"
         self.demo_restore_collapsed: bool = False
+        self.startup_self_check_started = False
+        self.orchestrator_prepare_started = False
         self.scroll_routes: Dict[str, Dict[str, Any]] = {}
         self.hidden_demo_enabled = bool(get_config("shadow_demo.enabled", False))
         self.current_state: Dict[str, Any] = {
@@ -589,6 +593,7 @@ class DesktopApp:
         )
         splitter.grid(row=0, column=0, sticky="nsew")
         self.main_splitter = splitter
+        splitter.bind("<B1-Motion>", self._on_main_splitter_drag)
 
         wall_section = ttk.Frame(splitter, style="SoftPanel.TFrame", padding=10)
         wall_section.columnconfigure(0, weight=1)
@@ -902,7 +907,7 @@ class DesktopApp:
         }
 
     def _finish_startup(self) -> None:
-        self._set_startup_progress(100, "主界面准备完成", "启动完成", "系统自检、资源检查和主界面加载已完成")
+        self._set_startup_progress(100, "主界面准备完成", "启动完成", "主界面已就绪，系统自检将转入后台执行")
         if self.splash is not None:
             try:
                 self.splash.destroy()
@@ -912,6 +917,8 @@ class DesktopApp:
         self.root.deiconify()
         self.root.lift()
         self.root.focus_force()
+        self._start_background_orchestrator_prepare()
+        self._start_background_startup_self_check()
         self.root.after(800, self._offer_voice_test)
 
     def _log_gui_action(self, action: str, **payload: Any) -> None:
@@ -1181,6 +1188,23 @@ class DesktopApp:
         self._log_gui_action("click_self_check")
         self.hero_var.set("正在执行系统启动自检")
         self._dispatch("self_check", lambda: self.runtime.run_self_check(include_microphone=False))
+
+    def _start_background_startup_self_check(self) -> None:
+        if self.startup_self_check_started or self.runtime is None:
+            return
+        self.startup_self_check_started = True
+        self.hero_var.set("主控制台已就绪，正在后台完成系统自检")
+        self._dispatch(
+            "startup_self_check",
+            lambda: self.runtime.run_self_check(include_microphone=False, include_voice_assets=False),
+        )
+
+    def _start_background_orchestrator_prepare(self) -> None:
+        if self.orchestrator_prepare_started or self.runtime is None:
+            return
+        self.orchestrator_prepare_started = True
+        self.hero_var.set("主控制台已就绪，正在后台准备固定管家层模型")
+        self._dispatch("orchestrator_prepare", self.runtime.prepare_orchestrator_assets)
 
     def _offer_voice_test(self) -> None:
         if self.voice_test_prompted:
@@ -1549,6 +1573,11 @@ class DesktopApp:
         session_phase = str(self.current_state.get("session", {}).get("phase") or "idle").lower()
         session_mode = str(self.current_state.get("session", {}).get("mode") or "").lower()
         websocket_mode = session_mode == "websocket"
+        layout_mode = "websocket" if websocket_mode else "default"
+        layout_mode_changed = layout_mode != self.main_splitter_mode
+        if layout_mode_changed:
+            self.main_splitter_mode = layout_mode
+            self.main_splitter_user_resized = False
         if self.log_overall_scroll is not None:
             if websocket_mode:
                 self.log_overall_scroll.grid(row=0, column=1, sticky="ns")
@@ -1607,7 +1636,8 @@ class DesktopApp:
         else:
             self.log_status_var.set("系统事件流为空，等待运行数据")
             self._set_log_detail("系统尚未产生可展示的事件。")
-        self.root.after_idle(self._rebalance_main_splitter)
+        if layout_mode_changed:
+            self.root.after_idle(self._rebalance_main_splitter)
 
     def _effective_left_width(self) -> int:
         return 0 if self.left_collapsed_var.get() else self.left_panel_width
@@ -2376,7 +2406,8 @@ class DesktopApp:
         layout_changed = self._relayout_stream_cards(self.current_state.get("streams", []))
         if layout_changed:
             self._refresh_cached_stream_images()
-        self.root.after_idle(self._rebalance_main_splitter)
+        if not self.main_splitter_user_resized:
+            self.root.after_idle(self._rebalance_main_splitter)
 
     def _on_left_inner_configure(self, _event: tk.Event) -> None:
         if self.left_canvas is not None:
@@ -2400,6 +2431,9 @@ class DesktopApp:
         desired_height = max(event.height, self.log_content.winfo_reqheight())
         self.log_canvas.itemconfigure(self.log_content_window, width=event.width, height=desired_height)
         self.log_canvas.configure(scrollregion=self.log_canvas.bbox("all"))
+
+    def _on_main_splitter_drag(self, _event: tk.Event) -> None:
+        self.main_splitter_user_resized = True
 
     def _on_node_log_canvas_configure(self, event: tk.Event) -> None:
         if self.node_log_canvas is None or self.node_log_window is None:
@@ -2513,19 +2547,14 @@ class DesktopApp:
         runtime = LabDetectorRuntime()
         self.runtime = runtime
         self.app_version = runtime.version
-        checks = runtime.run_self_check(
-            progress_callback=self._post_startup_progress,
-            include_microphone=False,
-            include_voice_assets=False,
-        )
         self._post_startup_progress({
-            "value": 82,
+            "value": 36,
             "message": "正在加载配置与模型目录",
             "step": "配置加载",
-            "detail": "正在同步主界面所需的配置、模型与知识资源",
+            "detail": "正在加载主界面、配置与模型目录，系统自检将在主界面就绪后后台执行",
         })
         payload = runtime.bootstrap(include_self_check=False, include_catalogs=False)
-        return {"payload": payload, "checks": checks}
+        return {"payload": payload}
 
     def _register_voice_local_handler(self) -> None:
         try:
@@ -4129,6 +4158,20 @@ class DesktopApp:
                     self._render_checks(payload)
                     self._render_logs(self.runtime.get_state().get("logs", []))
                     self.hero_var.set("启动自检已完成")
+                elif name == "startup_self_check":
+                    self._render_checks(payload)
+                    self._render_logs(self.runtime.get_state().get("logs", []))
+                    self.hero_var.set("主控制台已就绪，后台系统自检已完成")
+                elif name == "orchestrator_prepare":
+                    self._render_logs(self.runtime.get_state().get("logs", []))
+                    status_text = str(payload.get("status") or "unknown")
+                    reason_text = str(payload.get("reason") or "").strip()
+                    if status_text == "ready":
+                        self.hero_var.set("主控制台已就绪，固定管家层模型已准备完成")
+                    else:
+                        self.hero_var.set(f"主控制台已就绪，固定管家层状态：{status_text}")
+                    if reason_text:
+                        self._log_gui_action("orchestrator_prepare_state", status=status_text, reason=reason_text)
                 elif name == "voice_test":
                     level = str(payload.get("status") or "warn").lower()
                     summary = str(payload.get("summary") or "语音测试已结束")

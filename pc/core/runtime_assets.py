@@ -74,8 +74,12 @@ def app_runtime_data_root() -> Path:
     local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
     if local_app_data:
         root = Path(local_app_data) / APP_NAME
-    else:
-        root = launcher_root() / "_runtime_data"
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+            return root
+        except OSError:
+            pass
+    root = launcher_root() / "_runtime_data"
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -94,5 +98,38 @@ def vosk_model_dir() -> Path:
 
 def sensevoice_model_dir() -> Path:
     path = speech_asset_root() / "SenseVoiceSmall"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def orchestrator_asset_root() -> Path:
+    """固定管家层模型的运行时可写目录。"""
+    root = app_runtime_data_root() / "orchestrator"
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+    except OSError:
+        fallback = launcher_root() / "_runtime_data" / "orchestrator"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
+def orchestrator_model_dir() -> Path:
+    """固定管家层模型下载目录。"""
+    path = orchestrator_asset_root() / "models"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def orchestrator_state_path() -> Path:
+    """固定管家层运行时状态文件。"""
+    root = orchestrator_asset_root()
+    root.mkdir(parents=True, exist_ok=True)
+    return root / "state.json"
+
+
+def orchestrator_download_dir() -> Path:
+    """固定管家层模型下载缓存目录。"""
+    path = orchestrator_asset_root() / "downloads"
     path.mkdir(parents=True, exist_ok=True)
     return path

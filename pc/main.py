@@ -17,6 +17,7 @@ import queue
 import json
 import sys
 import codecs
+from types import SimpleNamespace
 from typing import Optional, Dict, Any, List
 
 from pc.tools.version_manager import get_app_version
@@ -63,7 +64,7 @@ try:
     from pc.communication.network_scanner import get_lab_topology
     from pc.communication.multi_ws_manager import MultiPiManager
     from pc.voice.voice_interaction import get_voice_interaction
-    from pc.core.expert_manager import expert_manager  # <--- ★ 引入专家管理器
+    from pc.core.orchestrator import orchestrator
 except ImportError as e:
     print(f"\n\033[91m[致命错误] 模块导入失败: {e}\033[0m")
     sys.exit(1)
@@ -192,8 +193,23 @@ class InferenceThread(threading.Thread):
                 # [核心改动] 根据全局状态动态分配算力任务 (默认保持安防监控)
                 simulated_event = _STATE.get("current_vision_task", "Motion_Alert")
 
-                # 发给全体专家会诊
-                result = expert_manager.route_and_analyze(simulated_event, frame, {})
+                local_event = SimpleNamespace(
+                    event_id=f"pc-local-{int(time.time() * 1000)}",
+                    event_name=simulated_event,
+                    frame=frame,
+                    expert_code="",
+                    detected_classes=[],
+                    capture_metrics={"source": "pc_local_console", "mode": "camera"},
+                    policy_name="",
+                    policy_action="",
+                )
+                orchestrated = orchestrator.plan_edge_event(
+                    pi_id="pc_local",
+                    event=local_event,
+                    selected_model=_STATE.get("selected_model", "") or get_config("qwen.model", "qwen-vl-max"),
+                    node_caps={"has_speaker": True},
+                )
+                result = orchestrated.text
 
                 # 如果是极度消耗显存的临时任务（如 ocr_read），识别一次后立刻卸载并切回常规监控
                 if simulated_event != "Motion_Alert":
@@ -209,7 +225,8 @@ class InferenceThread(threading.Thread):
                     if agent and agent.is_active:
                         safe_console_info("[VOICE] [静音拦截] 语音助手正活跃，已自动拦截视觉播报。")
                     else:
-                        speak_async(f"本地提示：{result}")
+                        if bool(orchestrated.metadata.get("speak_now", False)):
+                            speak_async(f"本地提示：{result}")
 
                 last_infer_time = time.time()
             except queue.Empty:

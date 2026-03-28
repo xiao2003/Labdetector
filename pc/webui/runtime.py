@@ -20,6 +20,7 @@ import shutil
 from collections import deque
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable, Deque, Dict, List, Optional
 
 import cv2
@@ -63,6 +64,8 @@ from pc.core.expert_closed_loop import (
     parse_pi_expert_ack,
     parse_pi_expert_packet,
 )
+from pc.core.orchestrator import orchestrator
+from pc.core.orchestrator_runtime import prepare_orchestrator_assets, read_runtime_state
 from pc.tools.model_downloader import check_and_download_vosk
 from pc.tools.gpu_runtime_helper import detect_gpu_environment, install_cuda_enabled_pytorch
 from pc.tools.version_manager import get_app_version
@@ -115,8 +118,6 @@ VOICE_AI_DEPENDENCY_MAP = {
 
 def _now_text() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
-
-
 class DashboardMultiPiManager:
     def __init__(
         self,
@@ -211,31 +212,14 @@ class DashboardMultiPiManager:
                     self.log_info("语音助手正在活跃，安防播报暂缓")
                     continue
 
-                allowed_codes = []
-                if event.expert_code:
-                    allowed_codes = [event.expert_code]
-                else:
-                    allowed_codes = expert_manager.closed_loop_codes_for_event(event.event_name)
-
-                context = {
-                    "event_desc": event.event_name,
-                    "detected_classes": event.detected_classes,
-                    "metrics": event.capture_metrics,
-                    "expert_code": event.expert_code,
-                    "policy_name": event.policy_name,
-                    "policy_action": event.policy_action,
-                    "closed_loop_llm": True,
-                    "source": "pi_websocket",
-                    "model": self.selected_model,
-                }
-                tts_text = await asyncio.to_thread(
-                    expert_manager.route_and_analyze,
-                    event.event_name,
-                    event.frame,
-                    context,
-                    allowed_expert_codes=allowed_codes,
-                    trigger_mode=None if allowed_codes else "resident",
+                orchestrated = await asyncio.to_thread(
+                    orchestrator.plan_edge_event,
+                    pi_id=pi_id,
+                    event=event,
+                    selected_model=self.selected_model,
+                    node_caps=self.node_caps.get(pi_id, {}),
                 )
+                tts_text = orchestrated.text
                 if tts_text:
                     self.node_latest_results[pi_id] = {
                         "text": tts_text,
@@ -256,13 +240,9 @@ class DashboardMultiPiManager:
                             )
                         except Exception:
                             pass
-                    result = ExpertResult(
-                        event_id=event.event_id,
-                        text=tts_text,
-                        severity="warning",
-                        speak=self.node_caps.get(pi_id, {}).get("has_speaker", False),
-                    )
-                    await self._dispatch_expert_result(pi_id, event.event_name, result)
+                    result = orchestrator.build_expert_result(orchestrated)
+                    if result is not None:
+                        await self._dispatch_expert_result(pi_id, event.event_name, result)
             except Exception as exc:
                 self.log_error(f"节点 [{pi_id}] 边缘事件处理失败: {exc}")
             finally:
@@ -286,7 +266,16 @@ class DashboardMultiPiManager:
                     self.log_info(f"节点 [{pi_id}] ({ip}) 握手成功")
                     await self.send_queues[pi_id].put(f"CMD:SET_FPS:{self.target_fps}")
 
-                    sync_data = {"wake_word": get_config("voice_interaction.wake_word", "小爱同学")}
+                    sync_data = {
+                        "wake_word": get_config("voice_interaction.wake_word", "小爱同学"),
+                        "wake_aliases": str(
+                            get_config(
+                                "voice_interaction.wake_aliases",
+                                "小爱同学,小爱同,小爱,小艾同学,晓爱同学,哎同学,爱同学",
+                            )
+                            or ""
+                        ),
+                    }
                     await self.send_queues[pi_id].put(f"CMD:SYNC_CONFIG:{json.dumps(sync_data, ensure_ascii=False)}")
 
                     policies = expert_manager.get_aggregated_edge_policy()
@@ -331,70 +320,6 @@ class DashboardMultiPiManager:
 
                                     await self._enqueue_edge_event(pi_id, event)
                                     continue
-
-                                    self.log_info(f"收到节点 [{pi_id}] 边缘高优告警: {event.event_name} ({event.event_id})")
-                                    agent = get_voice_interaction()
-                                    if agent and agent.is_active:
-                                        self.log_info("语音助手正在活跃，安防播报暂缓")
-                                        continue
-
-                                    allowed_codes = []
-                                    if event.expert_code:
-                                        allowed_codes = [event.expert_code]
-                                    else:
-                                        allowed_codes = expert_manager.closed_loop_codes_for_event(event.event_name)
-
-                                    context = {
-                                        "event_desc": event.event_name,
-                                        "detected_classes": event.detected_classes,
-                                        "metrics": event.capture_metrics,
-                                        "expert_code": event.expert_code,
-                                        "policy_name": event.policy_name,
-                                        "policy_action": event.policy_action,
-                                        "closed_loop_llm": True,
-                                        "source": "pi_websocket",
-                                        "model": self.selected_model,
-                                    }
-                                    tts_text = await asyncio.to_thread(
-                                        expert_manager.route_and_analyze,
-                                        event.event_name,
-                                        event.frame,
-                                        context,
-                                        allowed_expert_codes=allowed_codes,
-                                        trigger_mode=None if allowed_codes else "resident",
-                                    )
-                                    if tts_text:
-                                        self.node_latest_results[pi_id] = {
-                                            "text": tts_text,
-                                            "event_name": event.event_name,
-                                            "timestamp": time.time(),
-                                        }
-                                        if self.archive_event is not None:
-                                            try:
-                                                self.archive_event(
-                                                    "expert_result",
-                                                    {
-                                                        "node_id": pi_id,
-                                                        "event_id": event.event_id,
-                                                        "event_name": event.event_name,
-                                                        "result_text": tts_text,
-                                                    },
-                                                    title=f"专家结论 {event.event_name}",
-                                                )
-                                            except Exception:
-                                                pass
-                                        result = ExpertResult(
-                                            event_id=event.event_id,
-                                            text=tts_text,
-                                            severity="warning",
-                                            speak=self.node_caps.get(pi_id, {}).get("has_speaker", False),
-                                        )
-                                        asyncio.create_task(self._dispatch_expert_result(ws, pi_id, event.event_name, result)); acked = True
-                                        self._write_audit(
-                                            f"node={pi_id} event={event.event_name} event_id={event.event_id} acked={acked} text={tts_text}"
-                                        )
-                                        if not acked:
-                                            self.log_error(f"节点 [{pi_id}] 对专家结论未确认 ACK: {event.event_id}")
                                 continue
 
                             arr = np.frombuffer(data, np.uint8)
@@ -518,6 +443,7 @@ class LabDetectorRuntime:
         self.experiment_archive = get_experiment_archive()
         self.session_metadata: Dict[str, Any] = {}
         self.archive_session_id = ""
+        self.orchestrator_state: Dict[str, Any] = read_runtime_state()
 
     def set_server_meta(self, host: str, port: int) -> None:
         self.server_meta = {"host": host, "port": port}
@@ -629,6 +555,8 @@ class LabDetectorRuntime:
             "offline_nodes": offline_nodes,
             "stream_count": len(streams),
             "voice_running": bool(self.voice_agent and getattr(self.voice_agent, "is_running", False)),
+            "orchestrator_status": str(self.orchestrator_state.get("status") or "not_installed"),
+            "planner_backend": str(self.orchestrator_state.get("planner_backend") or "deterministic"),
         }
         return {
             "version": self.version,
@@ -645,6 +573,7 @@ class LabDetectorRuntime:
                 "metadata": dict(self.session_metadata),
             },
             "summary": summary,
+            "orchestrator": dict(self.orchestrator_state),
             "self_check": self.self_check_results,
             "streams": streams,
             "logs": list(self.logs),
@@ -660,6 +589,20 @@ class LabDetectorRuntime:
             },
             "streams": self._build_streams(),
         }
+
+    def prepare_orchestrator_assets(self) -> Dict[str, Any]:
+        self._log_info("固定管家层后台准备已启动。")
+
+        def _log_callback(message: str) -> None:
+            self._log_info(f"[ORCHESTRATOR] {message}")
+
+        state = prepare_orchestrator_assets(log_callback=_log_callback)
+        self.orchestrator_state = dict(state)
+        if str(state.get("status") or "") == "ready":
+            self._log_info("固定管家层模型已就绪，后续编排将切换为 embedded_model。")
+        else:
+            self._log_info(f"固定管家层当前状态: {state.get('status', 'unknown')} / {state.get('reason', '')}")
+        return dict(state)
 
     def run_self_check(
         self,
@@ -1921,17 +1864,37 @@ class LabDetectorRuntime:
                 if width > 640:
                     scaled_height = max(1, int(height * (640.0 / width)))
                     inference_frame = cv2.resize(frame, (640, scaled_height), interpolation=cv2.INTER_AREA)
-                resident_bundle = expert_manager.analyze_resident_frame(
-                    inference_frame,
-                    {"source": "pc_local_camera", "event_name": event_name, "mode": "camera"},
-                    media_type="video",
+                local_event = SimpleNamespace(
+                    event_id=f"pc-local-{int(time.time() * 1000)}",
+                    event_name=event_name,
+                    frame=inference_frame,
+                    expert_code="",
+                    detected_classes=[],
+                    capture_metrics={"source": "pc_local_camera", "mode": "camera"},
+                    policy_name="",
+                    policy_action="",
                 )
-                result = str(resident_bundle.get("text") or "").strip()
+                orchestrated = orchestrator.plan_edge_event(
+                    pi_id="pc_local",
+                    event=local_event,
+                    selected_model=self.selected_model,
+                    node_caps={"has_speaker": True},
+                )
+                result = str(orchestrated.text or "").strip()
                 if result:
                     self.latest_inference_result = {"text": result, "timestamp": time.time()}
-                    self._record_archive_event("local_inference", {"event_name": event_name, "result_text": result}, title="本机巡检", frame=inference_frame)
+                    self._record_archive_event(
+                        "local_inference",
+                        {
+                            "event_name": event_name,
+                            "result_text": result,
+                            "planner_backend": orchestrated.metadata.get("planner_backend", "deterministic"),
+                        },
+                        title="本机巡检",
+                        frame=inference_frame,
+                    )
                     self._log_info(f"本机推理结果: {result}")
-                    if not (self.voice_agent and getattr(self.voice_agent, "is_active", False)):
+                    if bool(orchestrated.metadata.get("speak_now", False)) and not (self.voice_agent and getattr(self.voice_agent, "is_active", False)):
                         try:
                             from pc.core.tts import speak_async
                             speak_async(f"本地提示：{result}")

@@ -17,6 +17,7 @@ from pc.core.expert_closed_loop import (
     parse_pi_expert_ack,
     ExpertResult,
 )
+from pc.core.orchestrator import orchestrator
 
 
 class MultiPiManager:
@@ -109,39 +110,18 @@ class MultiPiManager:
                     console_info("语音助手处于活跃状态，暂缓播报边缘告警。")
                     continue
 
-                allowed_codes = []
-                if event.expert_code:
-                    allowed_codes = [event.expert_code]
-                else:
-                    allowed_codes = expert_manager.closed_loop_codes_for_event(event.event_name)
-
-                context = {
-                    "event_desc": event.event_name,
-                    "detected_classes": event.detected_classes,
-                    "metrics": event.capture_metrics,
-                    "expert_code": event.expert_code,
-                    "policy_name": event.policy_name,
-                    "policy_action": event.policy_action,
-                    "closed_loop_llm": True,
-                    "source": "pi_websocket",
-                    "model": _STATE.get("selected_model", ""),
-                }
-                tts_text = await asyncio.to_thread(
-                    expert_manager.route_and_analyze,
-                    event.event_name,
-                    event.frame,
-                    context,
-                    allowed_expert_codes=allowed_codes,
-                    trigger_mode=None if allowed_codes else "resident",
+                orchestrated = await asyncio.to_thread(
+                    orchestrator.plan_edge_event,
+                    pi_id=pi_id,
+                    event=event,
+                    selected_model=_STATE.get("selected_model", ""),
+                    node_caps=self.node_caps.get(pi_id, {}),
                 )
+                tts_text = orchestrated.text
                 if tts_text:
-                    result = ExpertResult(
-                        event_id=event.event_id,
-                        text=tts_text,
-                        severity="warning",
-                        speak=self.node_caps.get(pi_id, {}).get("has_speaker", False),
-                    )
-                    await self._dispatch_expert_result(pi_id, event.event_name, result)
+                    result = orchestrator.build_expert_result(orchestrated)
+                    if result is not None:
+                        await self._dispatch_expert_result(pi_id, event.event_name, result)
             except Exception as exc:
                 console_error(f"节点 [{pi_id}] 边缘事件处理失败: {exc}")
             finally:
@@ -164,7 +144,16 @@ class MultiPiManager:
                     console_info(f"节点 [{pi_id}] ({ip}) 握手成功")
                     await self.send_queues[pi_id].put(f"CMD:SET_FPS:{self.target_fps}")
 
-                    sync_data = {"wake_word": get_config("voice_interaction.wake_word", "小爱同学")}
+                    sync_data = {
+                        "wake_word": get_config("voice_interaction.wake_word", "小爱同学"),
+                        "wake_aliases": str(
+                            get_config(
+                                "voice_interaction.wake_aliases",
+                                "小爱同学,小爱同,小爱,小艾同学,晓爱同学,哎同学,爱同学",
+                            )
+                            or ""
+                        ),
+                    }
                     await self.send_queues[pi_id].put(f"CMD:SYNC_CONFIG:{json.dumps(sync_data)}")
 
                     policies = expert_manager.get_aggregated_edge_policy()

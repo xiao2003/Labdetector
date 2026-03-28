@@ -31,6 +31,13 @@ def _get_voice_model_dir() -> str:
     return get_pi_path_config("voice.model_path", "voice/model")
 
 
+def _get_wake_aliases() -> list[str]:
+    raw_value = str(get_pi_config("voice.wake_aliases", "") or "").strip()
+    if not raw_value:
+        return ["小爱同学", "小爱同", "小爱", "小艾同学", "晓爱同学", "哎同学", "爱同学"]
+    return [item.strip() for item in raw_value.split(",") if item.strip()]
+
+
 def _get_ws_port() -> int:
     try:
         port = int(get_pi_config("network.ws_port", 8001) or 8001)
@@ -84,6 +91,8 @@ _PI_STATE = {
     "policies": [],  # 新增：缓存策略
     "has_mic": False,
     "has_speaker": False,
+    "wake_word": str(get_pi_config("voice.wake_word", "小爱同学") or "小爱同学"),
+    "wake_aliases": _get_wake_aliases(),
     "expert_results": {},
     "storage_budget_mb_per_hour": 400.0
 }
@@ -237,6 +246,8 @@ def _load_runtime_modules() -> None:
 
 _TTS_ENGINE = None
 tts_queue = None
+_TTS_PROCESS = None
+_TTS_LOCK = threading.Lock()
 
 
 def init_tts():
@@ -250,6 +261,30 @@ def init_tts():
         return True
     except:
         return False
+
+
+def stop_tts_playback():
+    global _TTS_PROCESS
+    try:
+        with _TTS_LOCK:
+            if _TTS_PROCESS is not None:
+                try:
+                    _TTS_PROCESS.terminate()
+                except Exception:
+                    pass
+                _TTS_PROCESS = None
+            if _TTS_ENGINE not in (None, "espeak") and hasattr(_TTS_ENGINE, "stop"):
+                _TTS_ENGINE.stop()
+    except Exception:
+        pass
+
+    if tts_queue is not None:
+        try:
+            while True:
+                tts_queue.get_nowait()
+                tts_queue.task_done()
+        except asyncio.QueueEmpty:
+            pass
 
 
 def detect_audio_capabilities():
@@ -278,14 +313,19 @@ def detect_audio_capabilities():
 
 def speak_async(text):
     def _speak(t):
+        global _TTS_PROCESS
         if not t or not _TTS_ENGINE: return
         try:
-            if _TTS_ENGINE == "espeak":
-                cmd = shutil.which("espeak")
-                if cmd: subprocess.run([str(cmd), "-v", "zh", t], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            else:
-                _TTS_ENGINE.say(t)
-                _TTS_ENGINE.runAndWait()
+            with _TTS_LOCK:
+                if _TTS_ENGINE == "espeak":
+                    cmd = shutil.which("espeak")
+                    if cmd:
+                        _TTS_PROCESS = subprocess.Popen([str(cmd), "-v", "zh", t], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        _TTS_PROCESS.wait()
+                        _TTS_PROCESS = None
+                else:
+                    _TTS_ENGINE.say(t)
+                    _TTS_ENGINE.runAndWait()
         except:
             pass
 
@@ -353,9 +393,19 @@ async def handle_client(websocket, path=""):
                         except Exception:
                             payload = {}
                         wake_word = str(payload.get("wake_word", "") or "").strip()
+                        wake_aliases_raw = payload.get("wake_aliases", [])
+                        if isinstance(wake_aliases_raw, str):
+                            wake_aliases = [item.strip() for item in wake_aliases_raw.split(",") if item.strip()]
+                        elif isinstance(wake_aliases_raw, list):
+                            wake_aliases = [str(item).strip() for item in wake_aliases_raw if str(item).strip()]
+                        else:
+                            wake_aliases = []
                         if wake_word:
                             _PI_STATE["wake_word"] = wake_word
                             console_info(f"已同步 Pi 唤醒词: {wake_word}")
+                        _PI_STATE["wake_aliases"] = wake_aliases
+                        if wake_aliases:
+                            console_info(f"已同步 Pi 唤醒别名 {len(wake_aliases)} 项")
                     elif msg.startswith("CMD:SYNC_POLICY:"):
                         policy_str = msg.replace("CMD:SYNC_POLICY:", "")
                         payload = json.loads(policy_str)
@@ -542,6 +592,7 @@ async def voice_thread(websocket):
         interaction = PiVoiceInteraction(
             recognizer,
             wake_word=str(_PI_STATE.get("wake_word") or "小爱同学"),
+            wake_aliases=_PI_STATE.get("wake_aliases") or [],
         )
 
         p = pyaudio.PyAudio()
@@ -564,10 +615,17 @@ async def voice_thread(websocket):
             synced_wake_word = str(_PI_STATE.get("wake_word") or "").strip()
             if synced_wake_word and interaction.wake_word != synced_wake_word:
                 interaction.wake_word = synced_wake_word
+            synced_aliases = _PI_STATE.get("wake_aliases") or []
+            if interaction.wake_aliases != synced_aliases:
+                interaction.wake_aliases = [str(item).strip() for item in synced_aliases if str(item).strip()]
             event = interaction.process_audio(data)
             if event == "EVENT:WOKEN":
+                stop_tts_playback()
                 speak_async("我在。")
                 await websocket.send("PI_EVENT:WOKEN")
+            elif event == "EVENT:STOP_TTS":
+                console_info("已收到本地停止播报指令")
+                stop_tts_playback()
             elif event and event.startswith("CMD_TEXT:"):
                 cmd_text = event.replace("CMD_TEXT:", "")
                 console_info(f"语音识别指令: {cmd_text}")

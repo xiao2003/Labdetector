@@ -22,6 +22,11 @@ class ExpertDefinition:
     knowledge_hint: str = ""
     media_types: Tuple[str, ...] = ("text",)
     voice_keywords: Tuple[str, ...] = ()
+    event_names: Tuple[str, ...] = ()
+    priority: int = 100
+    requires_frame: bool = False
+    default_speak_policy: str = "speak_if_asked"
+    summary_style: str = "default"
 
     @property
     def scope(self) -> str:
@@ -60,6 +65,10 @@ _EXPERTS: List[ExpertDefinition] = [
         knowledge_hint="建议导入实验室制度、SOP、操作手册和问答资料。",
         media_types=("audio", "video", "text"),
         voice_keywords=("问答", "什么", "为什么", "如何", "介绍", "说明", "系统状态", "帮我看"),
+        event_names=("实验室智能问答", "LAB_QA"),
+        priority=20,
+        default_speak_policy="speak_now",
+        summary_style="knowledge",
     ),
     ExpertDefinition(
         code="nanofluidics.microfluidic_contact_angle_expert",
@@ -101,6 +110,11 @@ _EXPERTS: List[ExpertDefinition] = [
         knowledge_hint="建议导入危化品台账、MSDS 与应急处置资料。",
         media_types=("image", "video", "text"),
         voice_keywords=("化学品", "危化品", "试剂", "药品", "瓶子里是什么", "识别这个化学品", "识别试剂"),
+        event_names=("危化品识别", "化学品容器识别"),
+        priority=10,
+        requires_frame=True,
+        default_speak_policy="speak_now",
+        summary_style="safety_alarm",
     ),
     ExpertDefinition(
         code="safety.equipment_operation_expert",
@@ -115,6 +129,11 @@ _EXPERTS: List[ExpertDefinition] = [
         model_hint="建议导入仪器操作样本、动作识别模型或设备知识文件。",
         knowledge_hint="建议导入设备 SOP、点检单和培训资料。",
         media_types=("video", "image", "text"),
+        event_names=("仪器操作巡检",),
+        priority=40,
+        requires_frame=True,
+        default_speak_policy="silent_log_only",
+        summary_style="safety_summary",
     ),
     ExpertDefinition(
         code="safety.flame_fire_expert",
@@ -127,6 +146,11 @@ _EXPERTS: List[ExpertDefinition] = [
         model_required=True,
         model_hint="建议导入火焰识别样本或热源检测模型。",
         media_types=("video", "image", "text"),
+        event_names=("火焰识别", "烟雾识别"),
+        priority=5,
+        requires_frame=True,
+        default_speak_policy="speak_now",
+        summary_style="safety_alarm",
     ),
     ExpertDefinition(
         code="safety.general_safety_expert",
@@ -139,6 +163,11 @@ _EXPERTS: List[ExpertDefinition] = [
         model_required=True,
         model_hint="建议导入实验室场景行为识别模型。",
         media_types=("video", "image", "text"),
+        event_names=("综合安全巡检",),
+        priority=50,
+        requires_frame=True,
+        default_speak_policy="silent_log_only",
+        summary_style="safety_summary",
     ),
     ExpertDefinition(
         code="safety.hand_pose_expert",
@@ -165,6 +194,11 @@ _EXPERTS: List[ExpertDefinition] = [
         model_hint="建议导入综合安全模型与规则包。",
         knowledge_hint="建议导入实验室制度、风险分级与应急预案。",
         media_types=("video", "image", "text"),
+        event_names=("综合风险告警",),
+        priority=5,
+        requires_frame=True,
+        default_speak_policy="speak_now",
+        summary_style="safety_alarm",
     ),
     ExpertDefinition(
         code="safety.ppe_expert",
@@ -177,6 +211,11 @@ _EXPERTS: List[ExpertDefinition] = [
         model_required=True,
         model_hint="建议导入 PPE 检测模型或样本集。",
         media_types=("video", "image", "text"),
+        event_names=("PPE穿戴检查", "危化品识别", "仪器操作巡检"),
+        priority=15,
+        requires_frame=True,
+        default_speak_policy="silent_log_only",
+        summary_style="safety_summary",
     ),
     ExpertDefinition(
         code="safety.spill_detection_expert",
@@ -189,6 +228,11 @@ _EXPERTS: List[ExpertDefinition] = [
         model_required=True,
         model_hint="建议导入泄漏检测模型或异常样本。",
         media_types=("video", "image", "text"),
+        event_names=("危化品泄漏",),
+        priority=5,
+        requires_frame=True,
+        default_speak_policy="speak_now",
+        summary_style="safety_alarm",
     ),
 ]
 

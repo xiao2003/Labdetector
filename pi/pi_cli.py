@@ -63,6 +63,8 @@ def _parse_bool(value: str) -> bool:
 
 
 def _config_snapshot() -> dict[str, Any]:
+    wake_aliases_raw = str(get_pi_config("voice.wake_aliases", "") or "")
+    wake_aliases = [item.strip() for item in wake_aliases_raw.split(",") if item.strip()]
     return {
         "version": APP_VERSION,
         "config_path": str(CONFIG_PATH),
@@ -73,6 +75,7 @@ def _config_snapshot() -> dict[str, Any]:
         },
         "voice": {
             "wake_word": str(get_pi_config("voice.wake_word", "小爱同学") or "小爱同学"),
+            "wake_aliases": wake_aliases,
             "online_recognition": bool(get_pi_config("voice.online_recognition", True)),
             "model_path": str(get_pi_config("voice.model_path", "voice/model") or "voice/model"),
             "resolved_model_path": get_pi_path_config("voice.model_path", "voice/model"),
@@ -81,6 +84,10 @@ def _config_snapshot() -> dict[str, Any]:
             "weights_path": str(get_pi_config("detector.weights_path", "yolov8n.pt") or "yolov8n.pt"),
             "conf": float(get_pi_config("detector.conf", 0.4) or 0.4),
             "imgsz": int(get_pi_config("detector.imgsz", 640) or 640),
+        },
+        "architecture": {
+            "node_role": str(get_pi_config("architecture.node_role", "light_frontend") or "light_frontend"),
+            "local_orchestration": bool(get_pi_config("architecture.local_orchestration", False)),
         },
     }
 
@@ -111,12 +118,15 @@ def _print_block(data: dict[str, Any]) -> None:
     print(f"中枢地址: {data['network']['pc_ip'] or '未设置'}")
     print(f"WebSocket 端口: {data['network']['ws_port']}")
     print(f"唤醒词: {data['voice']['wake_word']}")
+    print(f"唤醒别名: {', '.join(data['voice']['wake_aliases']) if data['voice']['wake_aliases'] else '未设置'}")
     print(f"在线语音识别: {_bool_text(data['voice']['online_recognition'])}")
     print(f"离线模型目录: {data['voice']['model_path']}")
     print(f"离线模型绝对目录: {data['voice']['resolved_model_path']}")
     print(f"检测权重: {data['detector']['weights_path']}")
     print(f"检测阈值: {data['detector']['conf']}")
     print(f"检测尺寸: {data['detector']['imgsz']}")
+    print(f"节点角色: {data['architecture']['node_role']}")
+    print(f"本地编排: {_bool_text(data['architecture']['local_orchestration'])}")
 
 
 def _load_runtime():

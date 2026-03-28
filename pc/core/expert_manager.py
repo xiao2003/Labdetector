@@ -167,66 +167,30 @@ class ExpertManager:
         for expert in self.experts.values():
             yield expert, self._definition_for_expert(expert)
 
-    def _focused_closed_loop_codes(self) -> set[str]:
-        raw = str(
-            get_config(
-                "expert_loop.focus_codes",
-                "safety.ppe_expert,safety.chem_safety_expert",
-            )
-            or ""
-        )
-        codes = {item.strip() for item in raw.split(",") if item.strip()}
-        return codes or {"safety.ppe_expert", "safety.chem_safety_expert"}
-
     def _allowed_closed_loop_events(self, expert_code: str) -> set[str]:
-        mapping = {
-            "safety.ppe_expert": {"PPE穿戴检查"},
-            "safety.chem_safety_expert": {"危化品识别", "化学品容器识别"},
-        }
-        return set(mapping.get(str(expert_code or "").strip(), set()))
+        definition = get_expert_definition(expert_code)
+        if definition is None:
+            return set()
+        return {str(item).strip() for item in getattr(definition, "event_names", ()) if str(item).strip()}
 
     def closed_loop_codes_for_event(self, event_name: str) -> List[str]:
         name = str(event_name or "").strip()
+        if not name:
+            return []
+
         matches: List[str] = []
-        for expert_code in sorted(self._focused_closed_loop_codes()):
-            allowed_names = self._allowed_closed_loop_events(expert_code)
-            if allowed_names and name in allowed_names:
-                matches.append(expert_code)
-        return matches
-
-    def _match_voice_keywords(self, definition: Any, command: str) -> bool:
-        if definition is None:
-            return False
-        keywords = tuple(getattr(definition, "voice_keywords", ()) or ())
-        if not keywords:
-            return False
-        lowered = str(command or "").lower()
-        normalized = lowered
-        for filler in ("一下子", "一下", "帮我", "请帮我", "请", "看看", "识别一下", "读取一下"):
-            normalized = normalized.replace(filler, "")
-        normalized = normalized.replace(" ", "")
-
-        for keyword in keywords:
-            token = str(keyword).strip().lower()
-            if not token:
+        for expert, definition in self._iter_loaded_with_definition():
+            if definition is None:
                 continue
-            token_normalized = token
-            for filler in ("一下子", "一下", "帮我", "请帮我", "请", "看看", "识别一下", "读取一下"):
-                token_normalized = token_normalized.replace(filler, "")
-            token_normalized = token_normalized.replace(" ", "")
-            if token in lowered or token_normalized in normalized:
-                return True
-        return False
+            allowed_names = self._allowed_closed_loop_events(expert.expert_code)
+            if allowed_names and name in allowed_names:
+                matches.append(expert.expert_code)
+        return sorted(matches)
 
-    def _match_voice_keywords(self, definition: Any, command: str) -> bool:
-        if definition is None:
-            return False
-        keywords = list(tuple(getattr(definition, "voice_keywords", ()) or ()))
-        keywords.extend(VOICE_KEYWORD_FALLBACKS.get(getattr(definition, "code", ""), ()))
-        if not keywords:
-            return False
-
-        fillers = (
+    @staticmethod
+    def _normalize_voice_text(text: str) -> str:
+        normalized = str(text or "").strip().lower().replace(" ", "")
+        for filler in (
             "一下子",
             "一下",
             "帮我",
@@ -238,23 +202,9 @@ class ExpertManager:
             "识别",
             "读取",
             "帮忙",
-        )
-
-        lowered = str(command or "").strip().lower()
-        normalized = lowered.replace(" ", "")
-        for filler in fillers:
+        ):
             normalized = normalized.replace(filler, "")
-
-        for keyword in keywords:
-            token = str(keyword).strip().lower()
-            if not token:
-                continue
-            token_normalized = token.replace(" ", "")
-            for filler in fillers:
-                token_normalized = token_normalized.replace(filler, "")
-            if token in lowered or token_normalized in normalized:
-                return True
-        return False
+        return normalized
 
     def _match_voice_keywords(self, definition: Any, command: str) -> bool:
         if definition is None:
@@ -264,95 +214,57 @@ class ExpertManager:
         if not keywords:
             return False
 
-        fillers = (
-            "一下子",
-            "一下",
-            "帮我",
-            "请帮我",
-            "请",
-            "看看",
-            "识别一下",
-            "读取一下",
-            "识别",
-            "读取",
-            "帮忙",
-        )
-
-        lowered = str(command or "").strip().lower()
-        normalized = lowered.replace(" ", "")
-        for filler in fillers:
-            normalized = normalized.replace(filler, "")
-
+        normalized_command = self._normalize_voice_text(command)
+        lowered_command = str(command or "").strip().lower()
         for keyword in keywords:
             token = str(keyword).strip().lower()
             if not token:
                 continue
-            token_normalized = token.replace(" ", "")
-            for filler in fillers:
-                token_normalized = token_normalized.replace(filler, "")
-            if token in lowered or token_normalized in normalized:
+            normalized_token = self._normalize_voice_text(token)
+            if token in lowered_command or (normalized_token and normalized_token in normalized_command):
                 return True
         return False
 
     def list_resident_stream_groups(self, media_type: str = "video") -> Dict[str, List[str]]:
         groups: Dict[str, List[str]] = defaultdict(list)
-        focused_codes = self._focused_closed_loop_codes()
         for expert, definition in self._iter_loaded_with_definition():
             if definition is None:
                 continue
-            if expert.expert_code not in focused_codes:
-                continue
-            if getattr(definition, "trigger_mode", "resident") != "resident":
+            if getattr(definition, "trigger_mode", "resident") not in {"resident", "both"}:
                 continue
             if media_type not in tuple(getattr(definition, "media_types", ()) or ()):
                 continue
             groups[getattr(definition, "stream_group", "default")].append(expert.expert_code)
         return dict(groups)
-        try:
-            bundle = knowledge_manager.build_scope_bundle(query, expert.knowledge_scope, top_k=3)
-            return {
-                "knowledge_scope": expert.knowledge_scope,
-                "knowledge_scopes": bundle["scopes"],
-                "knowledge_query": query,
-                "knowledge_context": bundle["context"],
-                "knowledge_structured_rows": bundle["structured_rows"],
-                "knowledge_vector_hits": bundle["vector_hits"],
-            }
-        except Exception as exc:
-            console_error(f"知识库检索失败 [{expert.expert_name}]: {exc}")
-            return {
-                "knowledge_scope": expert.knowledge_scope,
-                "knowledge_scopes": ["common", expert.knowledge_scope],
-                "knowledge_query": query,
-                "knowledge_context": "",
-                "knowledge_structured_rows": [],
-                "knowledge_vector_hits": [],
-            }
 
     def get_aggregated_edge_policy(self) -> Dict[str, Any]:
         policies: List[Dict[str, Any]] = []
-        focused_codes = self._focused_closed_loop_codes()
         for expert, definition in self._iter_loaded_with_definition():
-            if expert.expert_code not in focused_codes:
+            if definition is None:
+                continue
+            if getattr(definition, "trigger_mode", "resident") not in {"resident", "both"}:
                 continue
             policy = expert.get_edge_policy()
             if not policy:
                 continue
+
             raw_items: List[Dict[str, Any]] = []
             if isinstance(policy, list):
                 raw_items = [item for item in policy if isinstance(item, dict)]
             elif isinstance(policy, dict):
                 raw_items = [policy]
+
             allowed_names = self._allowed_closed_loop_events(expert.expert_code)
             for item in raw_items:
                 event_name = str(item.get("event_name", "") or "").strip()
-                if allowed_names and event_name not in allowed_names:
+                if allowed_names and event_name and event_name not in allowed_names:
                     continue
                 merged = dict(item)
                 merged.setdefault("expert_code", expert.expert_code)
                 merged.setdefault("policy_name", event_name or expert.expert_code)
-                merged.setdefault("trigger_mode", getattr(definition, "trigger_mode", "resident") if definition else "resident")
-                merged.setdefault("stream_group", getattr(definition, "stream_group", "default") if definition else "default")
+                merged.setdefault("trigger_mode", getattr(definition, "trigger_mode", "resident"))
+                merged.setdefault("stream_group", getattr(definition, "stream_group", "default"))
+                merged.setdefault("default_speak_policy", getattr(definition, "default_speak_policy", "silent_log_only"))
                 policies.append(merged)
         return {"event_policies": policies}
 
@@ -370,7 +282,7 @@ class ExpertManager:
         for expert, definition in self._iter_loaded_with_definition():
             if allowed_codes and expert.expert_code not in allowed_codes:
                 continue
-            if trigger_mode and definition is not None and getattr(definition, "trigger_mode", "resident") != trigger_mode:
+            if trigger_mode and definition is not None and getattr(definition, "trigger_mode", "resident") not in {trigger_mode, "both"}:
                 continue
             if expert.match_event(event_name):
                 try:
@@ -386,7 +298,7 @@ class ExpertManager:
         return " ".join(results) if results else ""
 
     def _llm_interpreter_codes(self) -> set[str]:
-        return self._focused_closed_loop_codes() & {"safety.ppe_expert", "safety.chem_safety_expert"}
+        return {"safety.ppe_expert", "safety.chem_safety_expert"}
 
     def _should_use_llm_interpreter(self, expert: BaseExpert, context: Dict[str, Any]) -> bool:
         if expert.expert_code not in self._llm_interpreter_codes():
@@ -438,7 +350,6 @@ class ExpertManager:
         backend_name = str(get_config("ai_backend.type", "ollama") or "ollama").strip()
         try:
             from pc.core.ai_backend import default_model_for_backend
-
             return str(default_model_for_backend(backend_name) or "").strip()
         except Exception:
             return ""
@@ -464,11 +375,10 @@ class ExpertManager:
         prompt = self._interpreter_prompt(expert, context, raw_response)
         try:
             from pc.core.ai_backend import ask_assistant_with_rag
-
             interpreted = str(ask_assistant_with_rag(frame, prompt, rag_context, model_name) or "").strip()
             return interpreted or raw_response
         except Exception as exc:
-            console_error(f"LLM 瑙ｉ噴灞傚け璐?[{expert.expert_name}]: {exc}")
+            console_error(f"LLM 解释层失败 [{expert.expert_name}]: {exc}")
             return raw_response
 
     def _postprocess_expert_response(
@@ -508,38 +418,33 @@ class ExpertManager:
             "text": " ".join(group_results[key] for key in sorted(group_results)).strip(),
         }
 
-    def _match_voice_keywords_safe(self, definition: Any, command: str) -> bool:
-        text = str(command or "").strip().lower()
-        if not text or definition is None:
-            return False
-        for keyword in VOICE_KEYWORD_FALLBACKS_CN.get(getattr(definition, "code", ""), ()):
-            token = str(keyword).strip().lower()
-            if token and token in text:
-                return True
-        return self._match_voice_keywords(definition, command)
-
-    def route_voice_command(self, command: str, frame: Any, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def route_voice_command(
+        self,
+        command: str,
+        frame: Any,
+        context: Optional[Dict[str, Any]] = None,
+        *,
+        forced_expert_codes: Optional[Iterable[str]] = None,
+    ) -> Dict[str, Any]:
         context = dict(context or {})
         context.setdefault("query", command)
         context.setdefault("question", command)
 
+        forced_codes = {str(item).strip() for item in (forced_expert_codes or []) if str(item).strip()}
         matched_codes: List[str] = []
         group_results: Dict[str, str] = {}
-        focused_codes = self._focused_closed_loop_codes()
         for expert, definition in self._iter_loaded_with_definition():
             if definition is None:
                 continue
-            if expert.expert_code not in focused_codes:
+            if getattr(definition, "trigger_mode", "resident") not in {"voice", "both"}:
                 continue
-            if getattr(definition, "trigger_mode", "resident") != "voice":
+            if forced_codes:
+                if expert.expert_code not in forced_codes:
+                    continue
+            elif not self._match_voice_keywords(definition, command):
                 continue
-            # General QA should stay on the normal assistant path instead of
-            # hijacking generic spoken questions as a "voice expert".
-            if expert.expert_code == "lab_qa_expert":
-                continue
-            if not self._match_voice_keywords_safe(definition, command):
-                continue
-            event_name = expert.supported_events()[0] if expert.supported_events() else f"VOICE::{expert.expert_code}"
+            event_names = list(getattr(definition, "event_names", ()) or [])
+            event_name = event_names[0] if event_names else (expert.supported_events()[0] if expert.supported_events() else f"VOICE::{expert.expert_code}")
             result = self.route_and_analyze(
                 event_name,
                 frame,
@@ -730,3 +635,4 @@ class ExpertManager:
 
 
 expert_manager = ExpertManager()
+

@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from pc.core.orchestrator import OrchestratorResult
 from pc.voice.voice_interaction import VoiceInteraction
 
 
@@ -12,8 +13,15 @@ class RemoteVoiceRoutingTests(unittest.TestCase):
         calls = []
         agent.set_local_command_handler(lambda text, intent: calls.append((text, intent)) or "已执行本地指令")
 
-        with patch('pc.voice.voice_interaction._build_voice_rag_context', return_value=''), \
-             patch('pc.voice.voice_interaction.ask_assistant_with_rag', return_value='远端问答回复'):
+        with patch(
+            "pc.voice.voice_interaction.orchestrator.plan_voice_command",
+            return_value=OrchestratorResult(
+                intent="answer_from_knowledge",
+                text="远端问答回复",
+                actions=[{"type": "answer_from_knowledge"}],
+                metadata={"planner_backend": "test"},
+            ),
+        ):
             reply = agent.process_remote_command('1', '打开训练中心')
 
         self.assertEqual(reply, '远端问答回复')

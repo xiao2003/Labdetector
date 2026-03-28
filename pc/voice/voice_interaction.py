@@ -21,6 +21,7 @@ from pc.app_identity import resource_path
 from pc.core.ai_backend import ask_assistant_with_rag
 from pc.core.config import get_config
 from pc.core.logger import console_error, console_info
+from pc.core.orchestrator import orchestrator
 from pc.core.runtime_assets import sensevoice_model_dir, vosk_model_dir
 from pc.core.voice_round_archive import get_voice_round_archive
 from pc.knowledge_base.rag_engine import knowledge_manager
@@ -682,342 +683,8 @@ class VoiceInteraction:
 
     @staticmethod
     def _extract_note_content(command: str) -> str:
-        content = command
-        for prefix in ("记一个", "记录一个", "记录", "帮我记录", "请记录"):
-            if prefix in content:
-                content = content.split(prefix, 1)[-1]
-                break
-        return content.strip(" ，。！?\n")
-
-    def _save_note(self, note_content: str) -> bool:
-        if not note_content.strip():
-            return False
-        text = f"[语音记录]{time.strftime('%Y-%m-%d %H:%M:%S')}：{note_content.strip()}"
-        return _common_memory_engine().save_and_ingest_note(text)
-
-    def _save_note(self, note_content: str) -> bool:
-        if not note_content.strip():
-            return False
-        self.pending_note_items.append(note_content.strip())
-        return True
-
-    def _build_full_session_transcript(self) -> str:
-        lines = [
-            f"语音会话时间：{time.strftime('%Y-%m-%d %H:%M:%S')}",
-            f"交互轮次：{len(self.session_rounds)}",
-            "",
-            "以下为本轮完整语音交互记录：",
-        ]
-        for index, item in enumerate(self.session_rounds, start=1):
-            lines.append(f"{index}. 用户：{str(item.get('prompt', '')).strip()}")
-            lines.append(f"   助手：{str(item.get('response', '')).strip()}")
-        return "\n".join(lines)
-
-    def _extract_knowledge_with_llm(self, transcript: str) -> list[str]:
-        if not transcript.strip():
-            return []
-        prompt = (
-            "请从以下完整语音交互记录中提取适合写入实验室知识库的有效知识。"
-            "只保留事实、规则、结论、风险提示、操作经验或明确的用户口述记录。"
-            "不要保留寒暄、停止播报、退出指令、无意义重复。"
-            "请仅输出 JSON 数组字符串，例如 [\"知识1\", \"知识2\"]。"
-        )
-        try:
-            raw = ask_assistant_with_rag(
-                frame=None,
-                question=f"{prompt}\n\n【完整会话记录】\n{transcript}",
-                rag_context="请仅做知识提取，不要自由发挥。",
-                model_name=self.ai_backend.get("model", "qwen-vl-max"),
-            )
-            start = raw.find("[")
-            end = raw.rfind("]")
-            if start != -1 and end != -1 and end > start:
-                payload = json.loads(raw[start : end + 1])
-                if isinstance(payload, list):
-                    return [str(item).strip() for item in payload if str(item).strip()]
-        except Exception as exc:
-            console_error(f"[VOICE] 会话知识提取失败: {exc}")
-
-        fallback: list[str] = []
-        for note in self.pending_note_items:
-            if note.strip():
-                fallback.append(f"用户口述记录：{note.strip()}")
-        for item in self.session_rounds:
-            if item.get("voice_triggered_experts"):
-                text = str(item.get("response", "")).strip()
-                if text:
-                    fallback.append(f"专家结论：{text}")
-        return fallback
-
-    def _finalize_session_summary(self) -> None:
-        if not self.session_rounds:
-            return
-        transcript = self._build_full_session_transcript()
-        knowledge_items = self._extract_knowledge_with_llm(transcript)
-        self.round_archive.write_session_summary(
-            transcript,
-            knowledge_items=knowledge_items,
-            metadata={"knowledge_item_count": len(knowledge_items)},
-        )
-        if knowledge_items:
-            text = "[语音会话知识提取]\n" + "\n".join(f"- {item}" for item in knowledge_items)
-            try:
-                _common_memory_engine().save_and_ingest_note(text)
-            except Exception as exc:
-                console_error(f"[VOICE] 语音会话知识回灌失败: {exc}")
-
-    def process_text_command(
-        self,
-        command: str,
-        *,
-        source: str = "pc_local",
-        speak_response: bool = True,
-        reply_callback: Optional[Callable[[str], None]] = None,
-        metadata: Optional[dict[str, Any]] = None,
-    ) -> str:
-        text = str(command or "").strip()
-        if not text:
-            return ""
-        console_info(f"[VOICE] 收到语音输入({source}): {text}")
-
-        round_meta = dict(metadata or {})
-        round_meta.setdefault("mode", self.session_meta.get("mode", "adhoc"))
-        round_meta.setdefault("backend", self.ai_backend.get("type", ""))
-        round_meta.setdefault("model", self.ai_backend.get("model", ""))
-
-        local_origin = source.startswith("pc")
-
-        try:
-            if self._is_stop_playback_command(text):
-                self._stop_playback()
-                response = "已停止播报。"
-                self._deliver_response(response, speak_response=False, reply_callback=reply_callback)
-                self._record_round(text, response, source, {**round_meta, "stop_playback": True})
-                return response
-
-            if any(keyword in text for keyword in ("退出", "关闭语音", "结束语音", "停止语音", "不用了")):
-                response = "好的，语音助手已结束本轮待命。"
-                self._deliver_response(response, speak_response=speak_response, reply_callback=reply_callback)
-                self._record_round(text, response, source, round_meta)
-                if local_origin:
-                    self.is_active = False
-                return response
-
-            if any(keyword in text for keyword in ("记一个", "记录", "帮我记录")):
-                note_content = self._extract_note_content(text)
-                if note_content:
-                    saved = self._save_note(note_content)
-                    response = "已写入公共背景知识库。" if saved else "记录失败，请稍后重试。"
-                    self._deliver_response(response, speak_response=speak_response, reply_callback=reply_callback)
-                    self._record_round(text, response, source, {**round_meta, "note_saved": saved})
-                    if local_origin:
-                        self.is_active = True
-                        self.last_wake_time = time.time()
-                    return response
-
-            current_frame = self.get_latest_frame_callback() if self.get_latest_frame_callback else None
-            from pc.core.expert_manager import expert_manager
-
-            expert_bundle = expert_manager.route_voice_command(
-                text,
-                current_frame,
-                {
-                    "source": source,
-                    "query": text,
-                    "question": text,
-                    "event_name": "语音唤醒专家",
-                },
-            )
-            expert_answer = str(expert_bundle.get("text") or "").strip()
-            if expert_answer:
-                console_info(
-                    f"[VOICE] 语音唤醒专家命中: {', '.join(expert_bundle.get('matched_expert_codes', [])) or 'unknown'}"
-                )
-                console_info(f"[VOICE] AI 回答: {expert_answer}")
-                self._deliver_response(expert_answer, speak_response=speak_response, reply_callback=reply_callback)
-                self._record_round(
-                    text,
-                    expert_answer,
-                    source,
-                    {
-                        **round_meta,
-                        "has_frame": bool(current_frame is not None),
-                        "rag_enabled": False,
-                        "voice_triggered_experts": expert_bundle.get("matched_expert_codes", []),
-                    },
-                )
-                return expert_answer
-
-            context = _build_voice_rag_context(text)
-            answer = ask_assistant_with_rag(
-                frame=current_frame,
-                question=text,
-                rag_context=context,
-                model_name=self.ai_backend.get("model", "qwen-vl-max"),
-            )
-            console_info(f"[VOICE] AI 回答: {answer}")
-            self._deliver_response(answer, speak_response=speak_response, reply_callback=reply_callback)
-            self._record_round(
-                text,
-                answer,
-                source,
-                {
-                    **round_meta,
-                    "has_frame": bool(current_frame is not None),
-                    "rag_enabled": bool(context.strip()),
-                },
-            )
-            return answer
-        except Exception as exc:
-            error_text = f"语音指令处理失败: {exc}"
-            console_error(error_text)
-            self._deliver_response(error_text, speak_response=False, reply_callback=reply_callback)
-            self._record_round(text, error_text, source, {**round_meta, "error": True})
-            return error_text
-        finally:
-            if local_origin:
-                self.is_active = False
-
-    @staticmethod
-    def _extract_note_content(command: str) -> str:
         content = str(command or "")
-        for prefix in ("记住", "记一个", "记录一个", "记录一下", "记录", "帮我记录", "请记录"):
-            if prefix in content:
-                content = content.split(prefix, 1)[-1]
-                break
-        return content.strip(" ，。！？?；;\n")
-
-    def _save_note(self, note_content: str) -> bool:
-        if not note_content.strip():
-            return False
-        text = f"[语音记录]{time.strftime('%Y-%m-%d %H:%M:%S')}：{note_content.strip()}"
-        return _common_memory_engine().save_and_ingest_note(text)
-
-    def _is_stop_session_command(self, text: str) -> bool:
-        return any(keyword in text for keyword in ("退出", "关闭语音", "结束语音", "停止语音", "不用了", "退出助手", "结束助手"))
-
-    def _is_note_command(self, text: str) -> bool:
-        return any(keyword in text for keyword in ("记住", "记一个", "记录一个", "记录一下", "记录", "帮我记录", "请记录"))
-
-    def process_text_command(
-        self,
-        command: str,
-        *,
-        source: str = "pc_local",
-        speak_response: bool = True,
-        reply_callback: Optional[Callable[[str], None]] = None,
-        metadata: Optional[dict[str, Any]] = None,
-    ) -> str:
-        text = str(command or "").strip()
-        if not text:
-            return ""
-        console_info(f"[VOICE] 收到语音输入({source}): {text}")
-
-        round_meta = dict(metadata or {})
-        round_meta.setdefault("mode", self.session_meta.get("mode", "adhoc"))
-        round_meta.setdefault("backend", self.ai_backend.get("type", ""))
-        round_meta.setdefault("model", self.ai_backend.get("model", ""))
-
-        local_origin = source.startswith("pc")
-
-        try:
-            normalized_text = self._normalize_text(text)
-
-            if self._is_stop_playback_command(text) or normalized_text in ("停", "停止", "暂停", "停下", "打住"):
-                self._stop_playback()
-                response = "已停止当前语音播报。"
-                self._deliver_response(response, speak_response=False, reply_callback=reply_callback)
-                self._record_round(text, response, source, {**round_meta, "stop_playback": True})
-                return response
-
-            if self._is_stop_session_command(text):
-                stop_tts()
-                response = "好的，已结束本轮语音交互，等待你再次唤醒。"
-                self._deliver_response(response, speak_response=speak_response, reply_callback=reply_callback)
-                self._record_round(text, response, source, {**round_meta, "stop_session": True})
-                if local_origin:
-                    self.is_active = False
-                return response
-
-            if self._is_note_command(text):
-                note_content = self._extract_note_content(text)
-                if note_content:
-                    saved = self._save_note(note_content)
-                    response = "已写入公共背景知识库。" if saved else "记录失败，请稍后重试。"
-                    self._deliver_response(response, speak_response=speak_response, reply_callback=reply_callback)
-                    self._record_round(text, response, source, {**round_meta, "note_saved": saved})
-                    if local_origin:
-                        self.is_active = True
-                        self.last_wake_time = time.time()
-                    return response
-
-            current_frame = self.get_latest_frame_callback() if self.get_latest_frame_callback else None
-            from pc.core.expert_manager import expert_manager
-
-            expert_bundle = expert_manager.route_voice_command(
-                text,
-                current_frame,
-                {
-                    "source": source,
-                    "query": text,
-                    "question": text,
-                    "event_name": "语音唤醒专家",
-                },
-            )
-            expert_answer = str(expert_bundle.get("text") or "").strip()
-            if expert_answer:
-                console_info(
-                    f"[VOICE] 语音唤醒专家命中: {', '.join(expert_bundle.get('matched_expert_codes', [])) or 'unknown'}"
-                )
-                console_info(f"[VOICE] AI 回答: {expert_answer}")
-                self._deliver_response(expert_answer, speak_response=speak_response, reply_callback=reply_callback)
-                self._record_round(
-                    text,
-                    expert_answer,
-                    source,
-                    {
-                        **round_meta,
-                        "has_frame": bool(current_frame is not None),
-                        "rag_enabled": False,
-                        "voice_triggered_experts": expert_bundle.get("matched_expert_codes", []),
-                    },
-                )
-                return expert_answer
-
-            context = _build_voice_rag_context(text)
-            answer = ask_assistant_with_rag(
-                frame=current_frame,
-                question=text,
-                rag_context=context,
-                model_name=self.ai_backend.get("model", "qwen-vl-max"),
-            )
-            console_info(f"[VOICE] AI 回答: {answer}")
-            self._deliver_response(answer, speak_response=speak_response, reply_callback=reply_callback)
-            self._record_round(
-                text,
-                answer,
-                source,
-                {
-                    **round_meta,
-                    "has_frame": bool(current_frame is not None),
-                    "rag_enabled": bool(context.strip()),
-                },
-            )
-            return answer
-        except Exception as exc:
-            error_text = f"语音指令处理失败: {exc}"
-            console_error(error_text)
-            self._deliver_response(error_text, speak_response=False, reply_callback=reply_callback)
-            self._record_round(text, error_text, source, {**round_meta, "error": True})
-            return error_text
-        finally:
-            if local_origin:
-                self.is_active = False
-
-    @staticmethod
-    def _extract_note_content(command: str) -> str:
-        content = str(command or "")
-        for prefix in ("记住", "记一下", "记录一下", "记录", "帮我记录", "请记录"):
+        for prefix in ("记住", "记一下", "记录一下", "记录", "帮我记录", "请记录", "记到知识库"):
             if prefix in content:
                 content = content.split(prefix, 1)[-1]
                 break
@@ -1040,194 +707,6 @@ class VoiceInteraction:
             lines.append(f"{index}. 用户：{str(item.get('prompt', '')).strip()}")
             lines.append(f"   助手：{str(item.get('response', '')).strip()}")
         return "\n".join(lines)
-
-    def _extract_knowledge_with_llm(self, transcript: str) -> list[str]:
-        if not transcript.strip():
-            return []
-        prompt = (
-            "请从以下完整语音交互记录中提取适合写入实验室知识库的有效知识。"
-            "只保留事实、规则、结论、风险提示、操作经验或明确的用户口述记录。"
-            "不要保留寒暄、停止播报、退出指令、无意义重复。"
-            "请仅输出 JSON 数组字符串，例如 [\"知识1\", \"知识2\"]。"
-        )
-        try:
-            raw = ask_assistant_with_rag(
-                frame=None,
-                question=f"{prompt}\n\n【完整会话记录】\n{transcript}",
-                rag_context="请仅做知识提取，不要自由发挥。",
-                model_name=self.ai_backend.get("model", "qwen-vl-max"),
-            )
-            start = raw.find("[")
-            end = raw.rfind("]")
-            if start != -1 and end != -1 and end > start:
-                payload = json.loads(raw[start : end + 1])
-                if isinstance(payload, list):
-                    return [str(item).strip() for item in payload if str(item).strip()]
-        except Exception as exc:
-            console_error(f"[VOICE] 会话知识提取失败: {exc}")
-
-        fallback: list[str] = []
-        for note in self.pending_note_items:
-            if note.strip():
-                fallback.append(f"用户口述记录：{note.strip()}")
-        for item in self.session_rounds:
-            if item.get("voice_triggered_experts"):
-                text = str(item.get("response", "")).strip()
-                if text:
-                    fallback.append(f"专家结论：{text}")
-        return fallback
-
-    def _finalize_session_summary(self) -> None:
-        if not self.session_rounds:
-            return
-        transcript = self._build_full_session_transcript()
-        knowledge_items = self._extract_knowledge_with_llm(transcript)
-        self.round_archive.write_session_summary(
-            transcript,
-            knowledge_items=knowledge_items,
-            metadata={"knowledge_item_count": len(knowledge_items)},
-        )
-        if knowledge_items:
-            text = "[语音会话知识提取]\n" + "\n".join(f"- {item}" for item in knowledge_items)
-            try:
-                _common_memory_engine().save_and_ingest_note(text)
-            except Exception as exc:
-                console_error(f"[VOICE] 语音会话知识回灌失败: {exc}")
-
-    def process_text_command(
-        self,
-        command: str,
-        *,
-        source: str = "pc_local",
-        speak_response: bool = True,
-        reply_callback: Optional[Callable[[str], None]] = None,
-        metadata: Optional[dict[str, Any]] = None,
-    ) -> str:
-        text = str(command or "").strip()
-        if not text:
-            return ""
-        console_info(f"[VOICE] 收到语音输入({source}): {text}")
-
-        round_meta = dict(metadata or {})
-        round_meta.setdefault("mode", self.session_meta.get("mode", "adhoc"))
-        round_meta.setdefault("backend", self.ai_backend.get("type", ""))
-        round_meta.setdefault("model", self.ai_backend.get("model", ""))
-        local_origin = source.startswith("pc")
-        keep_active = local_origin
-        self._set_session_state("processing")
-
-        try:
-            if self._is_stop_playback_command(text):
-                self._stop_playback()
-                response = "已停止当前语音播报。"
-                keep_active = True
-                self._deliver_response(response, speak_response=False, reply_callback=reply_callback)
-                self._record_round(text, response, source, {**round_meta, "stop_playback": True})
-                return response
-
-            if self._is_stop_session_command(text):
-                stop_tts()
-                self._cancel_speaking_timer()
-                response = "好的，已结束本轮语音交互，等待你再次唤醒。"
-                self._deliver_response(response, speak_response=speak_response, reply_callback=reply_callback)
-                self._record_round(text, response, source, {**round_meta, "stop_session": True})
-                self._finalize_active_round()
-                keep_active = False
-                return response
-
-            local_intent = self._match_local_command_intent(text)
-            if local_origin and local_intent and self.local_command_handler is not None:
-                try:
-                    response = str(self.local_command_handler(text, local_intent) or "").strip()
-                except Exception as exc:
-                    response = f"本地界面指令执行失败：{exc}"
-                    console_error(f"[VOICE] 本地界面指令执行失败: {exc}")
-                if not response:
-                    response = "好的，界面指令已执行。"
-                keep_active = True
-                self._deliver_response(response, speak_response=speak_response, reply_callback=reply_callback)
-                self._record_round(text, response, source, {**round_meta, "local_intent": local_intent})
-                return response
-
-            if self._is_note_command(text):
-                note_content = self._extract_note_content(text)
-                if note_content:
-                    saved = self._save_note(note_content)
-                    response = "已记录本轮语音内容，将在本轮结束后整理写入知识库。" if saved else "记录失败，请稍后重试。"
-                    self._deliver_response(response, speak_response=speak_response, reply_callback=reply_callback)
-                    self._record_round(text, response, source, {**round_meta, "note_saved": saved})
-                    keep_active = True
-                    return response
-
-            current_frame = self.get_latest_frame_callback() if self.get_latest_frame_callback else None
-            from pc.core.expert_manager import expert_manager
-
-            expert_bundle = expert_manager.route_voice_command(
-                text,
-                current_frame,
-                {
-                    "source": source,
-                    "query": text,
-                    "question": text,
-                    "event_name": "语音唤醒专家",
-                },
-            )
-            expert_answer = str(expert_bundle.get("text") or "").strip()
-            if expert_answer:
-                console_info(
-                    f"[VOICE] 语音唤醒专家命中: {', '.join(expert_bundle.get('matched_expert_codes', [])) or 'unknown'}"
-                )
-                console_info(f"[VOICE] AI 回答: {expert_answer}")
-                keep_active = True
-                self._deliver_response(expert_answer, speak_response=speak_response, reply_callback=reply_callback)
-                self._record_round(
-                    text,
-                    expert_answer,
-                    source,
-                    {
-                        **round_meta,
-                        "has_frame": bool(current_frame is not None),
-                        "rag_enabled": False,
-                        "voice_triggered_experts": expert_bundle.get("matched_expert_codes", []),
-                    },
-                )
-                return expert_answer
-
-            context = _build_voice_rag_context(text)
-            answer = ask_assistant_with_rag(
-                frame=current_frame,
-                question=text,
-                rag_context=context,
-                model_name=self.ai_backend.get("model", "qwen-vl-max"),
-            )
-            console_info(f"[VOICE] AI 回答: {answer}")
-            keep_active = True
-            self._deliver_response(answer, speak_response=speak_response, reply_callback=reply_callback)
-            self._record_round(
-                text,
-                answer,
-                source,
-                {
-                    **round_meta,
-                    "has_frame": bool(current_frame is not None),
-                    "rag_enabled": bool(context.strip()),
-                },
-            )
-            return answer
-        except Exception as exc:
-            error_text = f"语音指令处理失败: {exc}"
-            console_error(error_text)
-            self._deliver_response(error_text, speak_response=False, reply_callback=reply_callback)
-            self._record_round(text, error_text, source, {**round_meta, "error": True})
-            return error_text
-        finally:
-            if local_origin:
-                self.is_active = keep_active
-                if keep_active:
-                    self.last_wake_time = time.time()
-                    self._set_session_state("waiting_command")
-                else:
-                    self._set_session_state("waiting_wake")
 
     def _build_user_knowledge_source(self) -> str:
         lines = [
@@ -1256,7 +735,7 @@ class VoiceInteraction:
                 frame=None,
                 question=f"{prompt}\n\n【用户口述记录】\n{transcript}",
                 rag_context="请只做知识提取，不要补充专家结论，也不要自由发挥。",
-                model_name=self.ai_backend.get('model', 'qwen-vl-max'),
+                model_name=self.ai_backend.get("model", "qwen-vl-max"),
             )
             start = raw.find("[")
             end = raw.rfind("]")
@@ -1344,19 +823,110 @@ class VoiceInteraction:
                 return intent
         return None
 
-    def _classify_intent(self, text: str, expert_bundle: Optional[dict[str, Any]] = None) -> str:
-        if self._is_stop_playback_command(text):
-            return "control_stop_playback"
-        if self._is_stop_session_command(text):
-            return "control_stop_session"
-        local_intent = self._match_local_command_intent(text)
-        if local_intent:
-            return f"local_{local_intent}"
-        if self._is_note_command(text):
-            return "record_note"
-        if expert_bundle and str(expert_bundle.get("text") or "").strip():
-            return "expert_route"
-        return "qa"
+    def process_text_command(
+        self,
+        command: str,
+        *,
+        source: str = "pc_local",
+        speak_response: bool = True,
+        reply_callback: Optional[Callable[[str], None]] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> str:
+        text = str(command or "").strip()
+        if not text:
+            return ""
+        console_info(f"[VOICE] 收到语音输入({source}): {text}")
+
+        round_meta = dict(metadata or {})
+        round_meta.setdefault("mode", self.session_meta.get("mode", "adhoc"))
+        round_meta.setdefault("backend", self.ai_backend.get("type", ""))
+        round_meta.setdefault("model", self.ai_backend.get("model", ""))
+        local_origin = source.startswith("pc")
+        keep_active = local_origin
+        self._set_session_state("processing")
+
+        try:
+            if self._is_stop_playback_command(text):
+                self._stop_playback()
+                response = "已停止当前语音播报。"
+                keep_active = True
+                self._deliver_response(response, speak_response=False, reply_callback=reply_callback)
+                self._record_round(text, response, source, {**round_meta, "stop_playback": True})
+                return response
+
+            if self._is_stop_session_command(text):
+                stop_tts()
+                self._cancel_speaking_timer()
+                response = "好的，已结束本轮语音交互，等待你再次唤醒。"
+                self._deliver_response(response, speak_response=speak_response, reply_callback=reply_callback)
+                self._record_round(text, response, source, {**round_meta, "stop_session": True})
+                self._finalize_active_round()
+                keep_active = False
+                return response
+
+            local_intent = self._match_local_command_intent(text)
+            if local_origin and local_intent and self.local_command_handler is not None:
+                try:
+                    response = str(self.local_command_handler(text, local_intent) or "").strip()
+                except Exception as exc:
+                    response = f"本地界面指令执行失败：{exc}"
+                    console_error(f"[VOICE] 本地界面指令执行失败: {exc}")
+                if not response:
+                    response = "好的，界面指令已执行。"
+                keep_active = True
+                self._deliver_response(response, speak_response=speak_response, reply_callback=reply_callback)
+                self._record_round(text, response, source, {**round_meta, "local_intent": local_intent})
+                return response
+
+            if self._is_note_command(text):
+                note_content = self._extract_note_content(text)
+                if note_content:
+                    saved = self._save_note(note_content)
+                    response = "已记录本轮语音内容，将在本轮结束后整理写入知识库。" if saved else "记录失败，请稍后重试。"
+                    self._deliver_response(response, speak_response=speak_response, reply_callback=reply_callback)
+                    self._record_round(text, response, source, {**round_meta, "note_saved": saved})
+                    keep_active = True
+                    return response
+
+            current_frame = self.get_latest_frame_callback() if self.get_latest_frame_callback else None
+            orchestrated = orchestrator.plan_voice_command(
+                text,
+                source=source,
+                frame=current_frame,
+                model_name=self.ai_backend.get("model", "qwen-vl-max"),
+                context=round_meta,
+            )
+            response = str(orchestrated.text or "").strip()
+            if not response:
+                response = "当前未生成有效响应，请稍后重试。"
+            keep_active = True
+            self._deliver_response(response, speak_response=speak_response, reply_callback=reply_callback)
+            self._record_round(
+                text,
+                response,
+                source,
+                {
+                    **round_meta,
+                    "orchestrator_intent": orchestrated.intent,
+                    "orchestrator_actions": list(orchestrated.actions),
+                    **dict(orchestrated.metadata or {}),
+                },
+            )
+            return response
+        except Exception as exc:
+            error_text = f"语音指令处理失败: {exc}"
+            console_error(error_text)
+            self._deliver_response(error_text, speak_response=False, reply_callback=reply_callback)
+            self._record_round(text, error_text, source, {**round_meta, "error": True})
+            return error_text
+        finally:
+            if local_origin:
+                self.is_active = keep_active
+                if keep_active:
+                    self.last_wake_time = time.time()
+                    self._set_session_state("waiting_command")
+                else:
+                    self._set_session_state("waiting_wake")
 
     def process_remote_command(
         self,
@@ -1374,8 +944,6 @@ class VoiceInteraction:
 
     def _route_command(self, command: str) -> str:
         return self.process_text_command(command, source="pc_local", speak_response=True)
-
-
 _voice_interaction: Optional[VoiceInteraction] = None
 _remote_text_router: Optional[VoiceInteraction] = None
 _pending_local_command_handler: Optional[Callable[[str, str], Optional[str]]] = None
@@ -1405,3 +973,4 @@ def get_remote_text_router() -> Optional[VoiceInteraction]:
     if _remote_text_router is None:
         _remote_text_router = VoiceInteraction(initialize_audio_models=False)
     return _remote_text_router
+

@@ -62,3 +62,5 @@ NeuroLab-Hub-Setup-v*.exe
 NeuroLab-Hub-v*.zip
 NeuroLab-Hub-Portable-v*.zip
 NeuroLab-Hub-source-v*.zip
+_runtime_data/
+.build/

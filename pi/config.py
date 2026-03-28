@@ -25,6 +25,7 @@ class PiConfig:
         config = configparser.ConfigParser()
         config["voice"] = {
             "wake_word": "小爱同学",
+            "wake_aliases": "小爱同学,小爱同,小爱,小艾同学,晓爱同学,哎同学,爱同学",
             "online_recognition": "True",
             "model_path": "voice/model",
         }
@@ -37,6 +38,10 @@ class PiConfig:
         config["self_check"] = {
             "auto_install_dependencies": "False",
         }
+        config["architecture"] = {
+            "node_role": "light_frontend",
+            "local_orchestration": "False",
+        }
         with open(cls._config_path, "w", encoding="utf-8-sig") as handle:
             config.write(handle)
 
@@ -45,6 +50,7 @@ class PiConfig:
         defaults = {
             "voice": {
                 "wake_word": "小爱同学",
+                "wake_aliases": "小爱同学,小爱同,小爱,小艾同学,晓爱同学,哎同学,爱同学",
                 "online_recognition": "True",
                 "model_path": "voice/model",
             },
@@ -56,6 +62,10 @@ class PiConfig:
             },
             "self_check": {
                 "auto_install_dependencies": "False",
+            },
+            "architecture": {
+                "node_role": "light_frontend",
+                "local_orchestration": "False",
             },
         }
         changed = False

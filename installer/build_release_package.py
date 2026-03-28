@@ -5,16 +5,24 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import shutil
 import time
 import zipfile
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Dict, Iterable
+
+from pc.core.orchestrator_runtime import load_asset_manifest, materialize_runtime_bundle
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DIST_ROOT = ROOT / "dist" / "NeuroLab Hub SilentDir"
 DEFAULT_RELEASE_ROOT = ROOT.parent / "release"
+INSTALLER_SCRIPT = ROOT / "installer" / "NeuroLab_Hub.iss"
+ISCC_CANDIDATES = (
+    Path(r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"),
+    Path(r"C:\Program Files\Inno Setup 6\ISCC.exe"),
+)
 
 ROOT_INCLUDE_DIRS = {
     "assets",
@@ -155,6 +163,21 @@ def _ensure_clean_runtime_placeholders(stage_dir: Path) -> None:
         _ensure_dir(directory)
 
 
+def _materialize_orchestrator_runtime(stage_dir: Path) -> Dict[str, Any]:
+    runtime_target = stage_dir / "APP" / "pc" / "runtime" / "llm_orchestrator"
+    materialized = materialize_runtime_bundle(runtime_target)
+    manifest_path = stage_dir / "APP" / "pc" / "models" / "orchestrator" / "orchestrator_assets.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"固定管家层资产清单缺失: {manifest_path}")
+    if not (runtime_target / "llama-cli.exe").exists():
+        raise FileNotFoundError(f"固定管家层 runtime 缺少 llama-cli.exe: {runtime_target}")
+    return {
+        "runtime_dir": str(runtime_target),
+        "manifest_path": str(manifest_path),
+        "copied_files": list(materialized.get("copied_files") or []),
+    }
+
+
 def _write_manifest(stage_dir: Path, manifest: dict[str, object]) -> Path:
     manifest_path = stage_dir / "release_manifest.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -168,6 +191,42 @@ def _zip_stage(stage_dir: Path, zip_path: Path) -> None:
             if item.is_dir():
                 continue
             archive.write(item, item.relative_to(stage_dir.parent))
+
+
+def _resolve_iscc_path() -> Path:
+    for candidate in ISCC_CANDIDATES:
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError("未找到 Inno Setup 编译器 ISCC.exe，无法生成安装界面。")
+
+
+def _build_setup_installer(stage_dir: Path, release_root: Path, version: str) -> Path:
+    if not INSTALLER_SCRIPT.exists():
+        raise FileNotFoundError(f"未找到安装器脚本: {INSTALLER_SCRIPT}")
+    iscc_path = _resolve_iscc_path()
+    command = [
+        str(iscc_path),
+        f"/DMyAppVersion={version}",
+        f"/DReleaseDir={stage_dir}",
+        f"/O{release_root}",
+        str(INSTALLER_SCRIPT),
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=str(INSTALLER_SCRIPT.parent),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if completed.returncode != 0:
+        message = completed.stdout.strip() or completed.stderr.strip() or "未知错误"
+        raise RuntimeError(f"安装器生成失败：{message}")
+    installer_path = release_root / f"NeuroLab-Hub-Setup-v{version}.exe"
+    if not installer_path.exists():
+        raise FileNotFoundError(f"安装器编译完成，但未找到输出文件: {installer_path}")
+    return installer_path
 
 
 def build_release_package(release_root: Path, version: str, label: str) -> dict[str, object]:
@@ -186,6 +245,8 @@ def build_release_package(release_root: Path, version: str, label: str) -> dict[
     _copy_runtime_dirs(stage_dir)
     copy_stats = _copy_app_tree(stage_dir)
     _ensure_clean_runtime_placeholders(stage_dir)
+    orchestrator_assets = _materialize_orchestrator_runtime(stage_dir)
+    asset_manifest = load_asset_manifest()
 
     manifest = {
         "version": version,
@@ -198,12 +259,22 @@ def build_release_package(release_root: Path, version: str, label: str) -> dict[
         "copy_stats": copy_stats,
         "excluded_pc_dirs": [str(path).replace("\\", "/") for path in sorted(PC_MUTABLE_DIRS)],
         "excluded_pc_files": [str(path).replace("\\", "/") for path in sorted(PC_MUTABLE_FILES)],
+        "orchestrator_assets": {
+            "runtime": asset_manifest.get("runtime", {}),
+            "model": asset_manifest.get("model", {}),
+            "staged_runtime_dir": orchestrator_assets["runtime_dir"],
+            "staged_manifest_path": orchestrator_assets["manifest_path"],
+            "runtime_files": orchestrator_assets["copied_files"],
+        },
     }
     manifest_path = _write_manifest(stage_dir, manifest)
     manifest["manifest_path"] = str(manifest_path)
 
     _zip_stage(stage_dir, zip_path)
     manifest["zip_size"] = zip_path.stat().st_size
+    installer_path = _build_setup_installer(stage_dir, release_root, version)
+    manifest["setup_path"] = str(installer_path)
+    manifest["setup_size"] = installer_path.stat().st_size
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest
 
