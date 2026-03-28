@@ -1,11 +1,11 @@
 # NeuroLab Hub 用户手册
 
-版本：1.0.1  
+版本：1.0.0  
 适用对象：实验室管理人员、实验操作人员、部署维护人员
 
 ## 1. 手册说明
 
-本手册描述 `1.0.1` 版本的实际交付、启动和日常使用方式。当前推荐交付形态为 `SilentDir/onedir` 轻量包，不再以 `onefile` 作为正式交付目标。
+本手册描述 `1.0.0` 版本的实际交付、启动和日常使用方式。当前推荐交付形态为 `SilentDir/onedir` 轻量包，不再以 `onefile` 作为正式交付目标。
 
 ## 2. 获取与交付形态
 
@@ -100,7 +100,7 @@ bash start_pi_node.sh
 
 ## 6. 当前已验证模块
 
-`1.0.1` 已实际验证以下 GUI 模块：
+`1.0.0` 已实际验证以下 GUI 模块：
 
 - 主界面与系统自检
 - 模型选择
@@ -147,4 +147,4 @@ bash start_pi_node.sh
 
 - 完整说明：[`docs/product/NeuroLab_Hub_完整手册.md`](./NeuroLab_Hub_完整手册.md)
 - 测试过程：[`docs/release/NeuroLab_Hub_PC_PI_测试过程手册.md`](../release/NeuroLab_Hub_PC_PI_测试过程手册.md)
-- 测试报告：[`docs/release/NeuroLab_Hub_测试报告_1.0.1.md`](../release/NeuroLab_Hub_测试报告_1.0.1.md)
+- 测试报告：[`docs/release/NeuroLab_Hub_测试报告_1.0.0.md`](../release/NeuroLab_Hub_测试报告_1.0.0.md)

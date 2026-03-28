@@ -2,7 +2,7 @@
 
 软件全称：NeuroLab Hub——可编排专家模型的实验室多模态智能中枢  
 软件简称：NeuroLab Hub  
-版本号：1.0.1  
+版本号：1.0.0  
 完成日期：2026 年 3 月  
 著作权人：NeuroLab Hub 软件研发组
 
@@ -266,7 +266,7 @@ NeuroLab Hub 采用中心端与边缘端解耦的系统架构：
 
 ## 十三、已验证的基础测试结论
 
-截至 `1.0.1` 当前基线，项目已完成以下基础验证：
+截至 `1.0.0` 当前基线，项目已完成以下基础验证：
 
 - 主程序 EXE 启动烟测通过
 - LLM 训练入口 EXE 启动烟测通过
@@ -279,7 +279,7 @@ NeuroLab Hub 采用中心端与边缘端解耦的系统架构：
 
 更详细的测试矩阵、测试实例和测试记录见：
 
-- `docs/release/NeuroLab_Hub_测试报告_1.0.1.md`
+- `docs/release/NeuroLab_Hub_测试报告_1.0.0.md`
 - `docs/release/NeuroLab_Hub_PC_PI_测试过程手册.md`
 
 ## 十四、结论
