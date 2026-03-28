@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import socket
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Optional
@@ -34,6 +36,8 @@ except ImportError:
 
 APP_VERSION = get_app_version()
 CONFIG_PATH = Path(__file__).resolve().with_name("config.ini")
+VENV_PYTHON = Path(__file__).resolve().with_name(".venv") / "bin" / "python3"
+VENV_REEXEC_ENV = "NEUROLAB_PI_VENV_REEXEC"
 
 
 def _local_ip() -> str:
@@ -79,6 +83,25 @@ def _config_snapshot() -> dict[str, Any]:
             "imgsz": int(get_pi_config("detector.imgsz", 640) or 640),
         },
     }
+
+
+def _should_reexec_into_venv() -> bool:
+    """统一把直接调用的 pi_cli 收敛到项目虚拟环境，避免系统 Python 与项目环境分叉。"""
+    if os.environ.get(VENV_REEXEC_ENV) == "1":
+        return False
+    if not VENV_PYTHON.exists():
+        return False
+    try:
+        return VENV_PYTHON.resolve() != Path(sys.executable).resolve()
+    except OSError:
+        return True
+
+
+def _reexec_into_venv(argv: list[str]) -> int:
+    env = os.environ.copy()
+    env[VENV_REEXEC_ENV] = "1"
+    process = subprocess.run([str(VENV_PYTHON), str(Path(__file__).resolve()), *argv], env=env)
+    return int(process.returncode)
 
 
 def _print_block(data: dict[str, Any]) -> None:
@@ -313,8 +336,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw_args = list(argv if argv is not None else sys.argv[1:])
+    if _should_reexec_into_venv():
+        return _reexec_into_venv(raw_args)
+
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw_args)
 
     try:
         if args.command is None:
