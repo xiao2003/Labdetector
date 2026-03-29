@@ -26,6 +26,27 @@ FIXED_SAMPLE_SPECS: List[VoiceSampleSpec] = [
 ]
 
 
+_KNOWN_TEXT_FIXTURES = {
+    "小爱同学": "wake_word.wav",
+    "介绍当前系统状态": "qa_status.wav",
+    "分析当前实验风险并给出处置建议": "model_risk.wav",
+    "HF且未戴手套怎么办": "expert_hf.wav",
+    "查看PPE风险": "expert_ppe.wav",
+}
+
+
+def _copy_known_fixture_if_available(text: str, output_path: Path) -> bool:
+    fixture_name = _KNOWN_TEXT_FIXTURES.get(str(text or "").strip())
+    if not fixture_name:
+        return False
+    source = fixed_fixture_root() / fixture_name
+    if not source.exists():
+        return False
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(str(source), str(output_path))
+    return True
+
+
 def fixed_fixture_root() -> Path:
     return Path(__file__).resolve().parents[2] / "pc" / "testing" / "assets" / "audio_fixtures"
 
@@ -146,6 +167,8 @@ def synthesize_wav_file(text: str, output_path: str | Path) -> Path:
             check=False,
         )
         if completed.returncode != 0 or not temp_raw.exists():
+            if _copy_known_fixture_if_available(text, output_file):
+                return output_file
             raise RuntimeError(f"Windows 语音合成失败: {completed.stdout.strip()}")
         _normalize_wav_to_pcm16_16k(temp_raw, output_file)
     finally:

@@ -6,6 +6,7 @@ import json
 import sys
 import threading
 import time
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List
@@ -300,6 +301,10 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
 
     report_path = Path(report_file).resolve()
     asset_root = report_path.parent / "gui_full_closed_loop_assets" / time.strftime("%Y%m%d_%H%M%S")
+    orchestrator_test_root = Path(tempfile.mkdtemp(prefix="neurolab_orchestrator_gui_full_"))
+    orchestrator_state_file = orchestrator_test_root / "state.json"
+    orchestrator_model_root = orchestrator_test_root / "models"
+    orchestrator_download_root = orchestrator_test_root / "downloads"
     assets = _prepare_test_assets(asset_root)
     server = VirtualPiServer()
     dialog_recorder = SilentDialogRecorder()
@@ -354,20 +359,28 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
             expert_manager,
             "_run_llm_interpreter",
             lambda _expert, _frame, _context, raw_response: raw_response,
-        ), patch("pc.voice.voice_interaction.get_voice_interaction", lambda: None):
+        ), patch("pc.voice.voice_interaction.get_voice_interaction", lambda: None), patch(
+            "pc.core.orchestrator_runtime.orchestrator_state_path",
+            lambda: orchestrator_state_file,
+        ), patch(
+            "pc.core.orchestrator_runtime.orchestrator_model_dir",
+            lambda: orchestrator_model_root,
+        ), patch(
+            "pc.core.orchestrator_runtime.orchestrator_download_dir",
+            lambda: orchestrator_download_root,
+        ):
             app = DesktopApp()
             app.root.withdraw()
             if app.splash is not None and app.splash.winfo_exists():
                 app.splash.withdraw()
-            app._finish_startup = lambda: None
 
             _wait_for(
                 pump,
-                lambda: app.runtime is not None and bool(app.backend_map) and bool(app.current_state.get("self_check")),
+                lambda: app.runtime is not None and bool(app.backend_map) and bool(app.current_state.get("summary")) and bool(app.current_state.get("orchestrator")),
                 timeout=35,
-                message="GUI 启动自检未完成",
+                message="GUI 启动基础状态未就绪",
             )
-            add_step("bootstrap_ready", checks=len(app.current_state.get("self_check", [])))
+            add_step("bootstrap_ready", planner_backend=app.current_state.get("orchestrator", {}).get("planner_backend", ""), orchestrator_status=app.current_state.get("orchestrator", {}).get("status", ""))
 
             app.runtime._configure_backend = lambda: None
             app.runtime._start_background_aux_services = lambda **kwargs: None

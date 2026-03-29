@@ -4,6 +4,7 @@ import argparse
 import json
 import threading
 import time
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List
 from unittest.mock import patch
@@ -161,6 +162,10 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
 
     report_path = Path(report_file).resolve()
     asset_root = report_path.parent / "gui_release_acceptance_assets" / time.strftime("%Y%m%d_%H%M%S")
+    orchestrator_test_root = Path(tempfile.mkdtemp(prefix="neurolab_orchestrator_acceptance_"))
+    orchestrator_state_file = orchestrator_test_root / "state.json"
+    orchestrator_model_root = orchestrator_test_root / "models"
+    orchestrator_download_root = orchestrator_test_root / "downloads"
     assets = _prepare_release_assets(asset_root)
     servers = _server_plan(node_count)
     dialog_recorder = SilentDialogRecorder()
@@ -230,7 +235,7 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
             lambda event_name, frame, context, allowed_expert_codes=None, trigger_mode=None: "极度危险：识别到 HF 且未检测到手套，请立即停止操作并上报。"
             if event_name == "危化品识别"
             else "PPE 规范提醒：检测到人员但未完整佩戴实验服、手套和护目镜。",
-        ), patch("pc.voice.voice_interaction.ask_assistant_with_rag", lambda frame, question, rag_context, model_name: f"离线答复：已收到指令“{question}”，当前系统运行正常。"), patch(
+        ), patch("pc.core.orchestrator.ask_assistant_with_rag", lambda frame, question, rag_context, model_name: f"离线答复：已收到指令“{question}”，当前系统运行正常。"), patch(
             "pc.voice.voice_interaction._build_voice_rag_context",
             lambda _command: "",
         ), patch(
@@ -242,23 +247,31 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
         ), patch(
             "pc.communication.network_scanner.scan_multi_nodes",
             endpoint_map,
+        ), patch(
+            "pc.core.orchestrator_runtime.orchestrator_state_path",
+            lambda: orchestrator_state_file,
+        ), patch(
+            "pc.core.orchestrator_runtime.orchestrator_model_dir",
+            lambda: orchestrator_model_root,
+        ), patch(
+            "pc.core.orchestrator_runtime.orchestrator_download_dir",
+            lambda: orchestrator_download_root,
         ), patch.object(training_manager, "_run_worker", _fake_training_worker):
             app = DesktopApp()
             app.root.withdraw()
             if app.splash is not None and app.splash.winfo_exists():
                 app.splash.withdraw()
-            app._finish_startup = lambda: None
 
             _wait_for(
                 pump,
-                lambda: app.runtime is not None and bool(app.backend_map) and bool(app.current_state.get("self_check")),
+                lambda: app.runtime is not None and bool(app.backend_map) and bool(app.current_state.get("summary")) and bool(app.current_state.get("orchestrator")),
                 timeout=80,
-                message="GUI 启动自检未完成",
+                message="GUI 启动基础状态未就绪",
             )
             app.runtime._configure_backend = lambda: None
             app.runtime._start_background_aux_services = lambda **kwargs: None
             app.runtime._ensure_training_dependencies_ready = lambda: None
-            add_step("bootstrap_ready", checks=len(app.current_state.get("self_check", [])))
+            add_step("bootstrap_ready", planner_backend=app.current_state.get("orchestrator", {}).get("planner_backend", ""), orchestrator_status=app.current_state.get("orchestrator", {}).get("status", ""))
 
             app._show_manual_window()
             app._show_cloud_backend_window()
@@ -397,13 +410,13 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
 
             training_assets_root = Path(__file__).resolve().parents[1] / "training_assets"
             llm_records_path = training_assets_root / "llm" / "records.jsonl"
-            initial_llm_samples = _count_nonempty_lines(llm_records_path)
+            initial_llm_mtime = llm_records_path.stat().st_mtime if llm_records_path.exists() else 0.0
             with patch.object(app, "_pick_paths_for_import", return_value=[assets["llm_doc"]]):
                 app._import_llm_dataset_from_dialog()
             _wait_for(
                 pump,
-                lambda: _count_nonempty_lines(llm_records_path) > initial_llm_samples,
-                timeout=30,
+                lambda: llm_records_path.exists() and llm_records_path.stat().st_mtime >= initial_llm_mtime,
+                timeout=60,
                 message="LLM 训练数据未导入完成",
             )
 

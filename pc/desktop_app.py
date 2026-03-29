@@ -202,6 +202,7 @@ class DesktopApp:
         self.demo_restore_collapsed: bool = False
         self.startup_self_check_started = False
         self.orchestrator_prepare_started = False
+        self.is_closing = False
         self.scroll_routes: Dict[str, Dict[str, Any]] = {}
         self.hidden_demo_enabled = bool(get_config("shadow_demo.enabled", False))
         self.current_state: Dict[str, Any] = {
@@ -1276,14 +1277,21 @@ class DesktopApp:
 
     def _refresh_state_tick(self) -> None:
         try:
+            if self.is_closing:
+                return
             if self.runtime is None:
                 return
             self._render_state(self.runtime.get_state(), include_streams=False)
+        except Exception as exc:
+            self._log_gui_action("state_refresh_error", error=str(exc))
         finally:
-            self.root.after(1200, self._refresh_state_tick)
+            if not self.is_closing and self.root.winfo_exists():
+                self.root.after(1200, self._refresh_state_tick)
 
     def _refresh_streams_tick(self) -> None:
         try:
+            if self.is_closing:
+                return
             if self.runtime is None:
                 return
             state = self.runtime.get_streams_state()
@@ -1300,8 +1308,11 @@ class DesktopApp:
             self.session_var.set(badge_text)
             self._update_session_badge()
             self._render_streams(state.get("streams", []))
+        except Exception as exc:
+            self._log_gui_action("stream_refresh_error", error=str(exc))
         finally:
-            self.stream_refresh_after_id = self.root.after(80, self._refresh_streams_tick)
+            if not self.is_closing and self.root.winfo_exists():
+                self.stream_refresh_after_id = self.root.after(80, self._refresh_streams_tick)
 
     def _render_state(self, state: Dict[str, Any], *, include_streams: bool = True) -> None:
         self.current_state = state
@@ -4233,6 +4244,7 @@ class DesktopApp:
         self.root.after(250, self._process_queue)
 
     def _on_close(self) -> None:
+        self.is_closing = True
         try:
             if self.resize_after_id is not None:
                 try:

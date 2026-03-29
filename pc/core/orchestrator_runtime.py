@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import shutil
 import threading
 import urllib.request
@@ -308,6 +309,42 @@ def _invoke_runtime(prompt: str, *, timeout_seconds: Optional[float] = None) -> 
     return str(completed.stdout or "")
 
 
+def _invoke_runtime_for_warmup(prompt: str) -> str:
+    runtime_path = runtime_binary_path()
+    model_path = model_binary_path()
+    command = [
+        str(runtime_path),
+        "-m",
+        str(model_path),
+        "-p",
+        str(prompt or ""),
+        "-c",
+        "512",
+        "-n",
+        "32",
+        "--temp",
+        "0.0",
+        "--top-p",
+        "0.1",
+        "--top-k",
+        "1",
+        "--no-display-prompt",
+    ]
+    completed = run_hidden(
+        command,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=90.0,
+        check=False,
+    )
+    if completed.returncode != 0:
+        stderr = str(completed.stderr or completed.stdout or "").strip()
+        raise OrchestratorRuntimeError(f"固定管家层预热失败: {stderr or '未知错误'}")
+    return str(completed.stdout or "")
+
+
 def _extract_first_json_object(raw_text: str) -> Dict[str, Any]:
     text = str(raw_text or "").strip()
     if not text:
@@ -351,7 +388,7 @@ def _download_model_if_needed(log_callback: Optional[Callable[[str], None]] = No
 
 def warm_up_orchestrator_runtime(log_callback: Optional[Callable[[str], None]] = None) -> None:
     _log(log_callback, "固定管家层模型开始后台预热。")
-    raw_output = _invoke_runtime('请只输出 JSON：{"ready":true,"intent":"warmup"}', timeout_seconds=20)
+    raw_output = _invoke_runtime_for_warmup('请只输出 JSON：{"ready":true,"intent":"warmup"}')
     payload = _extract_first_json_object(raw_output)
     if payload.get("ready") is not True:
         raise OrchestratorRuntimeError("固定管家层模型预热未返回 ready=true。")
@@ -394,11 +431,24 @@ def prepare_orchestrator_assets(log_callback: Optional[Callable[[str], None]] = 
                 reason="固定管家层模型已就绪",
                 planner_backend="embedded_model",
             )
+        except subprocess.TimeoutExpired:
+            return _write_runtime_state(
+                STATE_WARMING_UP,
+                reason="固定管家层模型首次预热耗时较长，后台将继续准备",
+                planner_backend="deterministic",
+            )
         except Exception as exc:
+            error_text = str(exc)
+            if model_binary_path().exists() and "timed out" in error_text.lower():
+                return _write_runtime_state(
+                    STATE_WARMING_UP,
+                    reason="固定管家层模型首次预热耗时较长，后台将继续准备",
+                    planner_backend="deterministic",
+                )
             return _write_runtime_state(
                 STATE_DOWNLOAD_FAILED,
                 reason="固定管家层模型后台准备失败",
-                error=str(exc),
+                error=error_text,
                 planner_backend="deterministic",
             )
 

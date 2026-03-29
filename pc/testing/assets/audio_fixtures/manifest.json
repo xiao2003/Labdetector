@@ -7,7 +7,7 @@
       "系统",
       "状态"
     ],
-    "path": "D:\\NeuroLab\\NeuroLab Hub\\pc\\testing\\assets\\audio_fixtures\\qa_status.wav",
+    "path": "D:\\NeuroLab\\_github_sync\\pc\\testing\\assets\\audio_fixtures\\qa_status.wav",
     "speaker_type": "fixed_fixture"
   },
   {
@@ -18,7 +18,7 @@
       "风险",
       "建议"
     ],
-    "path": "D:\\NeuroLab\\NeuroLab Hub\\pc\\testing\\assets\\audio_fixtures\\model_risk.wav",
+    "path": "D:\\NeuroLab\\_github_sync\\pc\\testing\\assets\\audio_fixtures\\model_risk.wav",
     "speaker_type": "fixed_fixture"
   },
   {
@@ -28,7 +28,7 @@
     "expected_keywords": [
       "手套"
     ],
-    "path": "D:\\NeuroLab\\NeuroLab Hub\\pc\\testing\\assets\\audio_fixtures\\expert_hf.wav",
+    "path": "D:\\NeuroLab\\_github_sync\\pc\\testing\\assets\\audio_fixtures\\expert_hf.wav",
     "speaker_type": "fixed_fixture"
   },
   {
@@ -38,7 +38,7 @@
     "expected_keywords": [
       "风险"
     ],
-    "path": "D:\\NeuroLab\\NeuroLab Hub\\pc\\testing\\assets\\audio_fixtures\\expert_ppe.wav",
+    "path": "D:\\NeuroLab\\_github_sync\\pc\\testing\\assets\\audio_fixtures\\expert_ppe.wav",
     "speaker_type": "fixed_fixture"
   }
 ]

@@ -17,6 +17,7 @@
 当前版本重点覆盖：
 
 - 新机首启
+- 真实安装包首启 smoke
 - GUI 核心模块主链
 - 固定管家层后台准备链
 - 模型选择
@@ -40,6 +41,13 @@
 
 安装包不直接包含 GGUF 文件。GGUF 会在首次启动 GUI 显示后后台下载到可写运行时目录。
 
+当前固定资产已经锁定为：
+
+- runtime：`llama.cpp` Windows CPU 运行时
+- 模型：`Qwen2.5-1.5B-Instruct` 官方 GGUF 量化文件
+
+固定管家层模型采用“版本锁定 + 校验锁定”，下载完成后必须通过校验后才进入预热阶段。
+
 ### 3.2 首次启动策略
 
 首次启动固定顺序为：
@@ -62,11 +70,17 @@
 
 - `not_installed`
 - `downloading`
-- `download_failed`
 - `warming_up`
+- `download_failed`
 - `ready`
 
 当固定管家层还未 `ready` 时，系统使用确定性规则链，`planner_backend=deterministic`。固定管家层就绪后，再切换到 `planner_backend=embedded_model`。
+
+当前正式口径补充为：
+
+- 模型文件缺失时，首启进入后台下载，不阻塞 GUI
+- 首次预热耗时较长时，状态保持 `warming_up`
+- 只有真正校验失败或运行时异常时，才进入 `download_failed`
 
 ## 四、测试方法
 
@@ -113,6 +127,22 @@ python -m unittest   pc.testing.test_orchestrator_runtime   pc.testing.test_orch
 5. 确认 GUI 可操作
 6. 确认后台状态可观测
 
+推荐使用：
+
+- `pc/testing/installer_first_launch_smoke.py`
+
+验证项至少包括：
+
+- 安装器退出码
+- 安装后主程序存在
+- 外层启动器是否拉起后台 `pythonw`
+- 固定管家层状态时间线
+- 观察窗口结束时的最终状态
+
+当前真实首启 smoke 已验证通过，报告文件为：
+
+- `release/smoke_install_20260329_124300.json`
+
 ## 五、正式发布方式
 
 ### 5.1 正式交付形态
@@ -144,6 +174,31 @@ Release 正文应明确说明：
 - 固定管家层模型下载与预热采用后台策略
 - Pi 轻前端角色明确
 - 语音与视频闭环主链已收敛为统一编排入口
+- 真实安装包首启 smoke 已验证“GUI 先显示 + 模型后台准备”
+
+本轮关键修复点已经纳入正式验证口径：
+
+- `pc/voice/voice_interaction.py` 的重复语音分发定义已收敛
+- `pc/core/monitoring_policy.py` 已成为监控播报策略唯一来源
+- GUI 闭环测试已隔离固定管家层状态目录，避免污染真实用户目录
+- `desktop_app.py` 已在窗口关闭阶段增加流刷新与状态刷新保护，避免测试退出后残留 Tk 回调异常
+
+当前验证口径明确覆盖：
+
+1. 固定管家层运行时单测
+2. 执行层与管家层职责边界单测
+3. 监控播报策略单测
+4. 远端 Pi 语音路由单测
+5. Pi 轻前端配置单测
+6. 音频文件驱动语音闭环
+7. GUI 完整闭环
+8. GUI 发布验收
+9. 安装包首启 smoke
+
+当前最小回归与关键集成结果为：
+
+- 单元与结构回归：`27` 项通过，`1` 项跳过
+- 关键集成闭环：`3` 项通过
 
 ## 七、文档入口
 

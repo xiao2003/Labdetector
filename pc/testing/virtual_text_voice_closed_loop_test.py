@@ -25,6 +25,35 @@ def _resolve_release_root_with_pi() -> Path | None:
             checked.add(key)
             if (base / "pi" / "testing" / "closed_loop_bridge.py").exists():
                 return base
+    release_root = current.parents[2] / "release"
+    if release_root.exists():
+        for child in sorted(release_root.iterdir(), key=lambda item: item.stat().st_mtime, reverse=True):
+            if (child / "pi" / "testing" / "closed_loop_bridge.py").exists():
+                return child
+    return None
+
+
+def _resolve_voice_model_path() -> Path | None:
+    """优先定位真实可用的 Vosk 模型目录。"""
+    roots: List[Path] = []
+    base = _resolve_release_root_with_pi()
+    if base is not None:
+        roots.append(base)
+    current = Path(__file__).resolve()
+    release_candidates = [current.parents[2] / "release", current.parents[3] / "release"]
+    for release_root in release_candidates:
+        if release_root.exists():
+            roots.extend(
+                sorted(
+                    [item for item in release_root.iterdir() if item.is_dir()],
+                    key=lambda item: item.stat().st_mtime,
+                    reverse=True,
+                )
+            )
+    for root in roots:
+        model_dir = root / "pi" / "voice" / "model"
+        if (model_dir / "am" / "final.mdl").exists():
+            return model_dir
     return None
 
 
@@ -161,10 +190,10 @@ class VirtualAudioVoicePiServer:
     async def _emit_audio_commands(self, websocket, wake_word: str) -> None:
         asset_root = Path("release/virtual_audio_voice_assets") / f"node_{self.node_id}"
         self.audio_suite = build_dynamic_voice_suite(asset_root, wake_word=wake_word)
-        release_root = _resolve_release_root_with_pi()
-        if release_root is None:
-            raise RuntimeError("未找到包含完整 pi 语音模型的发布根目录。")
-        model_path = str(release_root / "pi" / "voice" / "model")
+        model_dir = _resolve_voice_model_path()
+        if model_dir is None:
+            raise RuntimeError("未找到包含完整 Vosk 模型的发布目录。")
+        model_path = str(model_dir)
         sample_plan = [self.audio_suite[key] for key in self.voice_sample_keys]
         replay = replay_voice_plan(
             recognizer_cls=PiVoiceRecognizer,
@@ -255,7 +284,7 @@ def run_virtual_text_voice_closed_loop_test(report_file: str) -> Dict[str, Any]:
     try:
         server.start()
         with patch("pc.communication.network_scanner.scan_multi_nodes", lambda expected_nodes: {"1": server.endpoint()}), patch(
-            "pc.voice.voice_interaction.ask_assistant_with_rag",
+            "pc.core.orchestrator.ask_assistant_with_rag",
             lambda frame, question, rag_context, model_name: f"离线答复：已收到指令“{question}”，当前系统运行正常。",
         ), patch(
             "pc.voice.voice_interaction._build_voice_rag_context",

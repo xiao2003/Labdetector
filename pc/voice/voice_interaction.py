@@ -18,7 +18,7 @@ from typing import Any, Callable, Optional
 import numpy as np
 
 from pc.app_identity import resource_path
-from pc.core.ai_backend import ask_assistant_with_rag
+from pc.core.ai_backend import ask_assistant_with_rag, default_model_for_backend
 from pc.core.config import get_config
 from pc.core.logger import console_error, console_info
 from pc.core.orchestrator import orchestrator
@@ -191,6 +191,14 @@ class VoiceInteraction:
         self._configure_recognizer()
         if self.initialize_audio_models:
             self._init_voice_models()
+
+    def _current_execution_model(self) -> str:
+        """解析当前语音链应使用的执行层模型。"""
+        model_name = str(self.ai_backend.get("model") or "").strip()
+        if model_name:
+            return model_name
+        backend_name = str(self.ai_backend.get("type") or get_config("ai_backend.type", "ollama") or "ollama").strip()
+        return str(default_model_for_backend(backend_name) or "").strip()
 
     def _configure_recognizer(self) -> None:
         if not self.recognizer:
@@ -735,7 +743,7 @@ class VoiceInteraction:
                 frame=None,
                 question=f"{prompt}\n\n【用户口述记录】\n{transcript}",
                 rag_context="请只做知识提取，不要补充专家结论，也不要自由发挥。",
-                model_name=self.ai_backend.get("model", "qwen-vl-max"),
+                model_name=self._current_execution_model(),
             )
             start = raw.find("[")
             end = raw.rfind("]")
@@ -840,7 +848,7 @@ class VoiceInteraction:
         round_meta = dict(metadata or {})
         round_meta.setdefault("mode", self.session_meta.get("mode", "adhoc"))
         round_meta.setdefault("backend", self.ai_backend.get("type", ""))
-        round_meta.setdefault("model", self.ai_backend.get("model", ""))
+        round_meta.setdefault("model", self._current_execution_model())
         local_origin = source.startswith("pc")
         keep_active = local_origin
         self._set_session_state("processing")
@@ -893,7 +901,7 @@ class VoiceInteraction:
                 text,
                 source=source,
                 frame=current_frame,
-                model_name=self.ai_backend.get("model", "qwen-vl-max"),
+                model_name=self._current_execution_model(),
                 context=round_meta,
             )
             response = str(orchestrated.text or "").strip()

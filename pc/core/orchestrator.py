@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
-from pc.core.ai_backend import ask_assistant_with_rag
+from pc.core.ai_backend import ask_assistant_with_rag, default_model_for_backend
 from pc.core.expert_closed_loop import ExpertResult
 from pc.core.expert_manager import expert_manager
 from pc.core.monitoring_policy import should_speak_monitoring_result
@@ -50,6 +50,26 @@ class Orchestrator:
     """PC 端统一编排入口。"""
 
     @staticmethod
+    def _resolve_execution_model(model_name: str, context: Optional[Dict[str, Any]] = None) -> str:
+        """解析当前应使用的执行层模型，避免隐式回退到过时默认值。"""
+        candidate = str(model_name or "").strip()
+        if candidate:
+            return candidate
+        route_context = dict(context or {})
+        candidate = str(route_context.get("model") or "").strip()
+        if candidate:
+            return candidate
+        backend_name = str(route_context.get("backend") or "").strip()
+        if not backend_name:
+            try:
+                from pc.core.config import get_config
+
+                backend_name = str(get_config("ai_backend.type", "ollama") or "ollama").strip()
+            except Exception:
+                backend_name = "ollama"
+        return str(default_model_for_backend(backend_name) or "").strip()
+
+    @staticmethod
     def runtime_status() -> Dict[str, Any]:
         status = get_runtime_status()
         return {
@@ -80,6 +100,8 @@ class Orchestrator:
         route_context.setdefault("query", text)
         route_context.setdefault("question", text)
         route_context.setdefault("event_name", "语音唤醒专家")
+        route_context.setdefault("backend", str(route_context.get("backend") or ""))
+        route_context.setdefault("model", self._resolve_execution_model(model_name, route_context))
 
         model_plan = infer_voice_plan(text, source=source, context=route_context)
         planner_backend = "embedded_model" if model_plan else "deterministic"
@@ -131,7 +153,7 @@ class Orchestrator:
                 frame=frame,
                 question=text,
                 rag_context=rag_context,
-                model_name=model_name or "qwen-vl-max",
+                model_name=self._resolve_execution_model(model_name, route_context),
             )
             or ""
         ).strip()

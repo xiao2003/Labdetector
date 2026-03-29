@@ -66,6 +66,7 @@ from pc.core.expert_closed_loop import (
 )
 from pc.core.orchestrator import orchestrator
 from pc.core.orchestrator_runtime import prepare_orchestrator_assets, read_runtime_state
+from pc.communication.multi_ws_manager import MultiPiManager
 from pc.tools.model_downloader import check_and_download_vosk
 from pc.tools.gpu_runtime_helper import detect_gpu_environment, install_cuda_enabled_pytorch
 from pc.tools.version_manager import get_app_version
@@ -118,288 +119,6 @@ VOICE_AI_DEPENDENCY_MAP = {
 
 def _now_text() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
-class DashboardMultiPiManager:
-    def __init__(
-        self,
-        pi_dict: Dict[str, str],
-        log_info: Callable[[str], None],
-        log_error: Callable[[str], None],
-        selected_model: str = "",
-        archive_event: Optional[Callable[..., Any]] = None,
-    ) -> None:
-        from pc.communication.multi_ws_manager import MultiPiManager as BaseMultiPiManager
-
-        self._base = BaseMultiPiManager(pi_dict)
-        self.pi_dict = self._base.pi_dict
-        self.frame_buffers = self._base.frame_buffers
-        self.send_queues = self._base.send_queues
-        self.running = self._base.running
-        self.node_status = self._base.node_status
-        self.node_caps = self._base.node_caps
-        self.target_fps = self._base.target_fps
-        self.recent_event_ids = self._base.recent_event_ids
-        self.recent_event_queue = self._base.recent_event_queue
-        self.pending_result_acks = self._base.pending_result_acks
-        self.ack_timeout = self._base.ack_timeout
-        self.ack_retries = self._base.ack_retries
-        self.event_queue = self._base.event_queue
-        self.event_worker_count = self._base.event_worker_count
-        self.event_cooldown = self._base.event_cooldown
-        self.recent_policy_hits = self._base.recent_policy_hits
-        self.audit_log_dir = self._base.audit_log_dir
-        self._write_audit = self._base._write_audit
-        self.loop: Optional[asyncio.AbstractEventLoop] = None
-        self.log_info = log_info
-        self.log_error = log_error
-        self.selected_model = str(selected_model or "").strip()
-        self.archive_event = archive_event
-        self.node_latest_results: Dict[str, Dict[str, Any]] = {
-            pid: {"text": "", "event_name": "", "timestamp": 0.0}
-            for pid in pi_dict
-        }
-
-    async def _send_with_ack(self, ws: Any, pi_id: str, result: ExpertResult) -> bool:
-        cmd = build_expert_result_command(result)
-        for _ in range(self.ack_retries + 1):
-            self.pending_result_acks[(pi_id, result.event_id)] = time.time()
-            await self.send_queues[pi_id].put(cmd)
-            await asyncio.sleep(self.ack_timeout)
-            if (pi_id, result.event_id) not in self.pending_result_acks:
-                return True
-        return False
-
-    async def _dispatch_expert_result(self, pi_id: str, event_name: str, result: ExpertResult) -> None:
-        if not self.running or self.node_status.get(pi_id) != "online":
-            return
-        acked = await self._send_with_ack(None, pi_id, result)
-        self._write_audit(
-            f"node={pi_id} event={event_name} event_id={result.event_id} acked={acked} text={result.text}"
-        )
-        if not acked:
-            self.log_error(f"节点 [{pi_id}] 对专家结论未确认 ACK: {result.event_id}")
-
-    def _should_skip_event(self, pi_id: str, event: Any) -> bool:
-        expert_code = str(event.expert_code or "").strip() or "|".join(expert_manager.closed_loop_codes_for_event(event.event_name))
-        key = (str(pi_id), expert_code or str(event.event_name or "").strip())
-        now = time.time()
-        last_ts = float(self.recent_policy_hits.get(key, 0.0) or 0.0)
-        if now - last_ts < self.event_cooldown:
-            return True
-        self.recent_policy_hits[key] = now
-        return False
-
-    async def _enqueue_edge_event(self, pi_id: str, event: Any) -> None:
-        if self._should_skip_event(pi_id, event):
-            self.log_info(f"节点 [{pi_id}] 同类策略事件冷却中，已跳过: {event.event_name}")
-            return
-        try:
-            self.event_queue.put_nowait((pi_id, event))
-        except asyncio.QueueFull:
-            self.log_error(f"节点 [{pi_id}] 边缘事件队列已满，已丢弃: {event.event_name}")
-
-    async def _event_worker(self) -> None:
-        from pc.voice.voice_interaction import get_remote_text_router
-
-        while self.running or not self.event_queue.empty():
-            try:
-                pi_id, event = await asyncio.wait_for(self.event_queue.get(), timeout=0.5)
-            except asyncio.TimeoutError:
-                continue
-            try:
-                self.log_info(f"收到节点 [{pi_id}] 边缘高优告警: {event.event_name} ({event.event_id})")
-                agent = get_remote_text_router()
-                if agent and agent.is_active:
-                    self.log_info("语音助手正在活跃，安防播报暂缓")
-                    continue
-
-                orchestrated = await asyncio.to_thread(
-                    orchestrator.plan_edge_event,
-                    pi_id=pi_id,
-                    event=event,
-                    selected_model=self.selected_model,
-                    node_caps=self.node_caps.get(pi_id, {}),
-                )
-                tts_text = orchestrated.text
-                if tts_text:
-                    self.node_latest_results[pi_id] = {
-                        "text": tts_text,
-                        "event_name": event.event_name,
-                        "timestamp": time.time(),
-                    }
-                    if self.archive_event is not None:
-                        try:
-                            self.archive_event(
-                                "expert_result",
-                                {
-                                    "node_id": pi_id,
-                                    "event_id": event.event_id,
-                                    "event_name": event.event_name,
-                                    "result_text": tts_text,
-                                },
-                                title=f"专家结论 {event.event_name}",
-                            )
-                        except Exception:
-                            pass
-                    result = orchestrator.build_expert_result(orchestrated)
-                    if result is not None:
-                        await self._dispatch_expert_result(pi_id, event.event_name, result)
-            except Exception as exc:
-                self.log_error(f"节点 [{pi_id}] 边缘事件处理失败: {exc}")
-            finally:
-                self.event_queue.task_done()
-
-    async def _node_handler(self, pi_id: str, ip: str) -> None:
-        from pc.core.expert_manager import expert_manager
-
-        endpoint = str(ip).strip()
-        if endpoint.startswith("ws://") or endpoint.startswith("wss://"):
-            uri = endpoint
-        elif ":" in endpoint:
-            uri = f"ws://{endpoint}"
-        else:
-            uri = f"ws://{endpoint}:8001"
-        while self.running:
-            try:
-                self.node_status[pi_id] = "connecting"
-                async with websockets.connect(uri, ping_interval=None, proxy=None) as ws:
-                    self.node_status[pi_id] = "online"
-                    self.log_info(f"节点 [{pi_id}] ({ip}) 握手成功")
-                    await self.send_queues[pi_id].put(f"CMD:SET_FPS:{self.target_fps}")
-
-                    sync_data = {
-                        "wake_word": get_config("voice_interaction.wake_word", "小爱同学"),
-                        "wake_aliases": str(
-                            get_config(
-                                "voice_interaction.wake_aliases",
-                                "小爱同学,小爱同,小爱,小艾同学,晓爱同学,哎同学,爱同学",
-                            )
-                            or ""
-                        ),
-                    }
-                    await self.send_queues[pi_id].put(f"CMD:SYNC_CONFIG:{json.dumps(sync_data, ensure_ascii=False)}")
-
-                    policies = expert_manager.get_aggregated_edge_policy()
-                    await self.send_queues[pi_id].put(f"CMD:SYNC_POLICY:{json.dumps(policies, ensure_ascii=False)}")
-                    self.log_info(f"已向节点 [{pi_id}] 下发 {len(policies['event_policies'])} 条专家策略")
-
-                    async def recv_stream_task() -> None:
-                        async for data in ws:
-                            if not self.running:
-                                break
-                            if isinstance(data, str):
-                                if data.startswith("PI_VOICE_COMMAND:"):
-                                    self._handle_remote_voice(pi_id, data)
-                                elif data.startswith("PI_CAPS:"):
-                                    caps_raw = data.replace("PI_CAPS:", "", 1)
-                                    try:
-                                        self.node_caps[pi_id] = json.loads(caps_raw)
-                                        self.log_info(f"节点 [{pi_id}] 能力上报: {self.node_caps[pi_id]}")
-                                    except Exception:
-                                        self.log_error(f"节点 [{pi_id}] 能力上报解析失败")
-                                elif data.startswith("PI_EXPERT_ACK:"):
-                                    ack, ack_err = parse_pi_expert_ack(data)
-                                    if ack_err or not ack:
-                                        self.log_error(f"专家回传 ACK 解析失败: {ack_err}")
-                                        continue
-                                    ack_event_id = str(ack.get("event_id", ""))
-                                    self.pending_result_acks.pop((pi_id, ack_event_id), None)
-                                    self._write_audit(f"node={pi_id} event_id={ack_event_id} ack={ack}")
-                                elif data.startswith("PI_EXPERT_EVENT:") or data.startswith("PI_YOLO_EVENT:"):
-                                    event, parse_error = parse_pi_expert_packet(data)
-                                    if parse_error or event is None:
-                                        self.log_error(f"处理边缘告警事件异常: {parse_error}")
-                                        continue
-                                    if event.event_id in self.recent_event_ids:
-                                        self.log_info(f"节点 [{pi_id}] 重复事件已忽略: {event.event_id}")
-                                        continue
-                                    self.recent_event_ids.add(event.event_id)
-                                    self.recent_event_queue.append(event.event_id)
-                                    while len(self.recent_event_ids) > self.recent_event_queue.maxlen:
-                                        expired = self.recent_event_queue.popleft()
-                                        self.recent_event_ids.discard(expired)
-
-                                    await self._enqueue_edge_event(pi_id, event)
-                                    continue
-                                continue
-
-                            arr = np.frombuffer(data, np.uint8)
-                            frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-                            if frame is not None:
-                                self.frame_buffers[pi_id] = frame
-
-                    async def send_command_task() -> None:
-                        while self.running:
-                            msg = await self.send_queues[pi_id].get()
-                            await ws.send(msg)
-
-                    await asyncio.gather(recv_stream_task(), send_command_task())
-            except Exception as exc:
-                if self.running:
-                    self.node_status[pi_id] = "offline"
-                    self.log_error(f"节点 [{pi_id}] ({ip}) 通信中断，5 秒后重连: {exc}")
-                    await asyncio.sleep(5)
-
-    def _handle_remote_voice(self, pi_id: str, data: str) -> None:
-        from pc.voice.voice_interaction import get_remote_text_router
-
-        cmd_text = data.replace("PI_VOICE_COMMAND:", "", 1).strip()
-        self.log_info(f"收到节点 {pi_id} 语音指令: {cmd_text}")
-        agent = get_remote_text_router()
-        if not agent:
-            self.send_to_node(pi_id, "CMD:TTS:语音助手未就绪，请先检查 PC 端依赖。")
-            return
-
-        def _reply(answer: str) -> None:
-            message = str(answer or "").strip()
-            if not message:
-                return
-            self.node_latest_results[pi_id] = {
-                "text": message,
-                "event_name": "语音交互",
-                "timestamp": time.time(),
-            }
-            preview = message if len(message) <= 120 else f"{message[:117]}..."
-            self.log_info(f"已回传节点 {pi_id} 语音播报: {preview}")
-            self._write_audit(f"node={pi_id} voice_command={cmd_text} reply={message}")
-            self.send_to_node(pi_id, f"CMD:TTS:{message}")
-
-        threading.Thread(
-            target=agent.process_remote_command,
-            args=(pi_id, cmd_text, _reply),
-            daemon=True,
-            name=f"PiVoiceRoute_{pi_id}",
-        ).start()
-
-    async def start(self) -> None:
-        self.loop = asyncio.get_running_loop()
-        self.running = True
-        self._base.running = True
-        tasks = [self._node_handler(pid, ip) for pid, ip in self.pi_dict.items()]
-        tasks.extend(self._event_worker() for _ in range(self.event_worker_count))
-        await asyncio.gather(*tasks)
-
-    def send_to_node(self, pi_id: str, text: str) -> None:
-        queue_ref = self.send_queues.get(pi_id)
-        if queue_ref is None:
-            return
-        if self.loop is not None and self.loop.is_running():
-            self.loop.call_soon_threadsafe(queue_ref.put_nowait, text)
-        else:
-            queue_ref.put_nowait(text)
-
-    def stop(self) -> None:
-        self.running = False
-        self._base.running = False
-        self.pending_result_acks.clear()
-        self.recent_policy_hits.clear()
-        while not self.event_queue.empty():
-            try:
-                self.event_queue.get_nowait()
-                self.event_queue.task_done()
-            except Exception:
-                break
-
-
 class LabDetectorRuntime:
     def __init__(self) -> None:
         self.version = get_app_version()
@@ -429,7 +148,7 @@ class LabDetectorRuntime:
         self.stop_event = threading.Event()
 
         self.topology: Dict[str, str] = {}
-        self.manager: Optional[DashboardMultiPiManager] = None
+        self.manager: Optional[MultiPiManager] = None
         self.voice_agent: Any = None
         self.scheduler_started = False
         self._scheduler_manager: Any = None
@@ -1927,10 +1646,10 @@ class LabDetectorRuntime:
         else:
             self._log_info(f"已发现 {len(topology)} 个树莓派节点")
 
-        self.manager = DashboardMultiPiManager(
+        self.manager = MultiPiManager(
             topology,
-            self._log_info,
-            self._log_error,
+            log_info=self._log_info,
+            log_error=self._log_error,
             selected_model=self.selected_model,
             archive_event=self._record_archive_event,
         )
