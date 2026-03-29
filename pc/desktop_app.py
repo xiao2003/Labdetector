@@ -138,14 +138,14 @@ def _format_priority_event_card(item: Dict[str, str] | None) -> tuple[str, str]:
     """生成头部高优事件卡片文案。"""
     if item is None:
         return (
-            "最新高优事件：当前无需要关注的高优事件",
+            "高优先级事项：当前无需要处理的事项",
             "",
         )
-    category = str(item.get("category") or "运行状态")
-    level = str(item.get("level") or "INFO")
     summary = str(item.get("summary") or "暂无摘要")
+    if len(summary) > 40:
+        summary = summary[:37].rstrip() + "..."
     return (
-        f"最新高优事件：{category} / {level}",
+        f"高优先级事项：{summary}",
         summary,
     )
 
@@ -235,6 +235,18 @@ def _format_node_task_detail(node_id: str, task: Dict[str, Any] | None) -> str:
     return "\n".join(detail_lines)
 
 
+def _format_archive_record_label(row: Dict[str, Any]) -> str:
+    """把实验档案记录编号转换成面向用户的简洁口径。"""
+    opened_at = str(row.get("opened_at") or "").strip()
+    if opened_at:
+        return opened_at
+    session_id = str(row.get("session_id") or "").strip()
+    match = re.match(r"^(\d{8}_\d{6})", session_id)
+    if match:
+        return match.group(1)
+    return session_id or "未命名记录"
+
+
 class DesktopApp:
     def __init__(self) -> None:
         self._enable_dpi_awareness()
@@ -295,7 +307,7 @@ class DesktopApp:
         self.expert_window: tk.Toplevel | None = None
         self.expert_tree: ttk.Treeview | None = None
         self.expert_detail_text: tk.Text | None = None
-        self.expert_status_var = tk.StringVar(value="等待加载专家模型目录")
+        self.expert_status_var = tk.StringVar(value="等待加载专家模型")
         self.cloud_backend_catalog: List[Dict[str, Any]] = []
         self.archive_catalog: List[Dict[str, Any]] = []
         self.training_overview: Dict[str, Any] = {}
@@ -371,7 +383,7 @@ class DesktopApp:
         self.log_detail_text: tk.Text | None = None
         self.log_status_var = tk.StringVar(value="等待系统事件")
         self.log_filter_var = tk.StringVar(value=LOG_FILTER_OPTIONS[0])
-        self.priority_event_title_var = tk.StringVar(value="最新高优事件：当前无需要关注的高优事件")
+        self.priority_event_title_var = tk.StringVar(value="高优先级事项：当前无需要处理的事项")
         self.priority_event_detail_var = tk.StringVar(value="")
         self.log_row_keys: List[str] = []
         self.log_rows: List[Dict[str, str]] = []
@@ -428,7 +440,7 @@ class DesktopApp:
         self.brand_var = tk.StringVar(value=f"{COMPANY_NAME} 版本 v{self.app_version}")
         self.footer_var = tk.StringVar(value=COPYRIGHT_TEXT)
         self.splash_message_var = tk.StringVar(value="正在初始化核心服务并准备主界面")
-        self.kb_status_var = tk.StringVar(value="等待导入知识库目录")
+        self.kb_status_var = tk.StringVar(value="等待导入知识库")
         self.kb_reset_var = tk.BooleanVar(value=False)
         self.kb_structured_var = tk.BooleanVar(value=True)
         self.left_collapsed_var = tk.BooleanVar(value=False)
@@ -450,7 +462,7 @@ class DesktopApp:
         self.session_var.set("待机")
         self.brand_var.set(f"{COMPANY_NAME} 版本 v{self.app_version}")
         self.splash_message_var.set("正在初始化核心服务并准备主界面")
-        self.kb_status_var.set("等待导入知识库目录")
+        self.kb_status_var.set("等待导入知识库")
 
         self._build_style()
         self._apply_branding()
@@ -497,7 +509,7 @@ class DesktopApp:
         style.configure("TCombobox", padding=self._scaled(6))
         style.configure(
             "Treeview",
-            rowheight=self._scaled(34),
+            rowheight=self._scaled(38),
             font=("Microsoft YaHei UI", 10),
             fieldbackground="#223143",
             background="#223143",
@@ -678,24 +690,20 @@ class DesktopApp:
         action_strip = ttk.Frame(hero_right, style="Panel.TFrame")
         action_strip.grid(row=0, column=0, sticky="e")
         actions = [
-            ("界面侧栏", self._toggle_left_panel),
-            ("系统自检", self._run_self_check),
             ("专家中心", self._show_expert_window),
             ("知识中心", self._show_knowledge_base_window),
             ("模型配置", self._show_cloud_backend_window),
             ("训练中心", self._show_training_window),
-            ("使用手册", self._show_manual_window),
-            ("关于系统", self._show_about_window),
         ]
-        for column in range(len(actions)):
-            action_strip.columnconfigure(column, weight=1, minsize=self._scaled(108))
-        action_strip.columnconfigure(len(actions), weight=0, minsize=self._scaled(82))
+        for column in range(2):
+            action_strip.columnconfigure(column, weight=1, minsize=self._scaled(132))
         for index, (label, command) in enumerate(actions):
             ttk.Button(action_strip, text=label, command=command).grid(
-                row=0,
-                column=index,
+                row=index // 2,
+                column=index % 2,
                 sticky="ew",
-                padx=(0 if index == 0 else 8, 0),
+                padx=(0 if index % 2 == 0 else 8, 0),
+                pady=(0 if index < 2 else 8, 0),
             )
         self.session_badge = tk.Label(
             action_strip,
@@ -706,7 +714,7 @@ class DesktopApp:
             padx=10,
             pady=6,
         )
-        self.session_badge.grid(row=0, column=len(actions), sticky="ew", padx=(8, 0))
+        self.session_badge.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
 
         left = ttk.Frame(shell, style="Panel.TFrame", padding=14)
         left.grid(row=1, column=0, sticky="nsew", padx=(0, 12))
@@ -754,7 +762,7 @@ class DesktopApp:
         btn_row.columnconfigure(0, weight=1)
         btn_row.columnconfigure(1, weight=1)
         btn_row.columnconfigure(2, weight=1)
-        ttk.Button(btn_row, text="刷新模型目录", command=self._refresh_models).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        ttk.Button(btn_row, text="刷新模型", command=self._refresh_models).grid(row=0, column=0, sticky="ew", padx=(0, 6))
         ttk.Button(btn_row, text="语音测试", command=self._start_voice_test_from_ui).grid(row=0, column=1, sticky="ew", padx=6)
         ttk.Button(btn_row, text="启动监控", style="Accent.TButton", command=self._start_session).grid(row=0, column=2, sticky="ew", padx=(6, 0))
         ttk.Button(config_panel, text="停止监控", command=self._stop_session).grid(row=3, column=0, sticky="ew", pady=(10, 0))
@@ -795,7 +803,7 @@ class DesktopApp:
         header_row = ttk.Frame(right_panel, style="Panel.TFrame")
         header_row.grid(row=0, column=0, sticky="ew")
         header_row.columnconfigure(0, weight=1)
-        ttk.Label(header_row, text="节点监控与系统事件", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(header_row, text="运行概览", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
         filter_wrap = ttk.Frame(header_row, style="Panel.TFrame")
         filter_wrap.grid(row=0, column=1, sticky="e", padx=(12, 12))
         ttk.Label(filter_wrap, text="筛选", style="Foot.TLabel").grid(row=0, column=0, sticky="e", padx=(0, 6))
@@ -851,7 +859,7 @@ class DesktopApp:
 
         self.log_content = ttk.Frame(self.log_canvas, style="SoftPanel.TFrame")
         self.log_content.columnconfigure(0, weight=1)
-        self.log_content.rowconfigure(4, weight=1)
+        self.log_content.rowconfigure(3, weight=1)
         self.log_content_window = self.log_canvas.create_window((0, 0), window=self.log_content, anchor="nw")
         self.log_content.bind(
             "<Configure>",
@@ -859,10 +867,8 @@ class DesktopApp:
         )
         self.log_canvas.bind("<Configure>", self._on_log_canvas_configure)
 
-        ttk.Label(self.log_content, text="系统事件流", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
-
         self.progress_section = ttk.Frame(self.log_content, style="SoftPanel.TFrame")
-        self.progress_section.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        self.progress_section.grid(row=0, column=0, sticky="ew")
         self.progress_section.columnconfigure(0, weight=1)
         self.progress_section.columnconfigure(1, weight=1)
         self.progress_section.columnconfigure(2, weight=1)
@@ -893,21 +899,17 @@ class DesktopApp:
         self.node_task_container.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         self.node_task_container.columnconfigure(0, weight=1)
 
-        ttk.Separator(self.log_content, orient="horizontal").grid(row=2, column=0, sticky="ew", pady=(10, 2))
+        ttk.Separator(self.log_content, orient="horizontal").grid(row=1, column=0, sticky="ew", pady=(10, 2))
 
         priority_card = ttk.Frame(self.log_content, style="Card.TFrame", padding=12)
-        priority_card.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        priority_card.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         priority_card.columnconfigure(0, weight=1)
         ttk.Label(priority_card, textvariable=self.priority_event_title_var, style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
-        self.priority_event_detail_label = ttk.Label(priority_card, textvariable=self.priority_event_detail_var, style="Body.TLabel", justify="left")
-        self.priority_event_detail_label.grid(row=1, column=0, sticky="ew", pady=(8, 0))
-        self._register_adaptive_wrap_label(self.priority_event_detail_label, priority_card, padding=28, min_width=240, max_width=980)
-        self.priority_event_detail_label.grid_remove()
 
         self.main_log_panel = ttk.Frame(self.log_content, style="SoftPanel.TFrame")
         self.main_log_panel.columnconfigure(0, weight=1)
         self.main_log_panel.rowconfigure(0, weight=1)
-        self.main_log_panel.grid(row=4, column=0, sticky="nsew", pady=(10, 0))
+        self.main_log_panel.grid(row=3, column=0, sticky="nsew", pady=(10, 0))
         self.log_tree = ttk.Treeview(self.main_log_panel, columns=("time", "level", "category", "summary"), show="headings", height=4)
         self.log_tree.heading("time", text="时间")
         self.log_tree.heading("level", text="级别")
@@ -928,12 +930,12 @@ class DesktopApp:
         self.log_tree.tag_configure("ERROR", foreground="#ff8f8f")
         self.log_tree.tag_configure("SUCCESS", foreground="#6ce5b1")
 
-        ttk.Separator(self.log_content, orient="horizontal").grid(row=5, column=0, sticky="ew", pady=(10, 2))
+        ttk.Separator(self.log_content, orient="horizontal").grid(row=4, column=0, sticky="ew", pady=(10, 2))
 
         self.node_logs_container = ttk.Frame(self.log_content, style="SoftPanel.TFrame")
         self.node_logs_container.columnconfigure(0, weight=1)
         self.node_logs_container.rowconfigure(0, weight=1)
-        self.node_logs_container.grid(row=6, column=0, sticky="nsew", pady=(6, 0))
+        self.node_logs_container.grid(row=5, column=0, sticky="nsew", pady=(6, 0))
         self.node_log_canvas = tk.Canvas(self.node_logs_container, bg="#182330", highlightthickness=0)
         self.node_log_canvas.grid(row=0, column=0, sticky="nsew")
         node_log_scroll = ttk.Scrollbar(self.node_logs_container, orient="vertical", command=self.node_log_canvas.yview)
@@ -949,16 +951,6 @@ class DesktopApp:
         self.node_logs_title.grid(row=0, column=0, sticky="w")
         self.node_log_empty_label = ttk.Label(self.node_log_panel, text="等待节点连接或节点任务进度。", style="Foot.TLabel")
         self.node_log_empty_label.grid(row=1, column=0, sticky="w", pady=(8, 0))
-
-        ttk.Separator(self.log_content, orient="horizontal").grid(row=7, column=0, sticky="ew", pady=(10, 2))
-
-        self.log_detail_panel = ttk.Frame(self.log_content, style="Card.TFrame", padding=12)
-        self.log_detail_panel.grid(row=8, column=0, sticky="ew", pady=(6, 0))
-        self.log_detail_panel.columnconfigure(0, weight=1)
-        ttk.Label(self.log_detail_panel, text="事件详情", style="MetricLabel.TLabel").grid(row=0, column=0, sticky="w")
-        self.log_detail_text = tk.Text(self.log_detail_panel, height=7, bg="#0f1720", fg="#dbe6f2", insertbackground="#dbe6f2", relief="flat", font=("Consolas", 10), wrap="word")
-        self.log_detail_text.grid(row=1, column=0, sticky="ew", pady=(8, 0))
-        self.log_detail_text.configure(state="disabled")
 
         splitter.add(wall_section, minsize=320)
         splitter.add(log_section, minsize=180)
@@ -1166,7 +1158,7 @@ class DesktopApp:
         if value < 92:
             return {
                 "value": 82.0,
-                "message": "正在加载配置与模型目录",
+                "message": "正在加载配置与模型",
                 "step": "配置加载",
                 "detail": "正在同步主界面所需的配置、模型与知识资源",
             }
@@ -1733,20 +1725,18 @@ class DesktopApp:
         self.summary_vars["orchestrator"].set(self._format_orchestrator_status(str(orchestrator_state.get("status") or "")))
         self.summary_vars["planner"].set(self._format_planner_backend(str(orchestrator_state.get("planner_backend") or "")))
 
-        desired_columns = 3
+        desired_columns = 2
         if desired_columns != self.summary_columns or not self.summary_frame.winfo_children():
             self.summary_columns = desired_columns
             for child in list(self.summary_frame.winfo_children()):
                 child.destroy()
-            for column in range(6):
+            for column in range(4):
                 self.summary_frame.columnconfigure(column, weight=0, uniform="")
             cards = [
                 ("模式", self.summary_vars["mode"]),
                 ("语音助手", self.summary_vars["voice"]),
                 ("在线节点", self.summary_vars["online"]),
                 ("离线节点", self.summary_vars["offline"]),
-                ("管家层", self.summary_vars["orchestrator"]),
-                ("编排后端", self.summary_vars["planner"]),
             ]
             for column in range(self.summary_columns):
                 self.summary_frame.columnconfigure(column, weight=1, uniform="summary")
@@ -1904,11 +1894,6 @@ class DesktopApp:
             summary_label = ttk.Label(card, text=latest_summary, style="CardBody.TLabel", justify="left")
             summary_label.grid(row=2, column=0, sticky="ew", pady=(4, 0))
             self._register_adaptive_wrap_label(summary_label, card, padding=20, min_width=220, max_width=420)
-            task_state = ((self.current_state.get("tasks") or {}).get("nodes") or {}).get(node_id)
-            if task_state:
-                task_label = ttk.Label(card, text=_format_node_task_detail(node_id, task_state), style="CardFoot.TLabel", justify="left")
-                task_label.grid(row=3, column=0, sticky="ew", pady=(6, 0))
-                self._register_adaptive_wrap_label(task_label, card, padding=20, min_width=220, max_width=420)
         if self.node_log_canvas is not None:
             self.node_log_canvas.configure(scrollregion=self.node_log_canvas.bbox("all"))
 
@@ -1959,8 +1944,8 @@ class DesktopApp:
         if self.log_tree is not None:
             self.log_tree.configure(height=4 if websocket_mode else 6)
         if self.log_content is not None:
-            self.log_content.rowconfigure(4, weight=2 if websocket_mode else 1)
-            self.log_content.rowconfigure(6, weight=1 if websocket_mode else 0)
+            self.log_content.rowconfigure(3, weight=2 if websocket_mode else 1)
+            self.log_content.rowconfigure(5, weight=1 if websocket_mode else 0)
             if self.log_canvas is not None and self.log_content_window is not None:
                 canvas_height = int(self.log_canvas.winfo_height() or 0)
                 if canvas_height > 0:
@@ -1979,11 +1964,6 @@ class DesktopApp:
         priority_title, priority_detail = _format_priority_event_card(priority_item)
         self.priority_event_title_var.set(priority_title)
         self.priority_event_detail_var.set(priority_detail)
-        if self.priority_event_detail_label is not None:
-            if priority_detail.strip():
-                self.priority_event_detail_label.grid()
-            else:
-                self.priority_event_detail_label.grid_remove()
         filtered_recent = [item for item in system_recent if _matches_log_filter(item, selected_filter)]
         display_recent = filtered_recent[-160:]
         keys = [item["key"] for item in display_recent]
@@ -2010,11 +1990,11 @@ class DesktopApp:
                 self._set_log_detail(latest["detail"])
         else:
             if selected_filter == "全部":
-                self.log_status_var.set("系统事件流为空，等待运行数据")
+                self.log_status_var.set("等待运行数据")
                 self._set_log_detail("当前还没有可展示的系统事件。")
             else:
                 self.log_status_var.set(f"当前筛选：{selected_filter}，暂无匹配事件")
-                self._set_log_detail(f"当前筛选：{selected_filter}\n暂无匹配的系统事件。")
+                self._set_log_detail(f"当前筛选：{selected_filter}\n暂无匹配事件。")
         if layout_mode_changed:
             self.root.after_idle(self._rebalance_main_splitter)
 
@@ -2889,7 +2869,7 @@ class DesktopApp:
             activeforeground="#0f1720",
         )
         software_menu.add_command(label="运行启动自检", command=self._run_self_check)
-        software_menu.add_command(label="刷新模型目录", command=self._refresh_models)
+        software_menu.add_command(label="刷新模型", command=self._refresh_models)
         software_menu.add_command(label="专家模型管理", command=self._show_expert_window)
         software_menu.add_command(label="知识库管理", command=self._show_knowledge_base_window)
         software_menu.add_command(label="模型服务配置", command=self._show_cloud_backend_window)
@@ -2947,9 +2927,9 @@ class DesktopApp:
         self.app_version = runtime.version
         self._post_startup_progress({
             "value": 36,
-            "message": "正在加载配置与模型目录",
+            "message": "正在加载配置与模型",
             "step": "配置加载",
-            "detail": "正在加载主界面、配置与模型目录，系统自检将在主界面就绪后后台执行",
+            "detail": "正在加载主界面、配置与模型，系统自检将在主界面就绪后后台执行",
         })
         payload = runtime.bootstrap(include_self_check=False, include_catalogs=False)
         return {"payload": payload}
@@ -3055,16 +3035,16 @@ class DesktopApp:
 
     def _refresh_models(self) -> None:
         self._log_gui_action("click_refresh_model_catalog")
-        self.hero_var.set("正在刷新模型目录")
+        self.hero_var.set("正在刷新模型")
         self._dispatch("refresh_models", self.runtime.refresh_model_catalog)
         self._dispatch("cloud_catalog", self.runtime.get_cloud_backend_catalog)
 
     def _refresh_knowledge_bases(self) -> None:
-        self.hero_var.set("正在刷新知识库目录")
+        self.hero_var.set("正在刷新知识库")
         self._dispatch("kb_catalog", self.runtime.get_knowledge_base_catalog)
 
     def _refresh_expert_catalog(self) -> None:
-        self.hero_var.set("正在刷新专家目录")
+        self.hero_var.set("正在刷新专家")
         self._dispatch("expert_catalog", self.runtime.get_expert_catalog)
 
     def _refresh_cloud_backend_catalog(self) -> None:
@@ -3112,7 +3092,7 @@ class DesktopApp:
         normalized_paths = list(paths)
         reset_index = bool(self.kb_reset_var.get())
         structured = bool(self.kb_structured_var.get())
-        self.kb_status_var.set("等待导入知识库目录")
+        self.kb_status_var.set("等待导入知识库")
         self.hero_var.set("正在刷新实验档案")
         self._dispatch(
             "kb_import",
@@ -3177,8 +3157,8 @@ class DesktopApp:
             f"文档数量: {row.get('doc_count', 0)}",
             f"向量索引: {'已就绪' if row.get('vector_ready') else '轻量模式 / 未启用'}",
             f"结构化知识库: {'已就绪' if row.get('structured_ready') else '待导入'}",
-            f"文档目录: {row.get('docs_dir', '')}",
-            f"向量目录: {row.get('vector_path', '')}",
+            f"文档位置: {row.get('docs_dir', '')}",
+            f"向量位置: {row.get('vector_path', '')}",
             f"结构化库路径: {row.get('structured_path', '')}",
             "",
             "当前收录文件:",
@@ -3232,7 +3212,7 @@ class DesktopApp:
             self._render_kb_detail(self.knowledge_catalog[0])
             if self.kb_scope_combo is not None:
                 self.kb_scope_combo.set(self.kb_scope_reverse.get(first_scope, self.kb_scope_combo.get()))
-        self.kb_status_var.set("等待导入知识库目录")
+        self.kb_status_var.set("等待导入知识库")
 
     def _show_knowledge_base_window(self) -> None:
         self._log_gui_action("open_knowledge_base_window")
@@ -3302,9 +3282,9 @@ class DesktopApp:
             [
                 ttk.Button(kb_action_bar, text="导入文本 / 表格", command=self._import_knowledge_files),
                 ttk.Button(kb_action_bar, text="导入语音 / 视频 / 图片", command=self._import_knowledge_media_files),
-                ttk.Button(kb_action_bar, text="导入整个目录", command=self._import_knowledge_folder),
+                ttk.Button(kb_action_bar, text="导入整个文件夹", command=self._import_knowledge_folder),
                 ttk.Button(kb_action_bar, text="导入公共背景库", command=lambda: self._import_knowledge_files("common")),
-                ttk.Button(kb_action_bar, text="刷新目录", command=self._refresh_knowledge_bases),
+                ttk.Button(kb_action_bar, text="刷新知识库", command=self._refresh_knowledge_bases),
             ],
             columns=3,
         )
@@ -3373,7 +3353,7 @@ class DesktopApp:
             f"已加载到系统: {'是' if row.get('loaded') else '否'}",
             f"需要专家模型: {'是' if row.get('model_required') else '否'}",
             f"需要知识库: {'是' if row.get('knowledge_required') else '否'}",
-            f"专家模型目录: {row.get('asset_path', '')}",
+            f"专家模型位置: {row.get('asset_path', '')}",
             f"专家模型文件数: {row.get('asset_file_count', 0)}",
             f"知识库作用域: {row.get('knowledge_scope', '')}",
             f"知识库文档数: {row.get('knowledge_doc_count', 0)}",
@@ -3425,7 +3405,7 @@ class DesktopApp:
             messagebox.showwarning(APP_DISPLAY_NAME, "请先选择一个专家。", parent=self.expert_window or self.root)
             return
         if choose_folder:
-            directory = filedialog.askdirectory(parent=self.expert_window or self.root, title="选择专家模型目录")
+            directory = filedialog.askdirectory(parent=self.expert_window or self.root, title="选择专家模型")
             if not directory:
                 return
             paths = [directory]
@@ -3510,10 +3490,10 @@ class DesktopApp:
             topbar,
             [
                 ttk.Button(topbar, text="导入模型文件", command=lambda: self._import_selected_expert_assets(False)),
-                ttk.Button(topbar, text="导入模型目录", command=lambda: self._import_selected_expert_assets(True)),
+                ttk.Button(topbar, text="导入模型", command=lambda: self._import_selected_expert_assets(True)),
                 ttk.Button(topbar, text="导入该专家知识文本", command=self._import_selected_expert_knowledge_text),
                 ttk.Button(topbar, text="导入该专家媒体知识", command=self._import_selected_expert_knowledge_media),
-                ttk.Button(topbar, text="刷新目录", command=self._refresh_expert_catalog),
+                ttk.Button(topbar, text="刷新专家", command=self._refresh_expert_catalog),
             ],
             columns=3,
         )
@@ -3581,7 +3561,7 @@ class DesktopApp:
             session = detail.get("session", {})
             events = detail.get("events", [])
             lines = [
-                f"会话 ID: {session.get('session_id', '')}",
+                f"记录编号: {session.get('session_id', '')}",
                 f"实验项目: {session.get('project_name', '')}",
                 f"实验名称: {session.get('experiment_name', '')}",
                 f"实验人员: {session.get('operator_name', '')}",
@@ -3621,7 +3601,7 @@ class DesktopApp:
                 "end",
                 iid=session_id,
                 values=(
-                    session_id,
+                    _format_archive_record_label(row),
                     row.get("project_name", ""),
                     row.get("experiment_name", ""),
                     row.get("operator_name", ""),
@@ -3694,7 +3674,7 @@ class DesktopApp:
         table_wrap.columnconfigure(0, weight=1)
         table_wrap.rowconfigure(0, weight=1)
         self.archive_tree = ttk.Treeview(table_wrap, columns=("id", "project", "experiment", "operator", "events", "opened"), show="headings")
-        for key, label, width in [("id", "会话 ID", 180), ("project", "项目", 180), ("experiment", "实验", 180), ("operator", "人员", 100), ("events", "事件数", 70), ("opened", "开始时间", 150)]:
+        for key, label, width in [("id", "记录", 180), ("project", "项目", 180), ("experiment", "实验", 180), ("operator", "人员", 100), ("events", "事件数", 70), ("opened", "开始时间", 150)]:
             self.archive_tree.heading(key, text=label)
             self.archive_tree.column(key, width=width, anchor="w" if key not in {"events"} else "center")
         self.archive_tree.grid(row=0, column=0, sticky="nsew")
@@ -4570,12 +4550,12 @@ class DesktopApp:
                 elif name == "refresh_models":
                     self.model_catalog = payload
                     self._update_model_choices()
-                    self.hero_var.set("模型目录已刷新")
+                    self.hero_var.set("模型已刷新")
                 elif name == "kb_catalog":
                     self.knowledge_catalog = payload
                     self._sync_knowledge_scope_choices()
                     self._populate_knowledge_tree()
-                    self.hero_var.set("知识库目录已刷新")
+                    self.hero_var.set("知识库已刷新")
                 elif name == "kb_import":
                     kb_summary, kb_dialog = _format_kb_import_feedback(payload)
                     self.kb_status_var.set(kb_summary)
@@ -4591,7 +4571,7 @@ class DesktopApp:
                 elif name == "expert_catalog":
                     self.expert_catalog = payload
                     self._populate_expert_tree()
-                    self.hero_var.set("专家模型目录已刷新")
+                    self.hero_var.set("专家已刷新")
                 elif name == "expert_import":
                     self.expert_status_var.set(
                         f"导入完成: {payload['display_name']}，成功 {payload['imported_count']} 项，失败 {payload['failed_count']} 项"
@@ -4600,7 +4580,7 @@ class DesktopApp:
                     self._refresh_expert_catalog()
                     messagebox.showinfo(
                         APP_DISPLAY_NAME,
-                        f"专家: {payload['display_name']}\n成功: {payload['imported_count']}\n失败: {payload['failed_count']}\n目录: {payload['target_path']}",
+                        f"专家: {payload['display_name']}\n成功: {payload['imported_count']}\n失败: {payload['failed_count']}\n位置: {payload['target_path']}",
                         parent=self.expert_window or self.root,
                     )
                 elif name == "cloud_catalog":
@@ -4705,7 +4685,7 @@ class DesktopApp:
                 elif name in {"start_session", "stop_session"}:
                     self._render_state(payload)
                     if name == "stop_session":
-                        self.hero_var.set("主控制台已就绪")
+                        self.hero_var.set("系统已可用")
                         self._render_node_logs([])
                     if self.archive_window is not None:
                         self._refresh_archive_catalog()

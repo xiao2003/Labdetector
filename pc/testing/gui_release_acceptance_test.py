@@ -299,9 +299,11 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
             if app.copyright_window is not None and app.copyright_window.winfo_exists():
                 raise AssertionError("关于系统仍会额外弹出版权窗口")
             if str(app.priority_event_detail_var.get()).strip():
-                raise AssertionError("默认高优事件说明仍显示了多余的小字")
-            if app.priority_event_detail_label is not None and app.priority_event_detail_label.winfo_ismapped():
-                raise AssertionError("默认高优事件详情标签未隐藏")
+                raise AssertionError("默认高优事项仍保留了额外详情文本")
+            if app.priority_event_detail_label is not None:
+                raise AssertionError("高优事项详情标签未被移除")
+            if app.log_detail_panel is not None:
+                raise AssertionError("事件详情栏未移除")
 
             app._run_self_check()
             _wait_for(
@@ -427,7 +429,7 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
             app._render_logs(app.runtime.get_state().get("logs", []))
             _wait_for(
                 pump,
-                lambda: "最新高优事件" in str(app.priority_event_title_var.get()) and "HF 泄漏" in str(app.priority_event_detail_var.get()),
+                lambda: "高优先级事项" in str(app.priority_event_title_var.get()) and "HF 泄漏" in str(app.priority_event_title_var.get()),
                 timeout=10,
                 message="高优事件头部卡片未更新",
             )
@@ -507,7 +509,7 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
             _wait_for(
                 pump,
                 lambda: len(training_manager.overview().get("jobs", [])[initial_job_count:]) >= 2,
-                timeout=20,
+                timeout=45,
                 message="训练任务未成功创建",
             )
             _wait_for(

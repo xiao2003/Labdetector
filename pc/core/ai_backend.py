@@ -12,7 +12,7 @@ import requests
 
 from pc.core.config import get_config, set_config
 from pc.core.logger import console_error, console_info
-from pc.core.runtime_assets import DEFAULT_OLLAMA_MODELS, ollama_model_options
+from pc.core.runtime_assets import DEFAULT_OLLAMA_MODELS, ollama_asset_root, ollama_model_options
 from pc.core.subprocess_utils import run_hidden
 from pc.training.model_linker import model_linker
 
@@ -166,6 +166,13 @@ def _ollama_session() -> requests.Session:
     return _OLLAMA_SESSION
 
 
+def ollama_runtime_env() -> Dict[str, str]:
+    """返回固定到项目目录的 Ollama 运行环境变量。"""
+    env = os.environ.copy()
+    env["OLLAMA_MODELS"] = str(ollama_asset_root())
+    return env
+
+
 def provider_choices() -> List[Dict[str, str]]:
     return [{"value": key, "label": str(value["label"])} for key, value in PROVIDER_PRESETS.items()]
 
@@ -265,6 +272,7 @@ def list_ollama_models() -> List[str]:
             capture_output=True,
             text=True,
             timeout=5,
+            env=ollama_runtime_env(),
         )
         if result.returncode == 0:
             models: List[str] = []

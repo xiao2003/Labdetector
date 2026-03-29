@@ -4,10 +4,9 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
-from pc.app_identity import APP_NAME, launcher_root
+from pc.app_identity import external_app_root, launcher_root
 
 
 DEFAULT_OLLAMA_MODELS = [
@@ -70,22 +69,31 @@ def ollama_model_options(model_name: str) -> dict[str, float | int]:
 
 
 def app_runtime_data_root() -> Path:
-    """返回运行时可写数据目录，不把大模型落回源码仓库。"""
-    local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
-    if local_app_data:
-        root = Path(local_app_data) / APP_NAME
+    """返回项目目录下的运行时可写数据目录，避免把模型与状态散落到用户 C 盘。"""
+    root_candidates = [
+        external_app_root() / "runtime_data",
+        launcher_root() / "_runtime_data",
+    ]
+    for root in root_candidates:
         try:
             root.mkdir(parents=True, exist_ok=True)
             return root
         except OSError:
-            pass
-    root = launcher_root() / "_runtime_data"
-    root.mkdir(parents=True, exist_ok=True)
-    return root
+            continue
+    fallback = Path.cwd() / "_runtime_data"
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
 
 
 def speech_asset_root() -> Path:
     root = app_runtime_data_root() / "speech_assets"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def ollama_asset_root() -> Path:
+    """返回项目目录内的 Ollama 模型缓存目录。"""
+    root = app_runtime_data_root() / "ollama_models"
     root.mkdir(parents=True, exist_ok=True)
     return root
 

@@ -42,6 +42,7 @@ from pc.core.ai_backend import (
     default_model_for_backend,
     ensure_ollama_model_available,
     get_backend_runtime_config,
+    ollama_runtime_env,
     provider_choices,
     save_backend_runtime_config,
     service_provider_keys,
@@ -1598,6 +1599,7 @@ class LabDetectorRuntime:
                 creationflags=creation_flags,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=ollama_runtime_env(),
             )
             time.sleep(0.2)
         except Exception as exc:

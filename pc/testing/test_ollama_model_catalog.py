@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import patch
 
-from pc.core.ai_backend import configured_model_catalog
-from pc.core.runtime_assets import DEFAULT_OLLAMA_MODELS
+from pc.core.ai_backend import configured_model_catalog, ollama_runtime_env
+from pc.core.runtime_assets import DEFAULT_OLLAMA_MODELS, ollama_asset_root
 
 
 class OllamaModelCatalogTests(unittest.TestCase):
@@ -25,6 +25,10 @@ class OllamaModelCatalogTests(unittest.TestCase):
         self.assertIn("qwen3.5:9b", catalog["ollama"])
         self.assertIn("qwen3.5:27b", catalog["ollama"])
         self.assertIn("qwen3.5:35b", catalog["ollama"])
+
+    def test_ollama_runtime_env_points_models_to_project_runtime_dir(self) -> None:
+        env = ollama_runtime_env()
+        self.assertEqual(env["OLLAMA_MODELS"], str(ollama_asset_root()))
 
 
 if __name__ == "__main__":
