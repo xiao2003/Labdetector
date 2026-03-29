@@ -333,7 +333,12 @@ class MultiKnowledgeBaseManager:
         rows: List[Dict[str, object]] = []
         for scope in sorted(scopes):
             docs_dir, db_path, structured_path = self._scope_dirs(scope)
-            doc_files = sorted(str(p.relative_to(docs_dir)) for p in docs_dir.rglob("*") if p.is_file()) if docs_dir.exists() else []
+            doc_paths = []
+            if docs_dir.exists():
+                doc_paths = [path for path in docs_dir.rglob("*") if path.is_file()]
+                # 目录摘要优先展示最新导入文件，避免大量历史文档把刚导入结果淹没。
+                doc_paths.sort(key=lambda item: (-item.stat().st_mtime, str(item.relative_to(docs_dir))))
+            doc_files = [str(path.relative_to(docs_dir)) for path in doc_paths]
             rows.append(
                 {
                     "scope": scope,
