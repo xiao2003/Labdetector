@@ -506,17 +506,26 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
             app._start_pi_training_from_form()
             _wait_for(
                 pump,
-                lambda: len(
-                    [
-                        job
-                        for job in training_manager.overview().get("jobs", [])[initial_job_count:]
-                        if job.get("status") == "finished"
-                    ]
-                )
-                >= 2,
+                lambda: len(training_manager.overview().get("jobs", [])[initial_job_count:]) >= 2,
                 timeout=20,
+                message="训练任务未成功创建",
+            )
+            _wait_for(
+                pump,
+                lambda: all(
+                    str(job.get("status") or "") in {"finished", "failed"}
+                    for job in training_manager.overview().get("jobs", [])[initial_job_count:initial_job_count + 2]
+                ),
+                timeout=45,
                 message="训练任务未完成",
             )
+            failed_jobs = [
+                job
+                for job in training_manager.overview().get("jobs", [])[initial_job_count:initial_job_count + 2]
+                if str(job.get("status") or "") == "failed"
+            ]
+            if failed_jobs:
+                raise AssertionError(f"训练任务执行失败: {[job.get('job_id') for job in failed_jobs]}")
             training_jobs = training_manager.overview().get("jobs", [])[initial_job_count:]
             report["training"] = {
                 "workspace_dir": workspace_dir,
