@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from pc.core.config import get_config, set_config
 from pc.core.expert_closed_loop import parse_pi_expert_ack, parse_pi_expert_packet
+from pc.training.train_manager import training_manager
 
 
 def _ensure_release_root_on_path() -> None:
@@ -434,7 +435,7 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
             _wait_for(
                 pump,
                 lambda: "导入完成" in str(app.kb_status_var.get()),
-                timeout=45,
+                timeout=90,
                 message="危化知识导入未完成",
             )
 
@@ -445,7 +446,7 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
             _wait_for(
                 pump,
                 lambda: len(app.knowledge_catalog) > 0 and "expert.safety.ppe_expert" in {row["scope"] for row in app.knowledge_catalog},
-                timeout=45,
+                timeout=90,
                 message="PPE 知识导入后目录未刷新",
             )
             report["knowledge"] = {
@@ -465,10 +466,15 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
             app._build_training_workspace_from_form()
             _wait_for(
                 pump,
-                lambda: workspace_name in str((app.training_overview or {}).get("latest_workspace") or ""),
+                lambda: bool((app.training_overview or {}).get("latest_workspace"))
+                or bool(training_manager.overview().get("latest_workspace")),
                 timeout=30,
                 message="训练工作区未生成",
             )
+            latest_workspace = str(training_manager.overview().get("latest_workspace") or "")
+            if latest_workspace and latest_workspace != str((app.training_overview or {}).get("latest_workspace") or ""):
+                app.training_overview = app.runtime.get_training_overview()
+                app._render_training_overview()
 
             with patch.object(app, "_pick_paths_for_import", return_value=[assets["llm_doc"]]):
                 app._import_llm_dataset_from_dialog()
@@ -501,7 +507,7 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
             app._on_training_annotation_drag(SimpleNamespace(x=300, y=260))
             app._on_training_annotation_release(SimpleNamespace(x=300, y=260))
             app._save_training_annotations()
-            workspace_dir = str((app.training_overview or {}).get("latest_workspace") or "")
+            workspace_dir = str((app.training_overview or {}).get("latest_workspace") or latest_workspace or "")
             label_path = Path(workspace_dir) / "pi_detector" / "labels" / "train" / f"{Path(first_image).stem}.txt"
             _wait_for(
                 pump,

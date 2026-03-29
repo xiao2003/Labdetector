@@ -239,6 +239,8 @@ class DesktopApp:
             "online": tk.StringVar(value="0"),
             "offline": tk.StringVar(value="0"),
             "voice": tk.StringVar(value="OFF"),
+            "orchestrator": tk.StringVar(value="未准备"),
+            "planner": tk.StringVar(value="规则链"),
         }
         self.hero_var.set("正在启动 NeuroLab Hub")
         self.session_var.set("待机")
@@ -538,8 +540,10 @@ class DesktopApp:
         btn_row.grid(row=2, column=0, sticky="ew", pady=(14, 0))
         btn_row.columnconfigure(0, weight=1)
         btn_row.columnconfigure(1, weight=1)
+        btn_row.columnconfigure(2, weight=1)
         ttk.Button(btn_row, text="刷新模型目录", command=self._refresh_models).grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        ttk.Button(btn_row, text="启动监控", style="Accent.TButton", command=self._start_session).grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        ttk.Button(btn_row, text="语音测试", command=self._start_voice_test_from_ui).grid(row=0, column=1, sticky="ew", padx=6)
+        ttk.Button(btn_row, text="启动监控", style="Accent.TButton", command=self._start_session).grid(row=0, column=2, sticky="ew", padx=(6, 0))
         ttk.Button(config_panel, text="停止监控", command=self._stop_session).grid(row=3, column=0, sticky="ew", pady=(10, 0))
 
         summary_panel = ttk.Frame(self.left_inner, style="SoftPanel.TFrame", padding=16)
@@ -920,7 +924,8 @@ class DesktopApp:
         self.root.focus_force()
         self._start_background_orchestrator_prepare()
         self._start_background_startup_self_check()
-        self.root.after(800, self._offer_voice_test)
+        if bool(get_config("ui.prompt_voice_test_on_startup", False)):
+            self.root.after(800, self._offer_voice_test)
 
     def _log_gui_action(self, action: str, **payload: Any) -> None:
         try:
@@ -1222,6 +1227,14 @@ class DesktopApp:
             self._log_gui_action("confirm_voice_test", choice="no")
             self.hero_var.set("主控制台已就绪")
 
+    def _start_voice_test_from_ui(self) -> None:
+        if self.runtime is None:
+            messagebox.showwarning(APP_DISPLAY_NAME, "运行时尚未就绪，请稍后再试。", parent=self.root)
+            return
+        self._log_gui_action("manual_voice_test")
+        self.hero_var.set("正在准备语音交互测试")
+        self._dispatch("voice_test", self.runtime.run_voice_test)
+
     def _start_session(self) -> None:
         try:
             expected_nodes = int(self.expected_entry.get().strip() or "1")
@@ -1347,6 +1360,7 @@ class DesktopApp:
     def _render_summary(self, state: Dict[str, Any]) -> None:
         summary = state.get("summary", {})
         session = state.get("session", {})
+        orchestrator_state = state.get("orchestrator", {})
         mode_label = {
             "idle": "待机",
             "camera": "单机监控",
@@ -1356,19 +1370,23 @@ class DesktopApp:
         self.summary_vars["online"].set(str(summary.get("online_nodes", 0)))
         self.summary_vars["offline"].set(str(summary.get("offline_nodes", 0)))
         self.summary_vars["voice"].set("ON" if summary.get("voice_running") else "OFF")
+        self.summary_vars["orchestrator"].set(self._format_orchestrator_status(str(orchestrator_state.get("status") or "")))
+        self.summary_vars["planner"].set(self._format_planner_backend(str(orchestrator_state.get("planner_backend") or "")))
 
-        desired_columns = 2
+        desired_columns = 3
         if desired_columns != self.summary_columns or not self.summary_frame.winfo_children():
             self.summary_columns = desired_columns
             for child in list(self.summary_frame.winfo_children()):
                 child.destroy()
-            for column in range(4):
+            for column in range(6):
                 self.summary_frame.columnconfigure(column, weight=0, uniform="")
             cards = [
                 ("模式", self.summary_vars["mode"]),
                 ("语音助手", self.summary_vars["voice"]),
                 ("在线节点", self.summary_vars["online"]),
                 ("离线节点", self.summary_vars["offline"]),
+                ("管家层", self.summary_vars["orchestrator"]),
+                ("编排后端", self.summary_vars["planner"]),
             ]
             for column in range(self.summary_columns):
                 self.summary_frame.columnconfigure(column, weight=1, uniform="summary")
@@ -1379,6 +1397,23 @@ class DesktopApp:
                 card.grid(row=row, column=column, sticky="nsew", padx=5, pady=5)
                 ttk.Label(card, text=label, style="MetricLabel.TLabel").pack(anchor="w")
                 ttk.Label(card, textvariable=variable, style="MetricValue.TLabel").pack(anchor="w", pady=(6, 0))
+
+    def _format_orchestrator_status(self, status: str) -> str:
+        normalized = status.strip().lower()
+        return {
+            "ready": "已可用",
+            "warming_up": "后台预热中",
+            "downloading": "后台下载中",
+            "download_failed": "准备失败",
+            "not_installed": "待后台准备",
+        }.get(normalized, "未准备" if not normalized else status)
+
+    def _format_planner_backend(self, backend: str) -> str:
+        normalized = backend.strip().lower()
+        return {
+            "embedded_model": "内嵌模型",
+            "deterministic": "规则链",
+        }.get(normalized, "规则链" if not normalized else backend)
 
     def _render_checks(self, checks: List[Dict[str, Any]]) -> None:
         self.check_tree.delete(*self.check_tree.get_children())
@@ -4176,9 +4211,13 @@ class DesktopApp:
                     status_text = str(payload.get("status") or "unknown")
                     reason_text = str(payload.get("reason") or "").strip()
                     if status_text == "ready":
-                        self.hero_var.set("主控制台已就绪，固定管家层模型已准备完成")
+                        self.hero_var.set("主控制台已就绪，智能管家已可用")
+                    elif status_text in {"downloading", "warming_up", "not_installed"}:
+                        self.hero_var.set("主控制台已就绪，智能管家正在后台准备")
+                    elif status_text == "download_failed":
+                        self.hero_var.set("主控制台已就绪，智能管家准备失败，当前使用规则链")
                     else:
-                        self.hero_var.set(f"主控制台已就绪，固定管家层状态：{status_text}")
+                        self.hero_var.set(f"主控制台已就绪，智能管家状态：{status_text}")
                     if reason_text:
                         self._log_gui_action("orchestrator_prepare_state", status=status_text, reason=reason_text)
                 elif name == "voice_test":
@@ -4203,6 +4242,12 @@ class DesktopApp:
                     self.training_status_var.set("训练概览已刷新")
                     self.hero_var.set("训练工作台已刷新")
                 elif name == "training_workspace":
+                    workspace_dir = str(payload.get("workspace_dir") or "").strip()
+                    if workspace_dir:
+                        overview = dict(self.training_overview or {})
+                        overview["latest_workspace"] = workspace_dir
+                        self.training_overview = overview
+                        self._render_training_overview()
                     self.training_status_var.set(f"训练工作区已生成: {payload['workspace_dir']}")
                     self.hero_var.set("训练工作区构建完成")
                     self._refresh_training_overview()

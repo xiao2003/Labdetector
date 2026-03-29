@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import os
 import subprocess
@@ -35,6 +36,33 @@ def _run_installer(installer: Path, install_dir: Path, install_log_path: Path) -
     ]
     completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace")
     return int(completed.returncode), str(completed.stdout or ""), str(completed.stderr or "")
+
+
+def _is_admin() -> bool:
+    """检测当前进程是否具有管理员权限。"""
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def _classify_install_result(
+    *,
+    install_exit_code: int,
+    exe_exists: bool,
+    installer_log_exists: bool,
+    is_admin: bool,
+) -> dict[str, Any]:
+    """区分真实安装失败与当前会话权限不足导致的阻塞。"""
+    blocked = False
+    blocked_reason = ""
+    if install_exit_code != 0 and not exe_exists and not installer_log_exists and not is_admin:
+        blocked = True
+        blocked_reason = "installer_requires_admin"
+    return {
+        "blocked": blocked,
+        "blocked_reason": blocked_reason,
+    }
 
 
 def _list_pythonw() -> set[tuple[int, str]]:
@@ -95,6 +123,7 @@ def main() -> int:
     exe_path = install_dir / "NeuroLab Hub.exe"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     installer_log_path = report_path.with_suffix(".installer.log")
+    is_admin = _is_admin()
 
     if args.clear_runtime_state:
         _clear_runtime_state()
@@ -128,12 +157,21 @@ def main() -> int:
         for pid, started in sorted(after_pythonw - before_pythonw):
             new_pythonw.append({"pid": pid, "start_time": started})
     final_state = _read_runtime_state()
+    install_classification = _classify_install_result(
+        install_exit_code=install_exit_code,
+        exe_exists=exe_path.exists(),
+        installer_log_exists=installer_log_path.exists(),
+        is_admin=is_admin,
+    )
     payload = {
         "started_at": started_at,
         "installer": str(installer),
         "install_dir": str(install_dir),
+        "is_admin": is_admin,
         "install_exit_code": install_exit_code,
         "install_ok": install_exit_code == 0,
+        "install_blocked": bool(install_classification.get("blocked", False)),
+        "install_blocked_reason": str(install_classification.get("blocked_reason", "")),
         "install_stdout": install_stdout.strip(),
         "install_stderr": install_stderr.strip(),
         "installer_log_path": str(installer_log_path),

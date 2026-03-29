@@ -221,6 +221,14 @@ python -m unittest   pc.testing.test_orchestrator_runtime   pc.testing.test_orch
 - 固定管家层状态时间线
 - 观察窗口结束时的最终状态
 
+补充说明：
+
+- 当前安装包采用 `PrivilegesRequired=admin`
+- 若在**非管理员会话**中执行首启 smoke，脚本现在会明确写出：
+  - `install_blocked = true`
+  - `install_blocked_reason = installer_requires_admin`
+- 这种结果表示**当前会话权限不足，无法完成静默安装验证**，不应误判为安装包本体损坏
+
 当前真实首启 smoke 已验证通过，报告文件为：
 
 - `release/smoke_install_formal_acceptance_20260329.json`
