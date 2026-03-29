@@ -51,6 +51,61 @@ BACKEND_LABEL_OVERRIDES: Dict[str, str] = {
     "deepseek": "DeepSeek（需在模型配置页面添加 API Key）",
     "kimi": "Kimi（需在模型配置页面添加 API Key）",
 }
+LOG_FILTER_OPTIONS: List[str] = ["全部", "告警", "调度", "系统"]
+
+
+def _classify_log_entry(text: str, level: str, lowered: str) -> tuple[str, str]:
+    """统一归类事件流条目，避免界面层出现多套分类规则。"""
+    node_voice_in = re.match(r"^收到节点\s+(\d+)\s+语音指令[:：]\s*(.*)$", text)
+    node_voice_out = re.match(r"^已回传节点\s+(\d+)\s+语音播报[:：]\s*(.*)$", text)
+    node_event = re.match(r"^节点\s+\[(\d+)\]", text)
+    if "[autonomy]" in lowered:
+        summary = re.sub(r"\s+", " ", re.sub(r"^\[autonomy\]\s*", "", text, flags=re.IGNORECASE)).strip()
+        return "自治调度", summary
+    if node_voice_in:
+        summary = re.sub(r"\s+", " ", node_voice_in.group(2)).strip() or text
+        return f"节点{node_voice_in.group(1)} 上行语音", summary
+    if node_voice_out:
+        summary = re.sub(r"\s+", " ", node_voice_out.group(2)).strip() or text
+        return f"节点{node_voice_out.group(1)} 下行播报", summary
+    if node_event:
+        summary = re.sub(r"\s+", " ", text).strip()
+        return f"节点{node_event.group(1)} 通信", summary
+    if "自检" in text:
+        summary = re.sub(r"\s+", " ", text).strip()
+        return "启动自检", summary
+    if "知识库" in text or "作用域" in text:
+        summary = re.sub(r"\s+", " ", text).strip()
+        return "知识库", summary
+    if "训练" in text or "工作区" in text or "标注" in text:
+        summary = re.sub(r"\s+", " ", text).strip()
+        return "训练", summary
+    if "语音" in text or "唤醒" in text:
+        summary = re.sub(r"\s+", " ", text).strip()
+        return "语音交互", summary
+    if "pi" in lowered or "websocket" in lowered:
+        summary = re.sub(r"\s+", " ", text).strip()
+        return "节点通信", summary
+    if "模型" in text or "ollama" in lowered or "qwen" in lowered or "deepseek" in lowered:
+        summary = re.sub(r"\s+", " ", text).strip()
+        return "模型服务", summary
+    summary = re.sub(r"\s+", " ", text).strip()
+    return "运行状态", summary
+
+
+def _matches_log_filter(item: Dict[str, str], selected_filter: str) -> bool:
+    """判断事件是否命中当前筛选器。"""
+    if selected_filter == "全部":
+        return True
+    level = str(item.get("level") or "").upper()
+    category = str(item.get("category") or "")
+    if selected_filter == "告警":
+        return level in {"WARN", "WARNING", "ERROR"}
+    if selected_filter == "调度":
+        return category in {"自治调度", "语音交互", "节点通信"}
+    if selected_filter == "系统":
+        return level not in {"WARN", "WARNING", "ERROR"} and category not in {"自治调度", "语音交互", "节点通信"}
+    return True
 
 
 class DesktopApp:
@@ -175,8 +230,10 @@ class DesktopApp:
         self.main_log_panel: ttk.Frame | None = None
         self.log_detail_text: tk.Text | None = None
         self.log_status_var = tk.StringVar(value="等待系统事件")
+        self.log_filter_var = tk.StringVar(value=LOG_FILTER_OPTIONS[0])
         self.log_row_keys: List[str] = []
         self.log_rows: List[Dict[str, str]] = []
+        self.log_filter_combo: ttk.Combobox | None = None
         self.node_log_panel: ttk.Frame | None = None
         self.node_log_canvas: tk.Canvas | None = None
         self.node_log_inner: ttk.Frame | None = None
@@ -581,7 +638,19 @@ class DesktopApp:
         header_row.grid(row=0, column=0, sticky="ew")
         header_row.columnconfigure(0, weight=1)
         ttk.Label(header_row, text="节点监控与系统事件", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(header_row, textvariable=self.log_status_var, style="Foot.TLabel").grid(row=0, column=1, sticky="e")
+        filter_wrap = ttk.Frame(header_row, style="Panel.TFrame")
+        filter_wrap.grid(row=0, column=1, sticky="e", padx=(12, 12))
+        ttk.Label(filter_wrap, text="筛选", style="Foot.TLabel").grid(row=0, column=0, sticky="e", padx=(0, 6))
+        self.log_filter_combo = ttk.Combobox(
+            filter_wrap,
+            state="readonly",
+            width=10,
+            textvariable=self.log_filter_var,
+            values=LOG_FILTER_OPTIONS,
+        )
+        self.log_filter_combo.grid(row=0, column=1, sticky="e")
+        self.log_filter_combo.bind("<<ComboboxSelected>>", self._on_log_filter_changed)
+        ttk.Label(header_row, textvariable=self.log_status_var, style="Foot.TLabel").grid(row=0, column=2, sticky="e")
 
         content = ttk.Frame(right_panel, style="Panel.TFrame")
         content.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
@@ -937,6 +1006,20 @@ class DesktopApp:
             encoding = "utf-8-sig" if not self.gui_log_path.exists() else "utf-8"
             with self.gui_log_path.open("a", encoding=encoding) as fp:
                 fp.write(text + "\n")
+        except Exception:
+            pass
+
+    def _log_autonomy_action(self, action: str, **payload: Any) -> None:
+        """把应用内自治动作同时写入 GUI 动作日志和系统事件流。"""
+        self._log_gui_action(action, **payload)
+        if self.runtime is None:
+            return
+        try:
+            compact = ", ".join(f"{key}={payload[key]!r}" for key in sorted(payload)) if payload else ""
+            detail = f"[AUTONOMY] 管家已执行动作: {action}"
+            if compact:
+                detail = f"{detail} | {compact}"
+            self.runtime._log_raw_line(detail, level="INFO")
         except Exception:
             pass
 
@@ -1432,41 +1515,7 @@ class DesktopApp:
             level = match.group(1).upper()
             text = match.group(2).strip() or raw_text
         lowered = text.lower()
-        node_voice_in = re.match(r"^收到节点\s+(\d+)\s+语音指令[:：]\s*(.*)$", text)
-        node_voice_out = re.match(r"^已回传节点\s+(\d+)\s+语音播报[:：]\s*(.*)$", text)
-        node_event = re.match(r"^节点\s+\[(\d+)\]", text)
-        if node_voice_in:
-            node_id = node_voice_in.group(1)
-            category = f"节点{node_id} 上行语音"
-            summary = re.sub(r"\s+", " ", node_voice_in.group(2)).strip() or text
-        elif node_voice_out:
-            node_id = node_voice_out.group(1)
-            category = f"节点{node_id} 下行播报"
-            summary = re.sub(r"\s+", " ", node_voice_out.group(2)).strip() or text
-        elif node_event:
-            category = f"节点{node_event.group(1)} 通信"
-            summary = re.sub(r"\s+", " ", text).strip()
-        elif "自检" in text or "dependency" in lowered or "依赖" in text:
-            category = "启动自检"
-            summary = re.sub(r"\s+", " ", text).strip()
-        elif "知识库" in text or "rag" in lowered:
-            category = "知识库"
-            summary = re.sub(r"\s+", " ", text).strip()
-        elif "训练" in text or "微调" in text or "yolo" in lowered or "lora" in lowered:
-            category = "训练"
-            summary = re.sub(r"\s+", " ", text).strip()
-        elif "语音" in text or "tts" in lowered or "asr" in lowered:
-            category = "语音交互"
-            summary = re.sub(r"\s+", " ", text).strip()
-        elif "pi" in lowered or "websocket" in lowered:
-            category = "节点通信"
-            summary = re.sub(r"\s+", " ", text).strip()
-        elif "模型" in text or "ollama" in lowered or "qwen" in lowered or "deepseek" in lowered:
-            category = "模型服务"
-            summary = re.sub(r"\s+", " ", text).strip()
-        else:
-            category = "运行状态"
-            summary = re.sub(r"\s+", " ", text).strip()
+        category, summary = _classify_log_entry(text, level, lowered)
         if len(summary) > 120:
             summary = summary[:117].rstrip() + "..."
         detail = f"时间：{timestamp}\n级别：{level}\n模块：{category}\n内容：{text}"
@@ -1610,6 +1659,14 @@ class DesktopApp:
             if 0 <= index < len(self.log_rows):
                 self._set_log_detail(self.log_rows[index]["detail"])
 
+    def _on_log_filter_changed(self, _event: tk.Event | None = None) -> None:
+        if self.runtime is None:
+            return
+        try:
+            self._render_logs(self.runtime.get_state().get("logs", []))
+        except Exception:
+            return
+
     def _render_logs(self, logs: List[Dict[str, Any]]) -> None:
         if self.log_tree is None:
             return
@@ -1654,8 +1711,10 @@ class DesktopApp:
                 self._render_node_logs([])
         else:
             self._render_node_logs([])
+        selected_filter = str(self.log_filter_var.get() or LOG_FILTER_OPTIONS[0]).strip() or LOG_FILTER_OPTIONS[0]
         system_recent = [item for item in recent if not str(item.get("category", "")).startswith("节点")]
-        display_recent = system_recent[-160:]
+        filtered_recent = [item for item in system_recent if _matches_log_filter(item, selected_filter)]
+        display_recent = filtered_recent[-160:]
         keys = [item["key"] for item in display_recent]
         try:
             was_at_bottom = self.log_tree.yview()[1] >= 0.97
@@ -1672,14 +1731,19 @@ class DesktopApp:
         self.log_row_keys = keys
         if display_recent:
             latest = display_recent[-1]
-            self.log_status_var.set(f"最近事件 {len(display_recent)} 条 | 最新：{latest['category']} / {latest['level']}")
+            filter_text = "" if selected_filter == "全部" else f" | 筛选：{selected_filter}"
+            self.log_status_var.set(f"最近事件 {len(display_recent)} 条{filter_text} | 最新：{latest['category']} / {latest['level']}")
             if was_at_bottom and self.log_rows:
                 self.log_tree.see(f"log-{len(self.log_rows) - 1}")
             if not self.log_tree.selection():
                 self._set_log_detail(latest["detail"])
         else:
-            self.log_status_var.set("系统事件流为空，等待运行数据")
-            self._set_log_detail("系统尚未产生可展示的事件。")
+            if selected_filter == "全部":
+                self.log_status_var.set("系统事件流为空，等待运行数据")
+                self._set_log_detail("系统尚未产生可展示的事件。")
+            else:
+                self.log_status_var.set(f"当前筛选：{selected_filter}，暂无匹配事件")
+                self._set_log_detail(f"当前筛选：{selected_filter}\n暂无匹配的系统事件。")
         if layout_mode_changed:
             self.root.after_idle(self._rebalance_main_splitter)
 
@@ -2635,7 +2699,7 @@ class DesktopApp:
                 action()
 
         self.root.after(0, _invoke)
-        self._log_gui_action("voice_local_command", intent=intent)
+        self._log_autonomy_action("voice_local_command", intent=intent)
         return response
 
     def _apply_bootstrap_payload(self, payload: Dict[str, Any]) -> None:

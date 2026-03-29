@@ -52,12 +52,24 @@
 
 - `D:\NeuroLab\release\smoke_install_formal_acceptance_20260329.json`
 
+补充管理员态真实安装验证报告：
+
+- `D:\NeuroLab\release\smoke_install_formal_acceptance_admin_20260329.json`
+
 首启观测到的关键状态：
 
 - `status = downloading`
 - `planner_backend = deterministic`
 
 这符合“模型后台准备、不阻塞 GUI”的正式口径。
+
+管理员态补充结论：
+
+- 安装器退出码 `0`
+- 安装目录内主程序存在
+- 首启成功拉起后台 `pythonw`
+- 本地运行时状态文件最终写为 `warming_up`
+- 说明固定管家层已在首启后进入后台准备链，只是首次预热写状态晚于 25 秒观察窗口
 
 ### 3. 语音闭环
 
@@ -110,6 +122,8 @@
 已验证：
 
 - GUI 页面可打开与切换
+- 事件流支持 `全部 / 告警 / 调度 / 系统` 四类筛选
+- 管家自治动作会在事件流中留下可视化痕迹
 - 知识库、专家中心、训练中心、档案中心均可进入
 - 监控可开始/停止
 - 管家层可驱动应用内动作，不越出应用边界
@@ -142,6 +156,19 @@
 - `qwen3.5:35b`
 
 该项已在 GUI 完整闭环与 GUI 发布验收中实际断言。
+
+## 本轮新增关键验证证据
+
+- `D:\NeuroLab\release\gui_full_closed_loop_20260329_r4_gitsync.json`
+- `D:\NeuroLab\_github_sync\release\virtual_text_voice_closed_loop_report.json`
+- `D:\NeuroLab\_github_sync\release\gui_release_acceptance_report.json`
+
+这些报告共同覆盖了：
+
+- 事件流与自治痕迹未破坏 GUI 主链
+- `PC-Pi` 语音闭环继续成立
+- `PC-Pi` 视频闭环继续成立
+- GUI 发布验收与 Ollama 默认候选校验继续通过
 
 ## 本轮实际执行的关键验证
 
