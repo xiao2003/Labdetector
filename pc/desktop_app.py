@@ -11,6 +11,7 @@ import queue
 import re
 import sys
 import threading
+import time
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
@@ -176,6 +177,64 @@ def _present_hero_message(status_message: str, orchestrator_status: str) -> str:
     return normalized_message
 
 
+def _task_card_payload(task: Dict[str, Any] | None, *, empty_title: str, empty_detail: str) -> Dict[str, Any]:
+    """把运行任务统一整理成适合 GUI 卡片展示的结构。"""
+    payload = dict(task or {})
+    status = str(payload.get("status") or "").strip().lower()
+    updated_ts = float(payload.get("updated_ts", 0.0) or 0.0)
+    if status in {"success", "error"} and updated_ts and time.time() - updated_ts > 12.0:
+        payload = {}
+        status = ""
+    if not payload:
+        return {
+            "active": False,
+            "title": empty_title,
+            "detail": empty_detail,
+            "percent": 0.0,
+            "status": "idle",
+            "updated_at": "",
+        }
+
+    title = str(payload.get("task_name") or payload.get("title") or empty_title).strip() or empty_title
+    detail = str(payload.get("detail") or payload.get("title") or empty_detail).strip() or empty_detail
+    percent = max(0.0, min(100.0, float(payload.get("percent", 0.0) or 0.0)))
+    return {
+        "active": True,
+        "title": title,
+        "detail": detail,
+        "percent": percent,
+        "status": status or "running",
+        "updated_at": str(payload.get("updated_at") or ""),
+        "current": int(payload.get("current", 0) or 0),
+        "total": int(payload.get("total", 0) or 0),
+    }
+
+
+def _format_task_progress_line(task: Dict[str, Any] | None, *, empty_title: str, empty_detail: str) -> tuple[str, str, float, str]:
+    """生成运行任务卡片需要的标题、详情、进度和状态。"""
+    payload = _task_card_payload(task, empty_title=empty_title, empty_detail=empty_detail)
+    return (
+        str(payload["title"]),
+        str(payload["detail"]),
+        float(payload["percent"]),
+        str(payload["status"]),
+    )
+
+
+def _format_node_task_detail(node_id: str, task: Dict[str, Any] | None) -> str:
+    """生成节点任务详情文本。"""
+    payload = _task_card_payload(task, empty_title=f"节点 {node_id} 当前无任务", empty_detail="等待节点发起自检或安装。")
+    detail_lines = [
+        f"节点：{node_id}",
+        f"状态：{payload['status']}",
+        f"标题：{payload['title']}",
+        f"详情：{payload['detail']}",
+    ]
+    if payload["updated_at"]:
+        detail_lines.append(f"更新时间：{payload['updated_at']}")
+    return "\n".join(detail_lines)
+
+
 class DesktopApp:
     def __init__(self) -> None:
         self._enable_dpi_awareness()
@@ -295,8 +354,20 @@ class DesktopApp:
         self.log_content: ttk.Frame | None = None
         self.log_content_window: int | None = None
         self.log_overall_scroll: ttk.Scrollbar | None = None
+        self.progress_section: ttk.Frame | None = None
+        self.local_task_card: ttk.Frame | None = None
+        self.local_task_title_var = tk.StringVar(value="本机当前无任务")
+        self.local_task_detail_var = tk.StringVar(value="等待系统自检或运行时准备。")
+        self.local_task_percent_var = tk.StringVar(value="0%")
+        self.local_task_progress: ttk.Progressbar | None = None
+        self.local_task_status_label: ttk.Label | None = None
+        self.local_task_empty_hint: ttk.Label | None = None
+        self.node_task_title_label: ttk.Label | None = None
+        self.node_task_container: ttk.Frame | None = None
+        self.node_task_cards: Dict[str, Dict[str, Any]] = {}
         self.node_logs_title: ttk.Label | None = None
         self.main_log_panel: ttk.Frame | None = None
+        self.log_detail_panel: ttk.Frame | None = None
         self.log_detail_text: tk.Text | None = None
         self.log_status_var = tk.StringVar(value="等待系统事件")
         self.log_filter_var = tk.StringVar(value=LOG_FILTER_OPTIONS[0])
@@ -310,6 +381,7 @@ class DesktopApp:
         self.node_log_inner: ttk.Frame | None = None
         self.node_log_window: int | None = None
         self.node_logs_container: ttk.Frame | None = None
+        self.node_log_empty_label: ttk.Label | None = None
         self.node_log_cards: Dict[str, ttk.Treeview] = {}
         self.node_log_cache: Dict[str, List[str]] = {}
         self.main_splitter: tk.PanedWindow | None = None
@@ -342,6 +414,7 @@ class DesktopApp:
             "streams": [],
             "self_check": [],
             "logs": [],
+            "tasks": {},
         }
 
         self.backend_var = tk.StringVar()
@@ -411,6 +484,8 @@ class DesktopApp:
         style.configure("PanelTitle.TLabel", background="#182330", foreground="#f5f7fb", font=("Microsoft YaHei UI", 13, "bold"))
         style.configure("MetricValue.TLabel", background="#243548", foreground="#ffffff", font=("Bahnschrift", 20, "bold"))
         style.configure("MetricLabel.TLabel", background="#243548", foreground="#c3d0dc", font=("Microsoft YaHei UI", 9))
+        style.configure("CardBody.TLabel", background="#243548", foreground="#d7e0ea", font=("Microsoft YaHei UI", 10))
+        style.configure("CardFoot.TLabel", background="#243548", foreground="#9fb6c9", font=("Microsoft YaHei UI", 10))
         style.configure("Foot.TLabel", background="#182330", foreground="#9fb6c9", font=("Microsoft YaHei UI", 10))
         style.configure("SplashTitle.TLabel", background="#0b1e2d", foreground="#ffffff", font=("Microsoft YaHei UI", 28, "bold"))
         style.configure("SplashBody.TLabel", background="#182330", foreground="#d6e6f2", font=("Microsoft YaHei UI", 11))
@@ -422,7 +497,7 @@ class DesktopApp:
         style.configure("TCombobox", padding=self._scaled(6))
         style.configure(
             "Treeview",
-            rowheight=self._scaled(30),
+            rowheight=self._scaled(34),
             font=("Microsoft YaHei UI", 10),
             fieldbackground="#223143",
             background="#223143",
@@ -776,7 +851,7 @@ class DesktopApp:
 
         self.log_content = ttk.Frame(self.log_canvas, style="SoftPanel.TFrame")
         self.log_content.columnconfigure(0, weight=1)
-        self.log_content.rowconfigure(2, weight=1)
+        self.log_content.rowconfigure(4, weight=1)
         self.log_content_window = self.log_canvas.create_window((0, 0), window=self.log_content, anchor="nw")
         self.log_content.bind(
             "<Configure>",
@@ -786,8 +861,42 @@ class DesktopApp:
 
         ttk.Label(self.log_content, text="系统事件流", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
 
+        self.progress_section = ttk.Frame(self.log_content, style="SoftPanel.TFrame")
+        self.progress_section.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        self.progress_section.columnconfigure(0, weight=1)
+        self.progress_section.columnconfigure(1, weight=1)
+        self.progress_section.columnconfigure(2, weight=1)
+
+        self.local_task_card = ttk.Frame(self.progress_section, style="Card.TFrame", padding=12)
+        self.local_task_card.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        self.local_task_card.columnconfigure(0, weight=1)
+        ttk.Label(self.local_task_card, text="本机任务进度", style="MetricLabel.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(self.local_task_card, textvariable=self.local_task_title_var, style="PanelTitle.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        local_detail_label = ttk.Label(self.local_task_card, textvariable=self.local_task_detail_var, style="CardBody.TLabel", justify="left")
+        local_detail_label.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        self._register_adaptive_wrap_label(local_detail_label, self.local_task_card, padding=24, min_width=220, max_width=420)
+        progress_row = ttk.Frame(self.local_task_card, style="Card.TFrame")
+        progress_row.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        progress_row.columnconfigure(0, weight=1)
+        self.local_task_progress = ttk.Progressbar(progress_row, mode="determinate", maximum=100)
+        self.local_task_progress.grid(row=0, column=0, sticky="ew")
+        ttk.Label(progress_row, textvariable=self.local_task_percent_var, style="Foot.TLabel").grid(row=0, column=1, sticky="e", padx=(10, 0))
+
+        ttk.Separator(self.progress_section, orient="vertical").grid(row=0, column=1, sticky="ns")
+
+        node_task_card = ttk.Frame(self.progress_section, style="Card.TFrame", padding=12)
+        node_task_card.grid(row=0, column=2, sticky="nsew", padx=(10, 0))
+        node_task_card.columnconfigure(0, weight=1)
+        self.node_task_title_label = ttk.Label(node_task_card, text="节点任务进度", style="MetricLabel.TLabel")
+        self.node_task_title_label.grid(row=0, column=0, sticky="w")
+        self.node_task_container = ttk.Frame(node_task_card, style="Card.TFrame")
+        self.node_task_container.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self.node_task_container.columnconfigure(0, weight=1)
+
+        ttk.Separator(self.log_content, orient="horizontal").grid(row=2, column=0, sticky="ew", pady=(10, 2))
+
         priority_card = ttk.Frame(self.log_content, style="Card.TFrame", padding=12)
-        priority_card.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        priority_card.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         priority_card.columnconfigure(0, weight=1)
         ttk.Label(priority_card, textvariable=self.priority_event_title_var, style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
         self.priority_event_detail_label = ttk.Label(priority_card, textvariable=self.priority_event_detail_var, style="Body.TLabel", justify="left")
@@ -798,11 +907,11 @@ class DesktopApp:
         self.main_log_panel = ttk.Frame(self.log_content, style="SoftPanel.TFrame")
         self.main_log_panel.columnconfigure(0, weight=1)
         self.main_log_panel.rowconfigure(0, weight=1)
-        self.main_log_panel.grid(row=2, column=0, sticky="nsew", pady=(10, 0))
+        self.main_log_panel.grid(row=4, column=0, sticky="nsew", pady=(10, 0))
         self.log_tree = ttk.Treeview(self.main_log_panel, columns=("time", "level", "category", "summary"), show="headings", height=4)
         self.log_tree.heading("time", text="时间")
         self.log_tree.heading("level", text="级别")
-        self.log_tree.heading("category", text="模块")
+        self.log_tree.heading("category", text="来源")
         self.log_tree.heading("summary", text="事件摘要")
         self.log_tree.column("time", width=186, anchor="center", stretch=False)
         self.log_tree.column("level", width=86, anchor="center", stretch=False)
@@ -819,13 +928,12 @@ class DesktopApp:
         self.log_tree.tag_configure("ERROR", foreground="#ff8f8f")
         self.log_tree.tag_configure("SUCCESS", foreground="#6ce5b1")
 
-        self.node_logs_title = ttk.Label(self.log_content, text="节点日志", style="PanelTitle.TLabel")
-        self.node_logs_title.grid(row=3, column=0, sticky="w", pady=(10, 0))
+        ttk.Separator(self.log_content, orient="horizontal").grid(row=5, column=0, sticky="ew", pady=(10, 2))
 
         self.node_logs_container = ttk.Frame(self.log_content, style="SoftPanel.TFrame")
         self.node_logs_container.columnconfigure(0, weight=1)
         self.node_logs_container.rowconfigure(0, weight=1)
-        self.node_logs_container.grid(row=4, column=0, sticky="nsew", pady=(6, 0))
+        self.node_logs_container.grid(row=6, column=0, sticky="nsew", pady=(6, 0))
         self.node_log_canvas = tk.Canvas(self.node_logs_container, bg="#182330", highlightthickness=0)
         self.node_log_canvas.grid(row=0, column=0, sticky="nsew")
         node_log_scroll = ttk.Scrollbar(self.node_logs_container, orient="vertical", command=self.node_log_canvas.yview)
@@ -837,8 +945,19 @@ class DesktopApp:
         self.node_log_panel.columnconfigure(0, weight=1)
         self.node_log_panel.bind("<Configure>", lambda _e: self.node_log_canvas.configure(scrollregion=self.node_log_canvas.bbox("all")) if self.node_log_canvas is not None else None)
         self.node_log_canvas.bind("<Configure>", self._on_node_log_canvas_configure)
+        self.node_logs_title = ttk.Label(self.node_log_panel, text="节点状态", style="PanelTitle.TLabel")
+        self.node_logs_title.grid(row=0, column=0, sticky="w")
+        self.node_log_empty_label = ttk.Label(self.node_log_panel, text="等待节点连接或节点任务进度。", style="Foot.TLabel")
+        self.node_log_empty_label.grid(row=1, column=0, sticky="w", pady=(8, 0))
 
-        self.log_detail_text = tk.Text(log_section, height=4, bg="#0f1720", fg="#dbe6f2", insertbackground="#dbe6f2", relief="flat", font=("Consolas", 10), wrap="word")
+        ttk.Separator(self.log_content, orient="horizontal").grid(row=7, column=0, sticky="ew", pady=(10, 2))
+
+        self.log_detail_panel = ttk.Frame(self.log_content, style="Card.TFrame", padding=12)
+        self.log_detail_panel.grid(row=8, column=0, sticky="ew", pady=(6, 0))
+        self.log_detail_panel.columnconfigure(0, weight=1)
+        ttk.Label(self.log_detail_panel, text="事件详情", style="MetricLabel.TLabel").grid(row=0, column=0, sticky="w")
+        self.log_detail_text = tk.Text(self.log_detail_panel, height=7, bg="#0f1720", fg="#dbe6f2", insertbackground="#dbe6f2", relief="flat", font=("Consolas", 10), wrap="word")
+        self.log_detail_text.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         self.log_detail_text.configure(state="disabled")
 
         splitter.add(wall_section, minsize=320)
@@ -1403,8 +1522,28 @@ class DesktopApp:
 
     def _run_self_check(self) -> None:
         self._log_gui_action("click_self_check")
-        self.hero_var.set("正在执行系统启动自检")
-        self._dispatch("self_check", lambda: self.runtime.run_self_check(include_microphone=False))
+        self.hero_var.set("后台准备中")
+        if self.runtime is not None:
+            self.runtime.update_local_task_progress(
+                {
+                    "task_name": "本机系统自检",
+                    "stage": "scan",
+                    "title": "正在检查本机环境",
+                    "detail": "正在检查依赖、运行时和内置资源。",
+                    "percent": 0,
+                    "status": "running",
+                    "current": 0,
+                    "total": 1,
+                }
+            )
+            self.runtime.request_remote_self_checks()
+        self._dispatch(
+            "self_check",
+            lambda: self.runtime.run_self_check(
+                include_microphone=False,
+                progress_callback=lambda payload: self.ui_queue.put(("progress", "self_check", payload)),
+            ),
+        )
 
     def _start_background_startup_self_check(self) -> None:
         if self.startup_self_check_started or self.runtime is None:
@@ -1413,7 +1552,11 @@ class DesktopApp:
         self.hero_var.set("后台准备中")
         self._dispatch(
             "startup_self_check",
-            lambda: self.runtime.run_self_check(include_microphone=False, include_voice_assets=False),
+            lambda: self.runtime.run_self_check(
+                include_microphone=False,
+                include_voice_assets=False,
+                progress_callback=lambda payload: self.ui_queue.put(("progress", "startup_self_check", payload)),
+            ),
         )
 
     def _start_background_orchestrator_prepare(self) -> None:
@@ -1532,6 +1675,7 @@ class DesktopApp:
             self.hero_var.set(_present_hero_message(status_message, str(orchestrator_state.get("status") or "")))
             self.session_var.set(badge_text)
             self._update_session_badge()
+            self._render_task_progress(state.get("tasks", {}))
             self._render_streams(state.get("streams", []))
         except Exception as exc:
             self._log_gui_action("stream_refresh_error", error=str(exc))
@@ -1556,6 +1700,7 @@ class DesktopApp:
         self._update_session_badge()
         self._render_summary(state)
         self._render_checks(state.get("self_check", []))
+        self._render_task_progress(state.get("tasks", {}))
         self._render_logs(state.get("logs", []))
         if include_streams:
             self._render_streams(state.get("streams", []))
@@ -1628,6 +1773,59 @@ class DesktopApp:
         for item in checks:
             self.check_tree.insert("", "end", values=(item.get("status", "-"), item.get("summary", "")))
 
+    def _render_task_progress(self, task_state: Dict[str, Any]) -> None:
+        local_task = dict((task_state or {}).get("local") or {})
+        node_tasks = dict((task_state or {}).get("nodes") or {})
+
+        title, detail, percent, status = _format_task_progress_line(
+            local_task,
+            empty_title="本机当前无任务",
+            empty_detail="等待系统自检、自动补全或运行时准备。",
+        )
+        self.local_task_title_var.set(title)
+        self.local_task_detail_var.set(detail)
+        self.local_task_percent_var.set(f"{int(round(percent))}%")
+        if self.local_task_progress is not None:
+            self.local_task_progress.configure(value=percent)
+        if self.local_task_card is not None:
+            self.local_task_card.configure(style="Card.TFrame")
+        if self.local_task_status_label is not None:
+            self.local_task_status_label.configure(style="Foot.TLabel")
+        self._render_node_task_cards(node_tasks)
+
+    def _render_node_task_cards(self, node_tasks: Dict[str, Dict[str, Any]]) -> None:
+        if self.node_task_container is None:
+            return
+        for child in list(self.node_task_container.winfo_children()):
+            child.destroy()
+
+        if not node_tasks:
+            ttk.Label(self.node_task_container, text="当前没有节点任务。", style="Foot.TLabel").grid(row=0, column=0, sticky="w")
+            return
+
+        ordered_ids = sorted(node_tasks.keys(), key=lambda value: int(value) if str(value).isdigit() else str(value))
+        for row_index, node_id in enumerate(ordered_ids):
+            payload = _task_card_payload(
+                node_tasks.get(node_id),
+                empty_title=f"节点 {node_id} 当前无任务",
+                empty_detail="等待节点发起自检或安装。",
+            )
+            card = ttk.Frame(self.node_task_container, style="SoftPanel.TFrame", padding=8)
+            card.grid(row=row_index, column=0, sticky="ew", pady=(0 if row_index == 0 else 8, 0))
+            card.columnconfigure(0, weight=1)
+            ttk.Label(card, text=f"节点 {node_id}", style="MetricLabel.TLabel").grid(row=0, column=0, sticky="w")
+            ttk.Label(card, text=str(payload["title"]), style="CardBody.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
+            detail_label = ttk.Label(card, text=str(payload["detail"]), style="CardFoot.TLabel", justify="left")
+            detail_label.grid(row=2, column=0, sticky="ew", pady=(4, 0))
+            self._register_adaptive_wrap_label(detail_label, card, padding=18, min_width=180, max_width=420)
+            progress_row = ttk.Frame(card, style="SoftPanel.TFrame")
+            progress_row.grid(row=3, column=0, sticky="ew", pady=(6, 0))
+            progress_row.columnconfigure(0, weight=1)
+            progress = ttk.Progressbar(progress_row, mode="determinate", maximum=100)
+            progress.grid(row=0, column=0, sticky="ew")
+            progress.configure(value=float(payload["percent"]))
+            ttk.Label(progress_row, text=f"{int(round(float(payload['percent'])))}%", style="Foot.TLabel").grid(row=0, column=1, sticky="e", padx=(8, 0))
+
     def _normalize_log_entry(self, row: Dict[str, Any]) -> Dict[str, str] | None:
         raw_text = str(row.get("rendered") or row.get("text") or "").strip()
         if not raw_text or re.fullmatch(r"[=\-]{8,}", raw_text):
@@ -1671,102 +1869,46 @@ class DesktopApp:
             if not match:
                 continue
             node_id = match.group(1)
-            direction = match.group(2)
-            prefix = {"上行语音": "上行", "下行播报": "下行", "通信": "通信"}.get(direction, direction)
-            grouped.setdefault(node_id, []).append(
-                {
-                    "time": item["time"],
-                    "level": item["level"],
-                    "module": prefix,
-                    "summary": item["summary"],
-                }
-            )
+            grouped.setdefault(node_id, []).append(item)
 
-        node_ids = sorted(grouped.keys(), key=lambda value: int(value))
-        existing = set(self.node_log_cards.keys())
-        for stale in existing - set(node_ids):
-            widget = self.node_log_cards.pop(stale, None)
-            if widget is not None:
-                widget.master.destroy()
-            self.node_log_cache.pop(stale, None)
-
-        if not node_ids:
-            for child in list(self.node_log_panel.winfo_children()):
+        for child in list(self.node_log_panel.winfo_children()):
+            if child not in {self.node_logs_title, self.node_log_empty_label}:
                 child.destroy()
-            self.node_log_cards.clear()
-            self.node_log_cache.clear()
-            self.node_log_panel.columnconfigure(0, weight=1)
-            self.node_log_panel.rowconfigure(0, weight=0)
-            empty = ttk.Label(self.node_log_panel, text="等待节点日志", style="Foot.TLabel")
-            empty.grid(row=0, column=0, sticky="nw")
+
+        if not grouped:
+            if self.node_log_empty_label is not None:
+                self.node_log_empty_label.configure(text="等待节点连接或节点任务进度。")
+                self.node_log_empty_label.grid()
             if self.node_log_canvas is not None:
                 self.node_log_canvas.configure(scrollregion=self.node_log_canvas.bbox("all"))
             return
 
-        for child in list(self.node_log_panel.winfo_children()):
-            if getattr(child, "_node_log_card", False) is not True:
-                child.destroy()
+        if self.node_log_empty_label is not None:
+            self.node_log_empty_label.grid_remove()
 
-        columns = 2
-        for column in range(columns):
-            self.node_log_panel.columnconfigure(column, weight=1, uniform="node-log")
-        total_rows = (len(node_ids) + columns - 1) // columns
-        for row_index in range(max(total_rows, 1)):
-            self.node_log_panel.rowconfigure(row_index, weight=0)
+        ordered_ids = sorted(grouped.keys(), key=lambda value: int(value) if str(value).isdigit() else str(value))
+        for column in range(2):
+            self.node_log_panel.columnconfigure(column, weight=1, uniform="node-state")
 
-        for index, node_id in enumerate(node_ids):
-            row = index // columns
-            column = index % columns
-            if node_id not in self.node_log_cards:
-                card = ttk.Frame(self.node_log_panel, style="Card.TFrame", padding=8)
-                card._node_log_card = True  # type: ignore[attr-defined]
-                card.grid(row=row, column=column, sticky="nsew", padx=(0 if column == 0 else 8, 0), pady=(0 if row == 0 else 8, 0))
-                card.columnconfigure(0, weight=1)
-                card.rowconfigure(1, weight=1)
-                ttk.Label(card, text=f"节点{node_id} 日志", style="MetricLabel.TLabel").grid(row=0, column=0, sticky="w")
-                tree = ttk.Treeview(
-                    card,
-                    columns=("time", "level", "module", "summary"),
-                    show="headings",
-                    height=6,
-                )
-                tree.heading("time", text="时间")
-                tree.heading("level", text="级别")
-                tree.heading("module", text="模块")
-                tree.heading("summary", text="事件摘要")
-                tree.column("time", width=92, anchor="center", stretch=False)
-                tree.column("level", width=58, anchor="center", stretch=False)
-                tree.column("module", width=64, anchor="center", stretch=False)
-                tree.column("summary", width=280, anchor="w")
-                tree.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
-                scroll = ttk.Scrollbar(card, orient="vertical", command=tree.yview)
-                scroll.grid(row=1, column=1, sticky="ns", pady=(6, 0))
-                tree.configure(yscrollcommand=scroll.set)
-                tree.tag_configure("INFO", foreground="#dbe6f2")
-                tree.tag_configure("WARN", foreground="#ffd166")
-                tree.tag_configure("WARNING", foreground="#ffd166")
-                tree.tag_configure("ERROR", foreground="#ff8f8f")
-                tree.tag_configure("SUCCESS", foreground="#6ce5b1")
-                self.node_log_cards[node_id] = tree
-                self.node_log_cache[node_id] = []
-            else:
-                self.node_log_cards[node_id].master.grid(
-                    row=row,
-                    column=column,
-                    sticky="nsew",
-                    padx=(0 if column == 0 else 8, 0),
-                    pady=(0 if row == 0 else 8, 0),
-                )
-
-            rows = grouped.get(node_id, [])[-8:]
-            keys = [f"{row['time']}|{row['level']}|{row['module']}|{row['summary']}" for row in rows]
-            if self.node_log_cache.get(node_id) == keys:
-                continue
-            widget = self.node_log_cards[node_id]
-            widget.delete(*widget.get_children())
-            for row in rows:
-                widget.insert("", "end", values=(row["time"], row["level"], row["module"], row["summary"]), tags=(row["level"],))
-            self.node_log_cache[node_id] = keys
+        for index, node_id in enumerate(ordered_ids):
+            row = index // 2 + 1
+            column = index % 2
+            latest = grouped[node_id][-1]
+            latest_summary = str(latest.get("summary") or "暂无节点摘要")
+            latest_level = str(latest.get("level") or "INFO").upper()
+            card = ttk.Frame(self.node_log_panel, style="Card.TFrame", padding=10)
+            card.grid(row=row, column=column, sticky="nsew", padx=(0 if column == 0 else 8, 0), pady=(8, 0))
+            card.columnconfigure(0, weight=1)
+            ttk.Label(card, text=f"节点 {node_id}", style="MetricLabel.TLabel").grid(row=0, column=0, sticky="w")
+            ttk.Label(card, text=f"最近状态：{latest_level}", style="PanelTitle.TLabel").grid(row=1, column=0, sticky="w", pady=(6, 0))
+            summary_label = ttk.Label(card, text=latest_summary, style="CardBody.TLabel", justify="left")
+            summary_label.grid(row=2, column=0, sticky="ew", pady=(4, 0))
+            self._register_adaptive_wrap_label(summary_label, card, padding=20, min_width=220, max_width=420)
+            task_state = ((self.current_state.get("tasks") or {}).get("nodes") or {}).get(node_id)
+            if task_state:
+                task_label = ttk.Label(card, text=_format_node_task_detail(node_id, task_state), style="CardFoot.TLabel", justify="left")
+                task_label.grid(row=3, column=0, sticky="ew", pady=(6, 0))
+                self._register_adaptive_wrap_label(task_label, card, padding=20, min_width=220, max_width=420)
         if self.node_log_canvas is not None:
             self.node_log_canvas.configure(scrollregion=self.node_log_canvas.bbox("all"))
 
@@ -1809,11 +1951,6 @@ class DesktopApp:
                 self.log_overall_scroll.grid(row=0, column=1, sticky="ns")
             else:
                 self.log_overall_scroll.grid_remove()
-        if self.node_logs_title is not None:
-            if websocket_mode:
-                self.node_logs_title.grid()
-            else:
-                self.node_logs_title.grid_remove()
         if self.node_logs_container is not None:
             if websocket_mode:
                 self.node_logs_container.grid()
@@ -1822,8 +1959,8 @@ class DesktopApp:
         if self.log_tree is not None:
             self.log_tree.configure(height=4 if websocket_mode else 6)
         if self.log_content is not None:
-            self.log_content.rowconfigure(2, weight=2 if websocket_mode else 1)
-            self.log_content.rowconfigure(4, weight=1 if websocket_mode else 0)
+            self.log_content.rowconfigure(4, weight=2 if websocket_mode else 1)
+            self.log_content.rowconfigure(6, weight=1 if websocket_mode else 0)
             if self.log_canvas is not None and self.log_content_window is not None:
                 canvas_height = int(self.log_canvas.winfo_height() or 0)
                 if canvas_height > 0:
@@ -1874,7 +2011,7 @@ class DesktopApp:
         else:
             if selected_filter == "全部":
                 self.log_status_var.set("系统事件流为空，等待运行数据")
-                self._set_log_detail("系统尚未产生可展示的事件。")
+                self._set_log_detail("当前还没有可展示的系统事件。")
             else:
                 self.log_status_var.set(f"当前筛选：{selected_filter}，暂无匹配事件")
                 self._set_log_detail(f"当前筛选：{selected_filter}\n暂无匹配的系统事件。")
@@ -4411,6 +4548,12 @@ class DesktopApp:
                         str(normalized.get("detail") or self.splash_detail_var.get()),
                     )
                     continue
+                if status == "progress" and name in {"self_check", "startup_self_check"}:
+                    if self.runtime is not None:
+                        self.runtime.update_local_task_progress(payload if isinstance(payload, dict) else {})
+                        self._render_task_progress(self.runtime.get_task_progress_state())
+                    self.hero_var.set("后台准备中")
+                    continue
                 if status == "error":
                     if name == "training_workspace":
                         self.training_annotation_workspace_pending = False
@@ -4483,7 +4626,12 @@ class DesktopApp:
                 elif name == "self_check":
                     self._render_checks(payload)
                     self._render_logs(self.runtime.get_state().get("logs", []))
-                    self.hero_var.set("启动自检已完成")
+                    local_task = (self.runtime.get_task_progress_state() or {}).get("local") if self.runtime is not None else {}
+                    task_status = str((local_task or {}).get("status") or "").lower()
+                    if task_status == "error":
+                        self.hero_var.set("后台准备失败（已回退规则链）")
+                    else:
+                        self.hero_var.set("系统已可用")
                 elif name == "startup_self_check":
                     self._render_checks(payload)
                     self._render_logs(self.runtime.get_state().get("logs", []))

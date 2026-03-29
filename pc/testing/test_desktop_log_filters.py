@@ -4,8 +4,10 @@ import unittest
 
 from pc.desktop_app import (
     _classify_log_entry,
+    _format_node_task_detail,
     _format_kb_import_feedback,
     _format_priority_event_card,
+    _format_task_progress_line,
     _matches_log_filter,
     _present_hero_message,
     _present_orchestrator_status,
@@ -74,6 +76,36 @@ class DesktopLogFilterTests(unittest.TestCase):
         self.assertIn("作用域 expert.safety.chem_safety_expert", summary)
         self.assertIn("新增文档 3", summary)
         self.assertIn("新增文档数：3", dialog)
+
+    def test_task_progress_line_formats_percent_and_detail(self) -> None:
+        title, detail, percent, status = _format_task_progress_line(
+            {
+                "task_name": "节点自检",
+                "detail": "正在安装缺失依赖",
+                "percent": 48,
+                "status": "running",
+            },
+            empty_title="空态标题",
+            empty_detail="空态说明",
+        )
+        self.assertEqual(title, "节点自检")
+        self.assertEqual(detail, "正在安装缺失依赖")
+        self.assertEqual(percent, 48.0)
+        self.assertEqual(status, "running")
+
+    def test_node_task_detail_contains_node_identity_and_status(self) -> None:
+        detail = _format_node_task_detail(
+            "2",
+            {
+                "task_name": "节点 2 自检",
+                "detail": "自动补全已完成，正在再次自检",
+                "status": "running",
+                "updated_at": "2026-03-29 21:00:00",
+            },
+        )
+        self.assertIn("节点：2", detail)
+        self.assertIn("状态：running", detail)
+        self.assertIn("自动补全已完成", detail)
 
 
 if __name__ == "__main__":

@@ -310,6 +310,12 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
                 timeout=30,
                 message="主界面自检结果未刷新",
             )
+            _wait_for(
+                pump,
+                lambda: "本机" in str(app.local_task_title_var.get()) or "自检" in str(app.local_task_title_var.get()),
+                timeout=10,
+                message="本机任务进度区未更新",
+            )
             add_step("self_check_completed", items=len(app.current_state.get("self_check", [])))
 
             app.backend_combo.set(app.backend_reverse["ollama"])
@@ -540,6 +546,13 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
                 and int(app.current_state.get("summary", {}).get("online_nodes", 0) or 0) >= node_count,
                 timeout=50,
                 message="监控会话未成功启动或节点未全部上线",
+            )
+            app.runtime.request_remote_self_checks()
+            _wait_for(
+                pump,
+                lambda: bool((app.current_state.get("tasks") or {}).get("nodes")),
+                timeout=20,
+                message="节点任务进度未回传到主界面",
             )
             _wait_for(
                 pump,

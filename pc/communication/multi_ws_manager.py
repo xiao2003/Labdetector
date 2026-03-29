@@ -4,7 +4,7 @@ import os
 import threading
 import time
 from collections import deque
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 import cv2
 import numpy as np
@@ -32,6 +32,7 @@ class MultiPiManager:
         log_error: Optional[Callable[[str], None]] = None,
         selected_model: str = "",
         archive_event: Optional[Callable[..., Any]] = None,
+        on_node_progress: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ):
         self.pi_dict = pi_dict
         self.frame_buffers = {pid: None for pid in pi_dict}
@@ -41,6 +42,7 @@ class MultiPiManager:
         self.log_error = log_error or console_error
         self.selected_model = str(selected_model or "").strip()
         self.archive_event = archive_event
+        self.on_node_progress = on_node_progress
         self.node_latest_results = {
             pid: {"text": "", "event_name": "", "timestamp": 0.0}
             for pid in pi_dict
@@ -67,6 +69,22 @@ class MultiPiManager:
         self.audit_log_dir = str(resource_path("pc/log"))
         os.makedirs(self.audit_log_dir, exist_ok=True
         )
+
+    def _handle_node_progress(self, pi_id: str, payload: Dict[str, Any]) -> None:
+        if self.on_node_progress is not None:
+            try:
+                self.on_node_progress(pi_id, payload)
+            except Exception as exc:
+                self.log_error(f"节点 [{pi_id}] 进度回调处理失败: {exc}")
+
+    def request_node_self_checks(self) -> bool:
+        triggered = False
+        for pi_id in self.pi_dict:
+            if self.node_status.get(pi_id) != "online":
+                continue
+            self.send_to_node(pi_id, "CMD:RUN_SELF_CHECK")
+            triggered = True
+        return triggered
 
     def _write_audit(self, text: str):
         path = os.path.join(self.audit_log_dir, "expert_closed_loop.log")
@@ -223,6 +241,14 @@ class MultiPiManager:
                                     ack_event_id = str(ack.get("event_id", ""))
                                     self.pending_result_acks.pop((pi_id, ack_event_id), None)
                                     self._write_audit(f"node={pi_id} event_id={ack_event_id} ack={ack}")
+                                elif data.startswith("PI_PROGRESS:"):
+                                    payload_raw = data.replace("PI_PROGRESS:", "", 1)
+                                    try:
+                                        payload = json.loads(payload_raw)
+                                    except Exception as exc:
+                                        self.log_error(f"节点 [{pi_id}] 进度消息解析失败: {exc}")
+                                        continue
+                                    self._handle_node_progress(pi_id, payload)
 
                                 # 处理完整的边缘事件接收与解码逻辑。
                                 elif data.startswith("PI_EXPERT_EVENT:") or data.startswith("PI_YOLO_EVENT:"):

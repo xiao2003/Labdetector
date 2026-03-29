@@ -12,6 +12,7 @@ import json
 import os
 import queue
 import runpy
+import re
 import subprocess
 import sys
 import threading
@@ -153,6 +154,8 @@ class LabDetectorRuntime:
         self.scheduler_started = False
         self._scheduler_manager: Any = None
         self.self_check_has_run = False
+        self.local_task_progress: Dict[str, Any] = {}
+        self.node_task_progress: Dict[str, Dict[str, Any]] = {}
         self.demo_mode_enabled = False
         self.demo_interval = 8.0
         self.demo_thread: Optional[threading.Thread] = None
@@ -294,6 +297,7 @@ class LabDetectorRuntime:
             "summary": summary,
             "orchestrator": dict(self.orchestrator_state),
             "self_check": self.self_check_results,
+            "tasks": self.get_task_progress_state(),
             "streams": streams,
             "logs": list(self.logs),
         }
@@ -306,8 +310,66 @@ class LabDetectorRuntime:
                 "mode": self.mode,
                 "status_message": self.status_message,
             },
+            "tasks": self.get_task_progress_state(),
             "streams": self._build_streams(),
         }
+
+    def get_task_progress_state(self) -> Dict[str, Any]:
+        return {
+            "local": dict(self.local_task_progress),
+            "nodes": {node_id: dict(payload) for node_id, payload in self.node_task_progress.items()},
+        }
+
+    def update_local_task_progress(self, payload: Dict[str, Any]) -> None:
+        normalized = {
+            "source": str(payload.get("source") or "self_check"),
+            "task_name": str(payload.get("task_name") or "本机任务"),
+            "stage": str(payload.get("stage") or "scan"),
+            "title": str(payload.get("title") or ""),
+            "detail": str(payload.get("detail") or ""),
+            "status": str(payload.get("status") or "running"),
+            "current": int(payload.get("current", 0) or 0),
+            "total": int(payload.get("total", 0) or 0),
+            "percent": float(payload.get("percent", 0.0) or 0.0),
+            "updated_at": _now_text(),
+            "updated_ts": time.time(),
+        }
+        if normalized["status"] == "idle":
+            self.local_task_progress = {}
+            return
+        self.local_task_progress = normalized
+
+    def update_node_task_progress(self, node_id: str, payload: Dict[str, Any]) -> None:
+        normalized = {
+            "node_id": str(node_id or ""),
+            "source": str(payload.get("source") or "self_check"),
+            "stage": str(payload.get("stage") or "scan"),
+            "title": str(payload.get("title") or ""),
+            "detail": str(payload.get("detail") or ""),
+            "status": str(payload.get("status") or "running"),
+            "current": int(payload.get("current", 0) or 0),
+            "total": int(payload.get("total", 0) or 0),
+            "percent": float(payload.get("percent", 0.0) or 0.0),
+            "missing_before": list(payload.get("missing_before") or []),
+            "installed": list(payload.get("installed") or []),
+            "remaining_failures": list(payload.get("remaining_failures") or []),
+            "updated_at": _now_text(),
+            "updated_ts": time.time(),
+        }
+        if normalized["status"] in {"success", "error"}:
+            summary = normalized["detail"] or normalized["title"] or "节点任务已完成"
+            self.node_task_progress[str(node_id)] = normalized
+            self._log_info(f"节点 [{node_id}] 任务进度更新: {summary}")
+            return
+        self.node_task_progress[str(node_id)] = normalized
+
+    def request_remote_self_checks(self) -> bool:
+        if self.mode != "websocket" or self.manager is None:
+            return False
+        triggered = self.manager.request_node_self_checks()
+        if triggered:
+            self._log_info("已向在线树莓派节点发起远程自检。")
+        return triggered
 
     def prepare_orchestrator_assets(self) -> Dict[str, Any]:
         self._log_info("固定管家层后台准备已启动。")
@@ -330,6 +392,115 @@ class LabDetectorRuntime:
         include_microphone: bool = False,
         include_voice_assets: bool = True,
     ) -> List[Dict[str, Any]]:
+        auto_install_keys = [
+            "self_check.pc_auto_install_core",
+            "self_check.pc_auto_install_training",
+            "self_check.pc_auto_install_optional",
+            "self_check.pc_auto_install_voice_ai",
+            "self_check.pc_auto_install_gpu_runtime",
+            "self_check.pc_auto_install_ollama",
+        ]
+
+        def emit_progress(
+            *,
+            stage: str,
+            title: str,
+            detail: str,
+            current: int,
+            total: int,
+            percent: float,
+            status: str = "running",
+        ) -> None:
+            payload = {
+                "source": "self_check",
+                "task_name": "本机系统自检",
+                "stage": stage,
+                "title": title,
+                "detail": detail,
+                "current": current,
+                "total": total,
+                "percent": max(0.0, min(100.0, float(percent))),
+                "status": status,
+            }
+            self.update_local_task_progress(payload)
+            if progress_callback is not None:
+                progress_callback(payload)
+
+        def extract_repair_items(result: Dict[str, Any]) -> List[str]:
+            repaired: List[str] = []
+            raw_output = str(result.get("raw_output") or "")
+            for line in raw_output.splitlines():
+                normalized = str(line or "").strip()
+                match = re.search(r"安装成功:\s*(.+)$", normalized)
+                if match:
+                    repaired.append(match.group(1).strip())
+            summary = str(result.get("summary") or "")
+            if "自动补齐" in summary:
+                repaired.append(summary)
+            if "安装完成" in raw_output and "CUDA" in raw_output:
+                repaired.append("CUDA 运行时")
+            return [item for item in repaired if item]
+
+        def run_checks_once(*, disable_auto_install: bool, phase_label: str) -> tuple[List[Dict[str, Any]], List[str]]:
+            results: List[Dict[str, Any]] = []
+            repaired_items: List[str] = []
+            previous_values: Dict[str, Any] = {}
+            if disable_auto_install:
+                for key in auto_install_keys:
+                    previous_values[key] = get_config(key, True)
+                    set_config(key, False)
+            try:
+                for index, (key, title, runner) in enumerate(checks, start=1):
+                    base_percent = 12.0 if phase_label == "scan" else 68.0
+                    span = 52.0 if phase_label == "scan" else 24.0
+                    emit_progress(
+                        stage=phase_label,
+                        title=title,
+                        detail=f"{title} 检查中",
+                        current=index - 1,
+                        total=total_checks,
+                        percent=base_percent + ((index - 1) / max(total_checks, 1)) * span,
+                    )
+                    self._log_raw_line("")
+                    self._log_raw_line(f"[INFO] [{index}/{total_checks}] 检查 {title}...")
+                    start_time = time.time()
+                    try:
+                        result = runner()
+                    except Exception as exc:
+                        result = {
+                            "status": "error",
+                            "summary": f"{title} 检查失败",
+                            "detail": str(exc),
+                            "raw_output": str(exc),
+                        }
+                    raw_output = str(result.get("raw_output") or "")
+                    for line in raw_output.splitlines():
+                        self._log_raw_line(line)
+                    result.update({
+                        "key": key,
+                        "title": title,
+                        "duration_ms": int((time.time() - start_time) * 1000),
+                    })
+                    results.append(result)
+                    repaired = extract_repair_items(result)
+                    repaired_items.extend(repaired)
+                    result_detail = str(result.get("summary") or title)
+                    if repaired:
+                        result_detail = f"{result_detail}；已补齐 {len(repaired)} 项"
+                    emit_progress(
+                        stage=phase_label,
+                        title=title,
+                        detail=result_detail,
+                        current=index,
+                        total=total_checks,
+                        percent=base_percent + (index / max(total_checks, 1)) * span,
+                    )
+            finally:
+                if disable_auto_install:
+                    for key, value in previous_values.items():
+                        set_config(key, value)
+            return results, repaired_items
+
         checks = [
             ("dependencies", "Python 依赖环境", self._check_dependencies),
             ("ollama_runtime", "Ollama 本地模型环境", self._check_ollama_runtime),
@@ -352,43 +523,27 @@ class LabDetectorRuntime:
         self._log_raw_line("=" * 55)
         self._log_raw_line(f"[INFO] NeuroLab Hub V{self.version} (PC 智算中枢) - 系统启动自检")
         self._log_raw_line("=" * 55)
+        emit_progress(
+            stage="scan",
+            title="系统启动自检",
+            detail="正在扫描缺失项并按需自动补全",
+            current=0,
+            total=total_checks,
+            percent=10.0,
+        )
+        results, repaired_items = run_checks_once(disable_auto_install=False, phase_label="scan")
 
-        for index, (key, title, runner) in enumerate(checks, start=1):
-            if progress_callback is not None:
-                progress_callback({
-                    "value": 18 + ((index - 1) / max(total_checks, 1)) * 58,
-                    "message": f"正在执行启动自检（{index}/{total_checks}）",
-                    "step": title,
-                    "detail": f"检查项：{title}",
-                })
-            self._log_raw_line("")
-            self._log_raw_line(f"[INFO] [{index}/{total_checks}] 检查 {title}...")
-            start_time = time.time()
-            try:
-                result = runner()
-            except Exception as exc:
-                result = {
-                    "status": "error",
-                    "summary": f"{title} 检查失败",
-                    "detail": str(exc),
-                    "raw_output": str(exc),
-                }
-            raw_output = str(result.get("raw_output") or "")
-            for line in raw_output.splitlines():
-                self._log_raw_line(line)
-            result.update({
-                "key": key,
-                "title": title,
-                "duration_ms": int((time.time() - start_time) * 1000),
-            })
-            results.append(result)
-            if progress_callback is not None:
-                progress_callback({
-                    "value": 18 + (index / max(total_checks, 1)) * 58,
-                    "message": f"启动自检已完成 {index}/{total_checks}",
-                    "step": title,
-                    "detail": f"{title}：{result.get('summary', '')}",
-                })
+        if repaired_items:
+            self._log_raw_line("[INFO] 已完成自动补全，开始再次自检。")
+            emit_progress(
+                stage="recheck",
+                title="再次自检",
+                detail=f"自动补全完成，准备再次执行 {total_checks} 项检查",
+                current=0,
+                total=total_checks,
+                percent=68.0,
+            )
+            results, _ = run_checks_once(disable_auto_install=True, phase_label="recheck")
 
         has_error = any(str(row.get("status", "")).lower() == "error" for row in results)
         has_warn = any(str(row.get("status", "")).lower() == "warn" for row in results)
@@ -404,6 +559,20 @@ class LabDetectorRuntime:
         self._log_raw_line("")
         self.self_check_results = results
         self.self_check_has_run = True
+        done_detail = "自动补全后再次自检已完成。" if repaired_items else "未发现需要自动补全的缺失项。"
+        if has_error:
+            done_detail = "自检仍存在失败项，请先处理后再继续。"
+        elif has_warn:
+            done_detail = "自检完成，存在可选告警项。"
+        emit_progress(
+            stage="done",
+            title="系统启动自检",
+            detail=done_detail,
+            current=total_checks,
+            total=total_checks,
+            percent=100.0,
+            status="error" if has_error else "success",
+        )
         return results
 
     def run_voice_test(self) -> Dict[str, Any]:
@@ -1288,6 +1457,7 @@ class LabDetectorRuntime:
             self.local_frame = None
             self.topology = {}
             self.manager = None
+            self.node_task_progress = {}
             self.demo_sequence = []
             self.demo_index = 0
             self.demo_thread = None
@@ -1652,6 +1822,7 @@ class LabDetectorRuntime:
             log_error=self._log_error,
             selected_model=self.selected_model,
             archive_event=self._record_archive_event,
+            on_node_progress=self.update_node_task_progress,
         )
         self.manager_thread = threading.Thread(target=self._manager_loop, daemon=True, name="MultiNodeManager")
         self.manager_thread.start()
@@ -1688,6 +1859,7 @@ class LabDetectorRuntime:
         self.latest_inference_result = {"text": "", "timestamp": 0.0}
         self.last_inference_log_ts = 0.0
         self.topology = {}
+        self.node_task_progress = {}
         self.demo_sequence = []
         self.demo_index = 0
         self.demo_thread = None

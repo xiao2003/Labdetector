@@ -186,6 +186,8 @@ class VirtualAudioVoicePiServer:
                 }
                 self.acks.append(ack)
                 await websocket.send(f"PI_EXPERT_ACK:{json.dumps(ack, ensure_ascii=False)}")
+            elif message.startswith("CMD:RUN_SELF_CHECK"):
+                await self._emit_progress(websocket)
 
     async def _emit_audio_commands(self, websocket, wake_word: str) -> None:
         asset_root = Path("release/virtual_audio_voice_assets") / f"node_{self.node_id}"
@@ -237,6 +239,55 @@ class VirtualAudioVoicePiServer:
                     }
                 )
             await websocket.send(packet)
+            await asyncio.sleep(0.05)
+
+    async def _emit_progress(self, websocket) -> None:
+        rows = [
+            {
+                "node_id": self.node_id,
+                "source": "self_check",
+                "stage": "scan",
+                "title": "正在检查节点环境",
+                "detail": "正在扫描依赖与运行资源。",
+                "current": 1,
+                "total": 3,
+                "percent": 20,
+                "status": "running",
+                "missing_before": ["vosk", "espeak"],
+                "installed": [],
+                "remaining_failures": [],
+            },
+            {
+                "node_id": self.node_id,
+                "source": "self_check",
+                "stage": "repair",
+                "title": "正在自动补全节点依赖",
+                "detail": "正在安装缺失依赖。",
+                "current": 2,
+                "total": 3,
+                "percent": 70,
+                "status": "running",
+                "missing_before": ["vosk", "espeak"],
+                "installed": ["vosk", "espeak"],
+                "remaining_failures": [],
+            },
+            {
+                "node_id": self.node_id,
+                "source": "self_check",
+                "stage": "done",
+                "title": "节点自检完成",
+                "detail": "自动补全已完成，节点已重新通过自检。",
+                "current": 3,
+                "total": 3,
+                "percent": 100,
+                "status": "success",
+                "missing_before": ["vosk", "espeak"],
+                "installed": ["vosk", "espeak"],
+                "remaining_failures": [],
+            },
+        ]
+        for row in rows:
+            await websocket.send(f"PI_PROGRESS:{json.dumps(row, ensure_ascii=False)}")
             await asyncio.sleep(0.05)
 
 

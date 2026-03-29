@@ -378,6 +378,14 @@ async def handle_client(websocket, path=""):
 
     # ★ 新增：启动语音协程，共用当前的 websocket 连接
     voice_task = asyncio.create_task(voice_thread(websocket))
+    loop = asyncio.get_running_loop()
+
+    def _schedule_progress(payload: dict) -> None:
+        try:
+            message = f"PI_PROGRESS:{json.dumps(payload, ensure_ascii=False)}"
+            asyncio.run_coroutine_threadsafe(websocket.send(message), loop)
+        except Exception:
+            pass
 
     async def recv_loop():
         try:
@@ -413,6 +421,13 @@ async def handle_client(websocket, path=""):
                         if "storage_budget_mb_per_hour" in payload:
                             _PI_STATE["storage_budget_mb_per_hour"] = float(payload.get("storage_budget_mb_per_hour", 400.0))
                         console_info(f"已同步策略 {len(_PI_STATE['policies'])} 条。")
+                    elif msg.startswith("CMD:RUN_SELF_CHECK"):
+                        console_info("收到 PC 发起的远程自检请求。")
+
+                        def _worker() -> None:
+                            run_pi_self_check(progress_callback=_schedule_progress)
+
+                        threading.Thread(target=_worker, daemon=True, name="PiRemoteSelfCheck").start()
                     elif msg.startswith("CMD:TTS:"):
                         tts_text = msg.replace("CMD:TTS:", "")
                         console_info(f"[专家结论] {tts_text}")
@@ -642,19 +657,69 @@ async def voice_thread(websocket):
         pass
 
 
-def run_pi_self_check(auto_install: Optional[bool] = None) -> bool:
+def _emit_pi_progress(
+    progress_callback,
+    *,
+    source: str,
+    stage: str,
+    title: str,
+    detail: str,
+    current: int,
+    total: int,
+    percent: float,
+    status: str = "running",
+    missing_before: Optional[List[str]] = None,
+    installed: Optional[List[str]] = None,
+    remaining_failures: Optional[List[str]] = None,
+) -> None:
+    if progress_callback is None:
+        return
+    payload = {
+        "node_id": "local",
+        "source": source,
+        "stage": stage,
+        "title": title,
+        "detail": detail,
+        "current": int(current),
+        "total": int(total),
+        "percent": max(0.0, min(100.0, float(percent))),
+        "status": status,
+        "missing_before": list(missing_before or []),
+        "installed": list(installed or []),
+        "remaining_failures": list(remaining_failures or []),
+    }
+    progress_callback(payload)
+
+
+def run_pi_self_check(auto_install: Optional[bool] = None, progress_callback=None) -> bool:
     """执行 Pi 边缘节点自检，必要时自动安装依赖。"""
     if auto_install is None:
         auto_install = bool(get_pi_config("self_check.auto_install_dependencies", True))
+
+    total_steps = 3
+    installed_packages: List[str] = []
+    missing_before: List[str] = []
+    remaining_failures: List[str] = []
 
     print("\n" + "=" * 55)
     print(f"[INFO] NeuroLab Hub V{APP_VERSION} (Pi 边缘端) - 节点自检")
     print("=" * 55)
 
+    _emit_pi_progress(
+        progress_callback,
+        source="self_check",
+        stage="scan",
+        title="扫描依赖与硬件",
+        detail="正在检查 Python 依赖、摄像头与语音模型资产",
+        current=0,
+        total=total_steps,
+        percent=8.0,
+    )
     print("\n[INFO] [1/3] 检查 Python 依赖环境...")
     missing_core = _find_missing_pi_dependencies(PI_CORE_DEPENDENCY_MAP)
     missing_optional = _find_missing_pi_dependencies(PI_OPTIONAL_DEPENDENCY_MAP)
     missing_all = sorted(set(missing_core + missing_optional))
+    missing_before = list(missing_all)
     if not missing_all:
         print("[INFO] 依赖检查通过。")
     else:
@@ -665,15 +730,42 @@ def run_pi_self_check(auto_install: Optional[bool] = None) -> bool:
 
         if auto_install:
             print("[INFO] 自动安装已开启，尝试补齐依赖...")
-            _, _, logs = _install_pi_dependencies(missing_all)
+            _emit_pi_progress(
+                progress_callback,
+                source="self_check",
+                stage="repair",
+                title="自动补全依赖",
+                detail=f"正在补齐 {len(missing_all)} 项缺失依赖",
+                current=1,
+                total=total_steps,
+                percent=30.0,
+                missing_before=missing_all,
+            )
+            installed_packages, failed_packages, logs = _install_pi_dependencies(missing_all)
             for line in logs:
                 print(line)
             missing_core = _find_missing_pi_dependencies(PI_CORE_DEPENDENCY_MAP)
             missing_optional = _find_missing_pi_dependencies(PI_OPTIONAL_DEPENDENCY_MAP)
+            remaining_failures = list(sorted(set(missing_core + missing_optional + failed_packages)))
             if not missing_core and not missing_optional:
                 print("[INFO] 缺失依赖已自动安装完成。")
         else:
             print("[WARN] 自动安装未开启，请手动安装后重试。")
+            remaining_failures = list(missing_all)
+
+    _emit_pi_progress(
+        progress_callback,
+        source="self_check",
+        stage="recheck",
+        title="再次自检",
+        detail="正在重新检查依赖、硬件和语音模型资产",
+        current=1,
+        total=total_steps,
+        percent=58.0,
+        missing_before=missing_before,
+        installed=installed_packages,
+        remaining_failures=remaining_failures,
+    )
 
     print("\n[INFO] [2/3] 检查摄像头与音频硬件...")
     if PICAMERA_AVAILABLE:
@@ -708,6 +800,21 @@ def run_pi_self_check(auto_install: Optional[bool] = None) -> bool:
     else:
         print(f"[ERROR] Pi 自检失败，仍缺失核心依赖: {', '.join(missing_core)}")
     print("=" * 55 + "\n")
+    remaining_failures = list(sorted(set(missing_core + missing_optional)))
+    _emit_pi_progress(
+        progress_callback,
+        source="self_check",
+        stage="done",
+        title="Pi 边缘端自检",
+        detail="Pi 自检通过，可以继续运行。" if overall_ok else "Pi 自检仍存在缺失项，请先处理。",
+        current=total_steps,
+        total=total_steps,
+        percent=100.0,
+        status="success" if overall_ok else "error",
+        missing_before=missing_before,
+        installed=installed_packages,
+        remaining_failures=remaining_failures,
+    )
     return overall_ok
 
 

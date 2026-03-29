@@ -176,6 +176,8 @@ class VirtualPiServer:
                 }
                 await websocket.send(f"PI_EXPERT_ACK:{json.dumps(ack, ensure_ascii=False)}")
                 self.acks.append(ack)
+            elif message.startswith("CMD:RUN_SELF_CHECK"):
+                await self._emit_progress(websocket)
 
     async def _emit_policy_events(self, websocket, policies: Dict[str, Any]) -> None:
         scenarios = default_simulated_scenarios(node_id="1")
@@ -205,6 +207,55 @@ class VirtualPiServer:
                     )
                 await websocket.send(packet)
                 await asyncio.sleep(0.15)
+
+    async def _emit_progress(self, websocket) -> None:
+        rows = [
+            {
+                "node_id": "1",
+                "source": "self_check",
+                "stage": "scan",
+                "title": "正在检查节点环境",
+                "detail": "正在扫描依赖与运行资源。",
+                "current": 1,
+                "total": 3,
+                "percent": 24,
+                "status": "running",
+                "missing_before": ["vosk", "espeak"],
+                "installed": [],
+                "remaining_failures": [],
+            },
+            {
+                "node_id": "1",
+                "source": "self_check",
+                "stage": "repair",
+                "title": "正在自动补全节点依赖",
+                "detail": "正在安装缺失依赖。",
+                "current": 2,
+                "total": 3,
+                "percent": 68,
+                "status": "running",
+                "missing_before": ["vosk", "espeak"],
+                "installed": ["vosk", "espeak"],
+                "remaining_failures": [],
+            },
+            {
+                "node_id": "1",
+                "source": "self_check",
+                "stage": "done",
+                "title": "节点自检完成",
+                "detail": "自动补全已完成，节点已重新通过自检。",
+                "current": 3,
+                "total": 3,
+                "percent": 100,
+                "status": "success",
+                "missing_before": ["vosk", "espeak"],
+                "installed": ["vosk", "espeak"],
+                "remaining_failures": [],
+            },
+        ]
+        for row in rows:
+            await websocket.send(f"PI_PROGRESS:{json.dumps(row, ensure_ascii=False)}")
+            await asyncio.sleep(0.1)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -430,6 +481,12 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
                 timeout=30,
                 message="主界面自检结果未刷新",
             )
+            _wait_for(
+                pump,
+                lambda: "本机" in str(app.local_task_title_var.get()) or "自检" in str(app.local_task_title_var.get()),
+                timeout=10,
+                message="本机任务进度区未更新",
+            )
             add_step("self_check_completed", items=len(app.current_state.get("self_check", [])))
 
             app.backend_combo.set(app.backend_reverse["ollama"])
@@ -582,6 +639,13 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
                 and int(app.current_state.get("summary", {}).get("online_nodes", 0) or 0) >= 1,
                 timeout=40,
                 message="监控会话未成功启动或节点未上线",
+            )
+            app.runtime.request_remote_self_checks()
+            _wait_for(
+                pump,
+                lambda: bool((app.current_state.get("tasks") or {}).get("nodes")),
+                timeout=20,
+                message="节点任务进度未回传到主界面",
             )
             _wait_for(
                 pump,
