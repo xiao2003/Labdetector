@@ -27,12 +27,40 @@ class RemoteVoiceRoutingTests(unittest.TestCase):
         self.assertEqual(reply, '远端问答回复')
         self.assertEqual(calls, [])
 
+    def test_remote_command_can_trigger_app_internal_action_via_orchestrator(self) -> None:
+        agent = VoiceInteraction(initialize_audio_models=False)
+        calls = []
+        agent.set_local_command_handler(lambda text, intent: calls.append((text, intent)) or "已打开训练中心")
+
+        with patch(
+            "pc.voice.voice_interaction.orchestrator.plan_voice_command",
+            return_value=OrchestratorResult(
+                intent="app_action",
+                text="好的，正在打开训练中心。",
+                actions=[{"type": "app_action", "intent": "open_training_center"}],
+                metadata={"planner_backend": "test"},
+            ),
+        ):
+            reply = agent.process_remote_command("1", "打开训练中心")
+
+        self.assertEqual(reply, "已打开训练中心")
+        self.assertEqual(calls, [("打开训练中心", "open_training_center")])
+
     def test_local_command_still_triggers_local_gui_handler(self) -> None:
         agent = VoiceInteraction(initialize_audio_models=False)
         calls = []
         agent.set_local_command_handler(lambda text, intent: calls.append((text, intent)) or '已打开训练中心')
 
-        reply = agent.process_text_command('打开训练中心', source='pc_local', speak_response=False)
+        with patch(
+            "pc.voice.voice_interaction.orchestrator.plan_voice_command",
+            return_value=OrchestratorResult(
+                intent="app_action",
+                text="好的，正在打开训练中心。",
+                actions=[{"type": "app_action", "intent": "open_training_center"}],
+                metadata={"planner_backend": "test"},
+            ),
+        ):
+            reply = agent.process_text_command('打开训练中心', source='pc_local', speak_response=False)
 
         self.assertEqual(reply, '已打开训练中心')
         self.assertEqual(calls, [('打开训练中心', 'open_training_center')])

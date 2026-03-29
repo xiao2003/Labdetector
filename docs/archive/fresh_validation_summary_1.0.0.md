@@ -1,14 +1,15 @@
-# NeuroLab Hub 1.0.0 新安装链路复验总结
+# NeuroLab Hub 1.0.0 新安装链路正式复验总结
 
 ## 目标
 
-基于当前正式安装链路，完成一轮围绕 `1.0.0` 的真实复验，覆盖：
+基于当前正式安装链路，完成从安装包到 `PC-Pi` 语音/视频闭环结束的一轮正式复验，覆盖：
 
-- 正式安装包安装
-- 首次启动 GUI 体验
-- 固定管家层后台下载与后台预热
-- `PC-Pi` 语音与视频闭环主链
-- GUI 关键功能与多节点场景
+- 安装包交付
+- 首次启动与运行时状态
+- 6 层架构关键能力
+- 专家能力驱动调度
+- 应用内自治关键场景
+- Ollama 模型选择页默认候选
 
 ## 当前正式架构
 
@@ -21,128 +22,170 @@
 5. 通信与节点管理层
 6. Pi 轻前端边缘层
 
-其中固定管家层模型采用：
+固定管家层采用：
 
 - `Qwen2.5-1.5B-Instruct`
-- 项目内置 `llama.cpp` Windows CPU runtime
-- 首次启动后后台下载固定 GGUF
-- 后台预热完成前，系统保持 `planner_backend=deterministic`
+- 内置 `llama.cpp` Windows CPU runtime
+- 首次启动后台下载固定 GGUF
+- 就绪前 `planner_backend=deterministic`
+- 就绪后 `planner_backend=embedded_model`
 
-当前固定下载清单已锁定为：
+## 本轮正式复验范围
 
-- runtime：`llama.cpp` Windows CPU 运行时
-- 模型：`Qwen2.5-1.5B-Instruct` 官方 GGUF 量化文件
+### 1. 安装包交付层
 
-## 本轮关键验证点
+- 正式安装包：`D:\NeuroLab\release\NeuroLab-Hub-Setup-v1.0.0.exe`
+- 安装器可正常安装
+- 安装后主程序入口存在
+- 安装目录内存在固定管家层 runtime 与模型资产清单
 
-### 1. 真实安装包首启 smoke
+### 2. 首次启动与运行时层
 
-安装包：
+已验证：
 
-- `D:\NeuroLab\release\NeuroLab-Hub-Setup-v1.0.0.exe`
+- GUI 先显示
+- 固定管家层模型下载与预热只在后台执行
+- 后台状态可观测
+- 首启期间 GUI 可操作
 
-验证脚本：
+对应报告：
 
-- `D:\NeuroLab\NeuroLab Hub\pc\testing\installer_first_launch_smoke.py`
+- `D:\NeuroLab\release\smoke_install_formal_acceptance_20260329.json`
 
-当前结论：
+首启观测到的关键状态：
 
-- 安装器安装成功
-- 安装后 `NeuroLab Hub.exe` 存在
-- 首次启动时，外层启动器会很快退出
-- 后台 `pythonw` 进程会继续存活
-- 这说明 GUI/后台主程序已被成功拉起
-- 固定管家层模型准备链在 GUI 出现后于后台执行
-- 当前 smoke 报告：`D:\NeuroLab\release\smoke_install_20260329_124300.json`
+- `status = downloading`
+- `planner_backend = deterministic`
 
-### 2. 固定管家层状态机
-
-本轮已确认：
-
-- 模型文件缺失时，状态进入 `downloading`
-- 下载完成后进入 `warming_up`
-- 首次预热耗时较长时，状态保持 `warming_up`
-- 不再把预热超时误写成 `download_failed`
-- 真正异常时才进入 `download_failed`
+这符合“模型后台准备、不阻塞 GUI”的正式口径。
 
 ### 3. 语音闭环
 
-本轮正式口径不是“文本伪造”，而是：
+已验证完整链路：
 
-- 使用音频文件驱动 Pi 本地识别链
-- 识别出的文本进入 `PC` 端统一 `orchestrator`
-- 再由执行层模型/专家执行链生成结果
-- 结果回传并完成播报
+1. Pi 音频文件注入
+2. Pi 本地识别生成文本
+3. 文本上行到 PC
+4. PC 进入 `orchestrator.plan_voice_command()`
+5. 管家层按专家元数据、知识域与上下文分发
+6. 结果回传 Pi
+7. Pi 完成播报
+
+对应报告：
+
+- `D:\NeuroLab\release\formal_acceptance_virtual_closed_loop_20260329.json`
+
+本轮已覆盖：
+
+- 系统状态查询
+- 风险分析问答
+- 普通问答
+- 结果播报
 
 ### 4. 视频闭环
 
-本轮正式口径为：
+已验证完整链路：
 
-- Pi 低频前置检测
-- 边缘事件统一进入 `orchestrator.plan_edge_event()`
-- 专家分析、知识补充、播报策略在 PC 端统一编排
-- 强告警自动播报
-- 普通提醒仅写事件摘要流
+1. 虚拟 Pi 边缘事件上行
+2. `PI_EXPERT_EVENT` / `PI_YOLO_EVENT` 统一进入 `orchestrator.plan_edge_event()`
+3. PC 调度专家执行与播报策略
+4. 结果回传
+5. Pi 侧 ACK 正常
 
-## 本轮执行的验证
+对应报告：
+
+- `D:\NeuroLab\release\gui_full_closed_loop_20260329.json`
+- `D:\NeuroLab\release\gui_release_acceptance_20260329.json`
+
+本轮已覆盖：
+
+- PPE 普通提醒
+- 危化品高优事件
+- 专家结果回传
+- ACK
+- 普通事件静默策略
+
+### 5. GUI 与应用内自治
+
+已验证：
+
+- GUI 页面可打开与切换
+- 知识库、专家中心、训练中心、档案中心均可进入
+- 监控可开始/停止
+- 管家层可驱动应用内动作，不越出应用边界
+- 不会自动修改持久配置、不自动训练、不自动导入
+
+### 6. 专家能力驱动调度
+
+本轮正式口径不再接受“固定场景 -> 固定专家”的硬编码主链。
+
+已验证当前调度依据为：
+
+- 专家注册表元数据
+- 专家知识域是否可用
+- 输入类型
+- 当前上下文
+
+并确认：
+
+- `lab_qa_expert` 可参与全局问答链
+- 专家知识域作为增强层使用
+- 新专家可通过补齐能力元数据进入候选，而不是修改核心场景映射
+
+### 7. Ollama 模型选择页
+
+已确认 GUI 中 Ollama 内置候选显示：
+
+- `qwen3.5:4b`
+- `qwen3.5:9b`
+- `qwen3.5:27b`
+- `qwen3.5:35b`
+
+该项已在 GUI 完整闭环与 GUI 发布验收中实际断言。
+
+## 本轮实际执行的关键验证
 
 ### 单元与结构回归
 
-已通过：
+已重跑并通过的关键模块包括：
 
-- `pc.testing.test_orchestrator_runtime`
+- `pc.testing.test_desktop_model_recommendations`
+- `pc.testing.test_ollama_model_catalog`
 - `pc.testing.test_orchestrator_model`
-- `pc.testing.test_expert_manager_voice_routing`
-- `pc.testing.test_monitoring_speech_policy`
 - `pc.testing.test_remote_voice_routing`
-- `pc.testing.test_gui_knowledge_dispatch`
-- `pc.testing.test_protocol_ws_port`
-- `pc.testing.test_pi_one_click_setup`
+- `pc.testing.test_expert_capability_facts`
+- `pc.testing.test_monitoring_speech_policy`
+- `pc.testing.test_expert_manager_voice_routing`
 - `pi.testing.test_voice_interaction`
 - `pi.testing.test_runtime_installer`
 - `pi.testing.test_pi_config`
-- `pi.testing.test_audio_replay`
-- `pi.testing.test_voice_model_path`
-- `pi.testing.test_model_downloader_offline`
 
-### 集成与闭环验证
+### 集成与正式验收链
 
-已通过：
+已重跑并通过：
 
 - `pc.testing.virtual_text_voice_closed_loop_test`
 - `pc.testing.gui_full_closed_loop_test`
 - `pc.testing.gui_release_acceptance_test`
-
-当前关键结果：
-
-- 单元与结构回归：`27` 项通过，`1` 项跳过
-- 关键集成闭环：`3` 项通过
-- 旧的 Ollama 直连依赖已从这 3 条验证主链中移除
-- GUI 关闭阶段的残留 Tk 回调异常已收口
-
-### 首启 smoke
-
-已通过：
-
-- 安装包安装成功
-- 首启后后台主进程成功拉起
-- 固定管家层后台准备链被触发
+- `pc.testing.installer_first_launch_smoke`
 
 ## 当前正式结论
 
-基于当前新安装链路，`NeuroLab Hub 1.0.0` 已完成一轮围绕正式安装包和统一编排主链的复验：
+基于当前新安装链路，`NeuroLab Hub 1.0.0` 已完成一轮从安装包到 `PC-Pi` 语音/视频闭环结束的正式复验：
 
 - 安装包可安装
-- 首次启动不会先卡死在固定模型加载上
-- GUI 主链先显示
-- 固定管家层模型在后台下载和后台预热
-- `PC-Pi` 语音/视频闭环已统一进入单一编排主链
-- Pi 侧仍保持轻前端角色
+- 首次启动 GUI 不因固定模型阻塞
+- 固定管家层后台准备链可观测
+- `PC-Pi` 语音闭环通过
+- `PC-Pi` 视频闭环通过
+- 应用内自治关键场景通过
+- 专家能力调度已按元数据与知识域收敛
+- Ollama 默认 Qwen3.5 候选显示正确
 
 ## 当前边界
 
-- 固定管家层首次后台预热可能持续较长时间，但不应阻塞 GUI
-- 多节点真实实机联调仍需继续推进，目前正式验证仍以虚拟 Pi 与文件驱动链路为主
+- 固定管家层首次预热可能持续较长时间，但不应阻塞 GUI
+- 多节点真实实机联调仍需继续推进，当前正式复验仍以虚拟 Pi 与文件驱动链路为主
 - 第三方语音扩展板兼容性问题不纳入当前版本正式通过项
 
 ## 当前正式交付文件
@@ -150,4 +193,3 @@
 - `D:\NeuroLab\release\NeuroLab-Hub-Setup-v1.0.0.exe`
 - `D:\NeuroLab\release\NeuroLab_Hub_1.0.0.zip`
 - `D:\NeuroLab\release\NeuroLab_Hub_1.0.0_fresh_validation.zip`
-- `D:\NeuroLab\release\NeuroLab_Hub_1.0.0_fresh_validation_20260329_r5.zip`

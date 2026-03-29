@@ -22,64 +22,6 @@ try:
 except Exception:
     knowledge_manager = None
 
-
-VOICE_KEYWORD_FALLBACKS = {
-    "safety.chem_safety_expert": (
-        "化学品",
-        "危化品",
-        "试剂",
-        "药品",
-        "标签",
-        "试剂瓶",
-        "药液",
-    ),
-    "equipment_ocr_expert": (
-        "ocr",
-        "读数",
-        "读一下",
-        "识别设备",
-        "仪表",
-        "屏幕",
-        "铭牌",
-        "标签内容",
-    ),
-    "lab_qa_expert": (
-        "什么",
-        "为什么",
-        "如何",
-        "介绍",
-        "说明",
-        "当前系统状态",
-        "系统状态",
-        "帮我看",
-        "问答",
-    ),
-    "nanofluidics.microfluidic_contact_angle_expert": (
-        "接触角",
-        "润湿",
-        "液滴",
-        "微流控",
-        "微纳",
-    ),
-    "nanofluidics.nanofluidics_multimodel_expert": (
-        "微纳",
-        "微流体",
-        "芯片流场",
-        "气泡",
-        "多模态分析",
-    ),
-}
-
-
-VOICE_KEYWORD_FALLBACKS_CN = {
-    "safety.chem_safety_expert": ("化学品", "危化品", "试剂", "药品", "标签", "试剂瓶", "药液"),
-    "equipment_ocr_expert": ("ocr", "读数", "读一下", "识别设备", "仪表", "屏幕", "铭牌", "标签内容"),
-    "lab_qa_expert": ("什么", "为什么", "如何", "介绍", "说明", "当前系统状态", "系统状态", "帮我看", "问答"),
-    "nanofluidics.microfluidic_contact_angle_expert": ("接触角", "润湿", "液滴", "微流控", "微纳"),
-    "nanofluidics.nanofluidics_multimodel_expert": ("微纳", "微流体", "芯片流场", "气泡", "多模态分析"),
-}
-
-
 class ExpertManager:
     def __init__(self) -> None:
         self.experts: Dict[str, BaseExpert] = {}
@@ -167,6 +109,16 @@ class ExpertManager:
         for expert in self.experts.values():
             yield expert, self._definition_for_expert(expert)
 
+    def _sorted_loaded_with_definition(self) -> List[Tuple[BaseExpert, Any]]:
+        rows = list(self._iter_loaded_with_definition())
+        rows.sort(
+            key=lambda item: (
+                int(getattr(item[1], "priority", 100) if item[1] is not None else 100),
+                str(item[0].expert_code or ""),
+            )
+        )
+        return rows
+
     def _allowed_closed_loop_events(self, expert_code: str) -> set[str]:
         definition = get_expert_definition(expert_code)
         if definition is None:
@@ -210,7 +162,6 @@ class ExpertManager:
         if definition is None:
             return False
         keywords = list(tuple(getattr(definition, "voice_keywords", ()) or ()))
-        keywords.extend(VOICE_KEYWORD_FALLBACKS_CN.get(getattr(definition, "code", ""), ()))
         if not keywords:
             return False
 
@@ -225,9 +176,58 @@ class ExpertManager:
                 return True
         return False
 
+    def _knowledge_scope_rows(self) -> Dict[str, Dict[str, Any]]:
+        if knowledge_manager is None:
+            return {}
+        try:
+            return {
+                str(row.get("scope") or ""): row
+                for row in knowledge_manager.list_scopes(include_known_experts=True)
+                if isinstance(row, dict)
+            }
+        except Exception:
+            return {}
+
+    def list_expert_capability_facts(self) -> List[Dict[str, Any]]:
+        scope_rows = self._knowledge_scope_rows()
+        loaded_by_code = {expert.expert_code: expert for expert in self.experts.values()}
+        rows: List[Dict[str, Any]] = []
+        for definition in list_expert_definitions():
+            scope_name = definition.scope
+            scope_row = scope_rows.get(scope_name, {})
+            loaded = loaded_by_code.get(definition.code)
+            rows.append(
+                {
+                    "expert_code": definition.code,
+                    "display_name": definition.display_name,
+                    "description": definition.description,
+                    "trigger_mode": definition.trigger_mode,
+                    "media_types": list(definition.media_types),
+                    "voice_keywords": list(definition.voice_keywords),
+                    "event_names": list(definition.event_names),
+                    "priority": int(definition.priority),
+                    "requires_frame": bool(definition.requires_frame),
+                    "knowledge_required": bool(definition.knowledge_required),
+                    "knowledge_scope": scope_name,
+                    "knowledge_ready": bool(
+                        scope_row.get("doc_count", 0)
+                        or scope_row.get("vector_ready")
+                        or scope_row.get("structured_ready")
+                    ),
+                    "knowledge_doc_count": int(scope_row.get("doc_count", 0) or 0),
+                    "vector_ready": bool(scope_row.get("vector_ready", False)),
+                    "structured_ready": bool(scope_row.get("structured_ready", False)),
+                    "default_speak_policy": definition.default_speak_policy,
+                    "summary_style": definition.summary_style,
+                    "loaded": loaded is not None,
+                }
+            )
+        rows.sort(key=lambda item: (int(item["priority"]), str(item["expert_code"])))
+        return rows
+
     def list_resident_stream_groups(self, media_type: str = "video") -> Dict[str, List[str]]:
         groups: Dict[str, List[str]] = defaultdict(list)
-        for expert, definition in self._iter_loaded_with_definition():
+        for expert, definition in self._sorted_loaded_with_definition():
             if definition is None:
                 continue
             if getattr(definition, "trigger_mode", "resident") not in {"resident", "both"}:
@@ -239,7 +239,7 @@ class ExpertManager:
 
     def get_aggregated_edge_policy(self) -> Dict[str, Any]:
         policies: List[Dict[str, Any]] = []
-        for expert, definition in self._iter_loaded_with_definition():
+        for expert, definition in self._sorted_loaded_with_definition():
             if definition is None:
                 continue
             if getattr(definition, "trigger_mode", "resident") not in {"resident", "both"}:
@@ -433,7 +433,7 @@ class ExpertManager:
         forced_codes = {str(item).strip() for item in (forced_expert_codes or []) if str(item).strip()}
         matched_codes: List[str] = []
         group_results: Dict[str, str] = {}
-        for expert, definition in self._iter_loaded_with_definition():
+        for expert, definition in self._sorted_loaded_with_definition():
             if definition is None:
                 continue
             if getattr(definition, "trigger_mode", "resident") not in {"voice", "both"}:

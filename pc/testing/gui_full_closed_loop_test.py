@@ -418,6 +418,15 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
             )
             add_step("self_check_completed", items=len(app.current_state.get("self_check", [])))
 
+            app.backend_combo.set(app.backend_reverse["ollama"])
+            app._update_model_choices(selected_model="qwen3.5:4b")
+            available_models = set(str(item) for item in app.model_combo.cget("values"))
+            required_models = {"qwen3.5:4b", "qwen3.5:9b", "qwen3.5:27b", "qwen3.5:35b"}
+            missing_models = sorted(required_models - available_models)
+            if missing_models:
+                raise AssertionError(f"Ollama 默认候选缺失: {missing_models}")
+            add_step("ollama_models_checked", available_count=len(available_models))
+
             app.expert_tree.selection_set("safety.chem_safety_expert")
             app._on_expert_tree_select()
             with patch("tkinter.filedialog.askopenfilenames", return_value=[assets["chem_doc"]]):

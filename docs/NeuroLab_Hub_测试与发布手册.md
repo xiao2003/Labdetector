@@ -16,6 +16,7 @@
 
 当前版本重点覆盖：
 
+- 安装包交付层
 - 新机首启
 - 真实安装包首启 smoke
 - GUI 核心模块主链
@@ -28,6 +29,8 @@
 - 多节点 `PC-Pi` 虚拟闭环
 - 音频文件驱动的 Pi 本地识别上行
 - 视觉事件 -> 专家分析 -> 结果回传 -> ACK
+- 应用内自治关键动作
+- 专家能力驱动调度
 
 ## 三、固定管家层运行时说明
 
@@ -84,7 +87,86 @@
 
 ## 四、测试方法
 
-### 4.1 代码与最小回归
+### 4.0 正式验收范围
+
+当前正式验收不是局部函数验证，而是从安装包开始，到 `PC-Pi` 语音/视频闭环结束，覆盖 6 层架构、每层功能与层间协作。
+
+正式验收层次固定为：
+
+1. 安装包交付层
+2. 首次启动与运行时层
+3. 交互与展示层
+4. 管家编排层
+5. 执行与知识层
+6. 通信与节点管理层
+7. Pi 轻前端边缘层
+8. `PC-Pi` 语音闭环
+9. `PC-Pi` 视频闭环
+10. 应用内自治
+
+### 4.1 分层验收矩阵
+
+#### 安装包交付层
+
+- `Setup.exe` 安装成功
+- 安装后主程序入口存在
+- 安装目录结构正确
+- 固定管家层 runtime 随安装包存在
+- 模型资产清单存在
+
+#### 首次启动与运行时层
+
+- GUI 首次启动不长时间等待
+- 固定管家层后台准备链被触发
+- 运行时状态正确写入：
+  - `not_installed`
+  - `downloading`
+  - `warming_up`
+  - `ready`
+  - `download_failed`
+- 未就绪前 `planner_backend=deterministic`
+- 就绪后 `planner_backend=embedded_model`
+
+#### 交互与展示层
+
+- 页面切换正常
+- 事件流展示可用
+- 模型选择可用
+- Ollama 候选显示正确
+- 用户主动触发的知识问答、系统状态查询、专家调用入口可用
+
+#### 管家编排层
+
+- 语音文本统一进入 `orchestrator.plan_voice_command()`
+- 边缘事件统一进入 `orchestrator.plan_edge_event()`
+- 不存在基于固定场景名的硬编码专家主链
+- 管家层未就绪时规则链可用
+- 管家层就绪后嵌入模型链可用
+
+#### 执行与知识层
+
+- 全局知识问答可用
+- 专家知识域增强可用
+- 执行层模型切换后路由不变、内容可变
+- `lab_qa_expert` 可正常参与全局链路
+
+#### 通信与节点管理层
+
+- PC 与 Pi 的发现、连接、状态同步可用
+- 远端消息统一进入 orchestrator
+- 回传文本、播报、日志摘要按 `pi_id` 隔离
+- ACK 正常
+
+#### Pi 轻前端边缘层
+
+- 唤醒词与唤醒别名可用
+- 轻量 ASR 输出正确
+- 本地 TTS 正常
+- `停止播报` 可本地打断
+- 低频视觉前置检测可上行事件
+- `pi_cli status` 正确反映轻前端角色
+
+### 4.2 代码与最小回归
 
 推荐至少执行：
 
@@ -92,7 +174,7 @@
 python -m unittest   pc.testing.test_orchestrator_runtime   pc.testing.test_orchestrator_model   pc.testing.test_expert_manager_voice_routing   pc.testing.test_monitoring_speech_policy   pc.testing.test_remote_voice_routing   pi.testing.test_voice_interaction   pi.testing.test_runtime_installer   pi.testing.test_pi_config
 ```
 
-### 4.2 Pi 语音闭环
+### 4.3 Pi 语音闭环
 
 无真实语音板时，使用音频文件驱动验证：
 
@@ -107,7 +189,7 @@ python -m unittest   pc.testing.test_orchestrator_runtime   pc.testing.test_orch
 - 执行层模型或专家执行链正常回传
 - Pi 本地播报与停止播报正常
 
-### 4.3 视频闭环
+### 4.4 视频闭环
 
 验证目标：
 
@@ -116,7 +198,7 @@ python -m unittest   pc.testing.test_orchestrator_runtime   pc.testing.test_orch
 - 强告警自动播报
 - 用户主动请求时触发关键帧上传和专家分析
 
-### 4.4 首启体验验证
+### 4.5 首启体验验证
 
 正式验证要求：
 
@@ -141,7 +223,32 @@ python -m unittest   pc.testing.test_orchestrator_runtime   pc.testing.test_orch
 
 当前真实首启 smoke 已验证通过，报告文件为：
 
-- `release/smoke_install_20260329_124300.json`
+- `release/smoke_install_formal_acceptance_20260329.json`
+
+### 4.6 专家能力驱动调度验证
+
+当前正式要求是：专家调度依据专家元数据、知识域可用性、输入类型与上下文，不依赖固定场景硬编码。
+
+本轮至少验证：
+
+- `expert_registry` 中的能力元数据可被统一读取
+- 专家知识域缺失时，系统会降为“无知识增强执行”，而不是误判专家不存在
+- 新增专家能力事实后，无需修改核心路由即可进入候选
+
+### 4.7 Ollama 默认模型清单验证
+
+当前 GUI 中 Ollama 内置候选必须显示：
+
+- `qwen3.5:4b`
+- `qwen3.5:9b`
+- `qwen3.5:27b`
+- `qwen3.5:35b`
+
+验证要求：
+
+- 本地无模型时回退到该默认列表
+- 本地有 `ollama list` 结果时优先显示本机已安装模型
+- 自定义模型入口仍可用
 
 ## 五、正式发布方式
 
@@ -175,6 +282,8 @@ Release 正文应明确说明：
 - Pi 轻前端角色明确
 - 语音与视频闭环主链已收敛为统一编排入口
 - 真实安装包首启 smoke 已验证“GUI 先显示 + 模型后台准备”
+- GUI Ollama 模型选择已验证包含 `qwen3.5:4b / 9b / 27b / 35b`
+- 专家调度已验证以专家元数据与知识域可用性为事实来源
 
 本轮关键修复点已经纳入正式验证口径：
 
@@ -183,22 +292,36 @@ Release 正文应明确说明：
 - GUI 闭环测试已隔离固定管家层状态目录，避免污染真实用户目录
 - `desktop_app.py` 已在窗口关闭阶段增加流刷新与状态刷新保护，避免测试退出后残留 Tk 回调异常
 
-当前验证口径明确覆盖：
+当前本轮实际已重跑并通过的正式验收主链包括：
 
-1. 固定管家层运行时单测
-2. 执行层与管家层职责边界单测
+1. 固定管家层运行时与编排单测
+2. 专家语音路由与能力事实单测
 3. 监控播报策略单测
 4. 远端 Pi 语音路由单测
-5. Pi 轻前端配置单测
-6. 音频文件驱动语音闭环
-7. GUI 完整闭环
-8. GUI 发布验收
-9. 安装包首启 smoke
+5. Pi 轻前端配置与语音线程单测
+6. Ollama 默认模型清单与 GUI 推荐列表单测
+7. 音频文件驱动语音闭环
+8. GUI 完整闭环
+9. GUI 发布验收
+10. 安装包首启 smoke
 
-当前最小回归与关键集成结果为：
+本轮关键报告文件为：
 
-- 单元与结构回归：`27` 项通过，`1` 项跳过
-- 关键集成闭环：`3` 项通过
+- `release/smoke_install_formal_acceptance_20260329.json`
+- `release/formal_acceptance_virtual_closed_loop_20260329.json`
+- `release/gui_full_closed_loop_20260329.json`
+- `release/gui_release_acceptance_20260329.json`
+
+当前正式通过标准已经满足：
+
+- 安装包交付通过
+- 首次启动 smoke 通过
+- 6 层关键功能与层间协作通过
+- `PC-Pi` 语音闭环通过
+- `PC-Pi` 视频闭环通过
+- 应用内自治关键场景通过
+- Ollama 模型清单修正通过
+- 文档与 Release 应保持一致
 
 ## 七、文档入口
 

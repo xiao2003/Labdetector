@@ -318,10 +318,15 @@ def list_local_adapter_models() -> List[str]:
 
 
 def configured_model_catalog() -> Dict[str, List[str]]:
-    catalog = {"ollama": list_ollama_models()}
-    if not catalog["ollama"]:
-        raw_defaults = get_config("ollama.default_models", ", ".join(DEFAULT_OLLAMA_MODELS))
-        catalog["ollama"] = [item.strip() for item in str(raw_defaults).split(",") if item.strip()]
+    raw_defaults = get_config("ollama.default_models", ", ".join(DEFAULT_OLLAMA_MODELS))
+    default_models = [item.strip() for item in str(raw_defaults).split(",") if item.strip()]
+    local_ollama_models = list_ollama_models()
+    merged_ollama_models: List[str] = []
+    for item in list(local_ollama_models) + default_models:
+        token = str(item or "").strip()
+        if token and token not in merged_ollama_models:
+            merged_ollama_models.append(token)
+    catalog = {"ollama": merged_ollama_models}
     catalog["local_adapter"] = list_local_adapter_models()
     for backend, preset in PROVIDER_PRESETS.items():
         if backend in {"ollama", "local_adapter"}:

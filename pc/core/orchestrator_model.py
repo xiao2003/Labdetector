@@ -3,19 +3,23 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
-from pc.core.expert_registry import list_expert_definitions
+from pc.core.expert_manager import expert_manager
 from pc.core.orchestrator_runtime import OrchestratorRuntimeError, invoke_orchestrator_model
 
 
 def _expert_catalog_text() -> str:
     lines: List[str] = []
-    for item in list_expert_definitions():
-        voice_keywords = "、".join(item.voice_keywords[:8]) if item.voice_keywords else "无"
-        event_names = "、".join(item.event_names[:6]) if item.event_names else "无"
+    for item in expert_manager.list_expert_capability_facts():
+        voice_keywords = "、".join(item.get("voice_keywords", [])[:8]) if item.get("voice_keywords") else "无"
+        event_names = "、".join(item.get("event_names", [])[:6]) if item.get("event_names") else "无"
+        media_types = "、".join(item.get("media_types", [])[:4]) if item.get("media_types") else "无"
         lines.append(
-            f"- code={item.code}; name={item.display_name}; trigger_mode={item.trigger_mode}; "
-            f"voice_keywords={voice_keywords}; event_names={event_names}; "
-            f"default_speak_policy={item.default_speak_policy}"
+            f"- code={item.get('expert_code')}; name={item.get('display_name')}; "
+            f"trigger_mode={item.get('trigger_mode')}; loaded={item.get('loaded')}; "
+            f"media_types={media_types}; voice_keywords={voice_keywords}; event_names={event_names}; "
+            f"knowledge_required={item.get('knowledge_required')}; knowledge_scope={item.get('knowledge_scope')}; "
+            f"knowledge_ready={item.get('knowledge_ready')}; priority={item.get('priority')}; "
+            f"default_speak_policy={item.get('default_speak_policy')}"
         )
     return "\n".join(lines)
 
@@ -36,12 +40,16 @@ def _voice_prompt(command: str, source: str, context: Optional[Dict[str, Any]] =
         "- answer_from_knowledge\n"
         "- call_expert_voice\n"
         "- query_system_status\n"
+        "- start_monitoring\n"
+        "- stop_monitoring\n"
+        "- open_view\n"
         "- speak_text\n"
         "- suppress_speech\n\n"
         "JSON 模板:\n"
         "{"
         "\"intent\":\"call_expert_voice\","
         "\"expert_codes\":[\"expert.code\"],"
+        "\"app_intent\":\"\","
         "\"need_knowledge\":false,"
         "\"speak_policy\":\"speak_now\","
         "\"summary\":\"给用户的简短回答\""
@@ -93,6 +101,7 @@ def _normalize_plan(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "intent": intent,
         "expert_codes": expert_codes,
+        "app_intent": str(payload.get("app_intent", "") or "").strip(),
         "need_knowledge": bool(payload.get("need_knowledge", False)),
         "speak_policy": str(payload.get("speak_policy", "") or "").strip(),
         "summary": str(payload.get("summary", "") or "").strip(),

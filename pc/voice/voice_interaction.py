@@ -18,13 +18,12 @@ from typing import Any, Callable, Optional
 import numpy as np
 
 from pc.app_identity import resource_path
-from pc.core.ai_backend import ask_assistant_with_rag, default_model_for_backend
+from pc.core.ai_backend import default_model_for_backend
 from pc.core.config import get_config
 from pc.core.logger import console_error, console_info
 from pc.core.orchestrator import orchestrator
 from pc.core.runtime_assets import sensevoice_model_dir, vosk_model_dir
 from pc.core.voice_round_archive import get_voice_round_archive
-from pc.knowledge_base.rag_engine import knowledge_manager
 
 try:
     from pc.core.tts import speak_async
@@ -85,33 +84,6 @@ except ImportError as exc:
     OpenWakeWordModel = None
     OPENWAKEWORD_IMPORT_ERROR = str(exc)
     console_error(f"[VOICE] openWakeWord 导入失败: {exc}")
-
-
-def _common_memory_engine():
-    return knowledge_manager.get_scope("common")
-
-
-def _build_voice_rag_context(command: str) -> str:
-    try:
-        bundle = knowledge_manager.build_scope_bundle(command, "expert.lab_qa_expert", top_k=3)
-    except Exception as exc:
-        console_error(f"语音知识库检索失败: {exc}")
-        return ""
-
-    parts: list[str] = []
-    context = str(bundle.get("context") or "").strip()
-    if context:
-        parts.append(context)
-
-    rows = bundle.get("structured_rows") or []
-    if rows:
-        detail_lines = []
-        for row in rows[:3]:
-            scope_name = row.get("scope_title", row.get("scope", "知识库"))
-            detail_lines.append(f"[{scope_name}] {row.get('name', '')}: {str(row.get('value', ''))[:120]}")
-        parts.append("结构化知识\n" + "\n".join(detail_lines))
-
-    return "\n\n".join(part for part in parts if part.strip())
 
 
 class VoiceInteractionConfig:
@@ -811,25 +783,23 @@ class VoiceInteraction:
             for keyword in ("记住", "记一下", "记录一下", "记录", "帮我记录", "请记录", "记到知识库")
         )
 
-    def _match_local_command_intent(self, text: str) -> str | None:
-        normalized = self._normalize_text(text)
-        command_map = {
-            "start_monitor": ("启动监控", "开始监控", "打开监控", "开始巡检", "开始检测"),
-            "stop_monitor": ("停止监控", "结束监控", "关闭监控", "停止巡检", "停止检测"),
-            "run_self_check": ("系统自检", "运行自检", "执行自检", "开始自检"),
-            "open_expert_center": ("打开专家中心", "专家中心", "打开专家", "专家管理"),
-            "open_knowledge_center": ("打开知识中心", "知识中心", "打开知识库", "知识库管理"),
-            "open_model_config": ("打开模型配置", "模型配置", "模型服务", "打开模型服务"),
-            "open_training_center": ("打开训练中心", "训练中心", "打开训练台", "训练工作台"),
-            "open_manual": ("打开使用手册", "使用手册", "打开手册", "软件说明"),
-            "open_about": ("打开关于系统", "关于系统", "关于软件", "打开关于"),
-            "toggle_sidebar": ("切换侧栏", "折叠侧栏", "展开侧栏", "切换界面侧栏"),
-            "shutdown_app": ("关闭软件", "退出软件", "关闭系统", "退出程序"),
-        }
-        for intent, keywords in command_map.items():
-            if any(self._normalize_text(keyword) in normalized for keyword in keywords):
-                return intent
-        return None
+    def _execute_orchestrator_actions(self, text: str, actions: list[dict[str, Any]]) -> str:
+        if self.local_command_handler is None:
+            return ""
+        for action in actions:
+            if str(action.get("type") or "").strip() != "app_action":
+                continue
+            intent = str(action.get("intent") or "").strip()
+            if not intent:
+                continue
+            try:
+                response = str(self.local_command_handler(text, intent) or "").strip()
+            except Exception as exc:
+                console_error(f"[VOICE] 应用内自治动作执行失败: {exc}")
+                return f"应用内自治动作执行失败：{exc}"
+            if response:
+                return response
+        return ""
 
     def process_text_command(
         self,
@@ -872,20 +842,6 @@ class VoiceInteraction:
                 keep_active = False
                 return response
 
-            local_intent = self._match_local_command_intent(text)
-            if local_origin and local_intent and self.local_command_handler is not None:
-                try:
-                    response = str(self.local_command_handler(text, local_intent) or "").strip()
-                except Exception as exc:
-                    response = f"本地界面指令执行失败：{exc}"
-                    console_error(f"[VOICE] 本地界面指令执行失败: {exc}")
-                if not response:
-                    response = "好的，界面指令已执行。"
-                keep_active = True
-                self._deliver_response(response, speak_response=speak_response, reply_callback=reply_callback)
-                self._record_round(text, response, source, {**round_meta, "local_intent": local_intent})
-                return response
-
             if self._is_note_command(text):
                 note_content = self._extract_note_content(text)
                 if note_content:
@@ -904,7 +860,8 @@ class VoiceInteraction:
                 model_name=self._current_execution_model(),
                 context=round_meta,
             )
-            response = str(orchestrated.text or "").strip()
+            action_response = self._execute_orchestrator_actions(text, list(orchestrated.actions or []))
+            response = action_response or str(orchestrated.text or "").strip()
             if not response:
                 response = "当前未生成有效响应，请稍后重试。"
             keep_active = True

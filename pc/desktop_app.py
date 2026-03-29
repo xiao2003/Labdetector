@@ -1142,7 +1142,7 @@ class DesktopApp:
         ordered: List[str] = []
         seen: set[str] = set()
         for name in preferred:
-            if name in catalog_models and name not in seen:
+            if name and name not in seen:
                 ordered.append(name)
                 seen.add(name)
         current_default = str(self.current_state.get("session", {}).get("model") or "").strip()
@@ -1155,8 +1155,6 @@ class DesktopApp:
         for extra in catalog_models:
             if extra in seen:
                 continue
-            if len(ordered) >= 5:
-                break
             ordered.append(extra)
             seen.add(extra)
         return ordered

@@ -236,9 +236,6 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
             if event_name == "危化品识别"
             else "PPE 规范提醒：检测到人员但未完整佩戴实验服、手套和护目镜。",
         ), patch("pc.core.orchestrator.ask_assistant_with_rag", lambda frame, question, rag_context, model_name: f"离线答复：已收到指令“{question}”，当前系统运行正常。"), patch(
-            "pc.voice.voice_interaction._build_voice_rag_context",
-            lambda _command: "",
-        ), patch(
             "pc.voice.voice_interaction.VoiceInteraction._extract_knowledge_with_llm",
             lambda self, transcript: [],
         ), patch(
@@ -316,6 +313,11 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
                 "selected_model": app.model_combo.get(),
                 "available_models": list(app.model_combo.cget("values"))[:12],
             }
+            available_models = set(str(item) for item in app.model_combo.cget("values"))
+            required_models = {"qwen3.5:4b", "qwen3.5:9b", "qwen3.5:27b", "qwen3.5:35b"}
+            missing_models = sorted(required_models - available_models)
+            if missing_models:
+                raise AssertionError(f"Ollama 默认候选缺失: {missing_models}")
             add_step("model_selected", selected_model=app.model_combo.get())
 
             with patch("tkinter.filedialog.askopenfilenames", return_value=[assets["common_doc"]]):

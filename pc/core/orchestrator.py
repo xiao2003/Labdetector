@@ -23,13 +23,8 @@ class OrchestratorResult:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-def build_voice_rag_context(command: str) -> str:
-    """为语音问答构建最小知识上下文。"""
-    try:
-        bundle = knowledge_manager.build_scope_bundle(command, "expert.lab_qa_expert", top_k=3)
-    except Exception:
-        return ""
-
+def _build_rag_text(bundle: Dict[str, Any]) -> str:
+    """把知识作用域检索结果整理成最小上下文。"""
     parts: List[str] = []
     context = str(bundle.get("context") or "").strip()
     if context:
@@ -44,6 +39,98 @@ def build_voice_rag_context(command: str) -> str:
         parts.append("结构化知识\n" + "\n".join(lines))
 
     return "\n\n".join(part for part in parts if str(part).strip())
+
+
+def _resolve_knowledge_scope(expert_codes: Optional[List[str]] = None) -> str:
+    """根据专家能力事实优先选择已就绪的专家知识域。"""
+    fact_rows = {
+        str(item.get("expert_code") or ""): item
+        for item in expert_manager.list_expert_capability_facts()
+        if str(item.get("expert_code") or "").strip()
+    }
+    for code in expert_codes or []:
+        fact = fact_rows.get(str(code or "").strip())
+        if not fact:
+            continue
+        if not bool(fact.get("loaded", False)):
+            continue
+        if not bool(fact.get("knowledge_required", False)):
+            continue
+        if not bool(fact.get("knowledge_ready", False)):
+            continue
+        scope_name = str(fact.get("knowledge_scope") or "").strip()
+        if scope_name:
+            return scope_name
+    return "common"
+
+
+def build_voice_rag_context(command: str, *, expert_codes: Optional[List[str]] = None) -> tuple[str, str]:
+    """为语音问答构建与专家能力事实一致的知识上下文。"""
+    scope_name = _resolve_knowledge_scope(expert_codes)
+    try:
+        bundle = knowledge_manager.build_scope_bundle(command, scope_name, top_k=3)
+    except Exception:
+        return "", scope_name
+    return _build_rag_text(bundle), scope_name
+
+
+APP_ACTION_RULES: Dict[str, Dict[str, Any]] = {
+    "start_monitor": {
+        "intent": "start_monitoring",
+        "keywords": ("启动监控", "开始监控", "打开监控", "开始巡检", "开始检测"),
+        "response": "好的，正在启动监控。",
+    },
+    "stop_monitor": {
+        "intent": "stop_monitoring",
+        "keywords": ("停止监控", "结束监控", "关闭监控", "停止巡检", "停止检测"),
+        "response": "好的，正在停止监控。",
+    },
+    "run_self_check": {
+        "intent": "query_system_status",
+        "keywords": ("系统自检", "运行自检", "执行自检", "开始自检"),
+        "response": "好的，正在执行系统自检。",
+    },
+    "open_expert_center": {
+        "intent": "open_view",
+        "keywords": ("打开专家中心", "专家中心", "打开专家", "专家管理"),
+        "response": "好的，正在打开专家中心。",
+    },
+    "open_knowledge_center": {
+        "intent": "open_view",
+        "keywords": ("打开知识中心", "知识中心", "打开知识库", "知识库管理"),
+        "response": "好的，正在打开知识中心。",
+    },
+    "open_model_config": {
+        "intent": "open_view",
+        "keywords": ("打开模型配置", "模型配置", "模型服务", "打开模型服务"),
+        "response": "好的，正在打开模型配置。",
+    },
+    "open_training_center": {
+        "intent": "open_view",
+        "keywords": ("打开训练中心", "训练中心", "打开训练台", "训练工作台"),
+        "response": "好的，正在打开训练中心。",
+    },
+    "open_manual": {
+        "intent": "open_view",
+        "keywords": ("打开使用手册", "使用手册", "打开手册", "软件说明"),
+        "response": "好的，正在打开使用手册。",
+    },
+    "open_about": {
+        "intent": "open_view",
+        "keywords": ("打开关于系统", "关于系统", "关于软件", "打开关于"),
+        "response": "好的，正在打开关于系统。",
+    },
+    "toggle_sidebar": {
+        "intent": "open_view",
+        "keywords": ("切换侧栏", "折叠侧栏", "展开侧栏", "切换界面侧栏"),
+        "response": "好的，正在切换界面侧栏。",
+    },
+    "shutdown_app": {
+        "intent": "suppress_speech",
+        "keywords": ("关闭软件", "退出软件", "关闭系统", "退出程序"),
+        "response": "好的，正在关闭软件。",
+    },
+}
 
 
 class Orchestrator:
@@ -82,6 +169,39 @@ class Orchestrator:
             "model_path": status.model_path,
         }
 
+    @staticmethod
+    def _normalize_text(text: str) -> str:
+        normalized = str(text or "").strip().lower().replace(" ", "")
+        for filler in ("一下子", "一下", "帮我", "请帮我", "请", "看看", "帮忙"):
+            normalized = normalized.replace(filler, "")
+        return normalized
+
+    def _detect_app_action(self, text: str) -> Optional[Dict[str, Any]]:
+        normalized = self._normalize_text(text)
+        for action_name, rule in APP_ACTION_RULES.items():
+            for keyword in rule.get("keywords", ()):
+                if self._normalize_text(keyword) in normalized:
+                    return {
+                        "action_name": action_name,
+                        "intent": str(rule.get("intent") or "").strip(),
+                        "response": str(rule.get("response") or "").strip(),
+                    }
+        return None
+
+    @staticmethod
+    def _result_for_app_action(action_name: str, response_text: str, planner_backend: str) -> OrchestratorResult:
+        return OrchestratorResult(
+            intent="app_action",
+            text=response_text,
+            actions=[{"type": "app_action", "intent": action_name}],
+            metadata={
+                "matched_expert_codes": [],
+                "has_frame": False,
+                "rag_enabled": False,
+                "planner_backend": planner_backend,
+            },
+        )
+
     def plan_voice_command(
         self,
         command: str,
@@ -105,8 +225,26 @@ class Orchestrator:
 
         model_plan = infer_voice_plan(text, source=source, context=route_context)
         planner_backend = "embedded_model" if model_plan else "deterministic"
+        model_intent = str(model_plan.get("intent", "") or "").strip() if model_plan else ""
+        model_app_action = str(model_plan.get("app_intent", "") or "").strip() if model_plan else ""
         forced_codes = list(model_plan.get("expert_codes") or []) if model_plan else []
         need_knowledge = bool(model_plan.get("need_knowledge", False)) if model_plan else False
+
+        if model_app_action and model_app_action in APP_ACTION_RULES:
+            return self._result_for_app_action(
+                model_app_action,
+                str(model_plan.get("summary", "") or APP_ACTION_RULES[model_app_action]["response"]).strip(),
+                planner_backend,
+            )
+
+        if not model_plan:
+            detected_action = self._detect_app_action(text)
+            if detected_action is not None:
+                return self._result_for_app_action(
+                    str(detected_action["action_name"]),
+                    str(detected_action["response"]),
+                    planner_backend,
+                )
 
         expert_bundle = expert_manager.route_voice_command(
             text,
@@ -134,7 +272,7 @@ class Orchestrator:
                 },
             )
 
-        if model_plan and str(model_plan.get("intent", "") or "").strip() == "query_system_status":
+        if model_intent == "query_system_status":
             return OrchestratorResult(
                 intent="query_system_status",
                 text=str(model_plan.get("summary", "") or "当前系统状态查询请求已接收。").strip(),
@@ -147,7 +285,13 @@ class Orchestrator:
                 },
             )
 
-        rag_context = build_voice_rag_context(text) if need_knowledge or not expert_answer else ""
+        knowledge_scope = "common"
+        rag_context = ""
+        if need_knowledge or not expert_answer:
+            rag_context, knowledge_scope = build_voice_rag_context(
+                text,
+                expert_codes=list(expert_bundle.get("matched_expert_codes") or forced_codes),
+            )
         answer = str(
             ask_assistant_with_rag(
                 frame=frame,
@@ -165,6 +309,7 @@ class Orchestrator:
                 "matched_expert_codes": [],
                 "has_frame": bool(frame is not None),
                 "rag_enabled": bool(rag_context.strip()),
+                "knowledge_scope": knowledge_scope,
                 "planner_backend": planner_backend,
                 "planner_summary": str(model_plan.get("summary", "") or "") if model_plan else "",
             },

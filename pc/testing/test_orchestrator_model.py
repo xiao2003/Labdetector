@@ -12,6 +12,7 @@ class OrchestratorModelTests(unittest.TestCase):
             return_value={
                 "intent": "call_expert_voice",
                 "expert_codes": "safety.ppe_expert",
+                "app_intent": "",
                 "need_knowledge": True,
                 "speak_policy": "speak_now",
                 "summary": "查看 PPE 风险",
@@ -22,8 +23,27 @@ class OrchestratorModelTests(unittest.TestCase):
         self.assertIsNotNone(plan)
         self.assertEqual(plan["intent"], "call_expert_voice")
         self.assertEqual(plan["expert_codes"], ["safety.ppe_expert"])
+        self.assertEqual(plan["app_intent"], "")
         self.assertTrue(plan["need_knowledge"])
         self.assertEqual(plan["speak_policy"], "speak_now")
+
+    def test_infer_voice_plan_preserves_app_action_intent(self) -> None:
+        with patch(
+            "pc.core.orchestrator_model.invoke_orchestrator_model",
+            return_value={
+                "intent": "open_view",
+                "app_intent": "open_training_center",
+                "expert_codes": [],
+                "need_knowledge": False,
+                "speak_policy": "speak_now",
+                "summary": "好的，正在打开训练中心。",
+            },
+        ):
+            plan = infer_voice_plan("打开训练中心", source="pc_local", context={})
+
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan["intent"], "open_view")
+        self.assertEqual(plan["app_intent"], "open_training_center")
 
     def test_infer_edge_plan_returns_none_when_runtime_unavailable(self) -> None:
         with patch(
