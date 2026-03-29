@@ -289,6 +289,19 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
             )
             report["windows"] = _collect_window_state(app)
             add_step("windows_opened", **report["windows"])
+            app._show_about_window()
+            _wait_for(
+                pump,
+                lambda: app.about_window is not None and app.about_window.winfo_exists(),
+                timeout=10,
+                message="关于系统窗口未打开",
+            )
+            if app.copyright_window is not None and app.copyright_window.winfo_exists():
+                raise AssertionError("关于系统仍会额外弹出版权窗口")
+            if str(app.priority_event_detail_var.get()).strip():
+                raise AssertionError("默认高优事件说明仍显示了多余的小字")
+            if app.priority_event_detail_label is not None and app.priority_event_detail_label.winfo_ismapped():
+                raise AssertionError("默认高优事件详情标签未隐藏")
 
             app._run_self_check()
             _wait_for(

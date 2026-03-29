@@ -56,6 +56,11 @@ class DesktopLogFilterTests(unittest.TestCase):
         self.assertIn("危化品专家", title)
         self.assertIn("HF", detail)
 
+    def test_priority_event_empty_state_hides_secondary_hint(self) -> None:
+        title, detail = _format_priority_event_card(None)
+        self.assertIn("最新高优事件", title)
+        self.assertEqual(detail, "")
+
     def test_kb_import_feedback_uses_business_result_text(self) -> None:
         summary, dialog = _format_kb_import_feedback(
             {

@@ -138,7 +138,7 @@ def _format_priority_event_card(item: Dict[str, str] | None) -> tuple[str, str]:
     if item is None:
         return (
             "最新高优事件：当前无需要关注的高优事件",
-            "系统将持续监控强告警、节点异常和需要人工关注的自治动作结果。",
+            "",
         )
     category = str(item.get("category") or "运行状态")
     level = str(item.get("level") or "INFO")
@@ -301,7 +301,7 @@ class DesktopApp:
         self.log_status_var = tk.StringVar(value="等待系统事件")
         self.log_filter_var = tk.StringVar(value=LOG_FILTER_OPTIONS[0])
         self.priority_event_title_var = tk.StringVar(value="最新高优事件：当前无需要关注的高优事件")
-        self.priority_event_detail_var = tk.StringVar(value="系统将持续监控强告警、节点异常和需要人工关注的自治动作结果。")
+        self.priority_event_detail_var = tk.StringVar(value="")
         self.log_row_keys: List[str] = []
         self.log_rows: List[Dict[str, str]] = []
         self.log_filter_combo: ttk.Combobox | None = None
@@ -320,6 +320,7 @@ class DesktopApp:
         self.hero_message_label: ttk.Label | None = None
         self.info_description_label: ttk.Label | None = None
         self.info_copyright_label: ttk.Label | None = None
+        self.priority_event_detail_label: ttk.Label | None = None
         self.resize_after_id: str | None = None
         self.window_state_after_id: str | None = None
         self.stream_refresh_after_id: str | None = None
@@ -586,7 +587,14 @@ class DesktopApp:
             padx=(12, 0),
             pady=(8, 0),
         )
-        self.hero_message_label = None
+        self.hero_message_label = ttk.Label(
+            hero_left,
+            textvariable=self.hero_var,
+            style="Body.TLabel",
+            justify="left",
+        )
+        self.hero_message_label.pack(anchor="w", fill="x", pady=(12, 0))
+        self._register_adaptive_wrap_label(self.hero_message_label, hero_left, padding=28, min_width=320, max_width=1120)
 
         hero_right = ttk.Frame(hero, style="Panel.TFrame")
         hero_right.grid(row=0, column=1, sticky="ne", padx=(12, 0))
@@ -602,7 +610,7 @@ class DesktopApp:
             ("模型配置", self._show_cloud_backend_window),
             ("训练中心", self._show_training_window),
             ("使用手册", self._show_manual_window),
-            ("关于系统", self._show_about_and_copyright),
+            ("关于系统", self._show_about_window),
         ]
         for column in range(len(actions)):
             action_strip.columnconfigure(column, weight=1, minsize=self._scaled(108))
@@ -701,6 +709,8 @@ class DesktopApp:
         self.info_description_label.pack(anchor="w", pady=(10, 0))
         self.info_copyright_label = ttk.Label(info_panel, text=COPYRIGHT_TEXT, style="Foot.TLabel", wraplength=self.info_wraplength)
         self.info_copyright_label.pack(anchor="w", pady=(10, 0))
+        self._register_adaptive_wrap_label(self.info_description_label, info_panel, padding=36, min_width=240, max_width=420)
+        self._register_adaptive_wrap_label(self.info_copyright_label, info_panel, padding=36, min_width=240, max_width=420)
 
         right_panel = ttk.Frame(shell, style="Panel.TFrame", padding=14)
         right_panel.grid(row=1, column=1, sticky="nsew")
@@ -780,7 +790,10 @@ class DesktopApp:
         priority_card.grid(row=1, column=0, sticky="ew", pady=(10, 0))
         priority_card.columnconfigure(0, weight=1)
         ttk.Label(priority_card, textvariable=self.priority_event_title_var, style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(priority_card, textvariable=self.priority_event_detail_var, style="Body.TLabel", wraplength=self._scaled(860)).grid(row=1, column=0, sticky="w", pady=(8, 0))
+        self.priority_event_detail_label = ttk.Label(priority_card, textvariable=self.priority_event_detail_var, style="Body.TLabel", justify="left")
+        self.priority_event_detail_label.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self._register_adaptive_wrap_label(self.priority_event_detail_label, priority_card, padding=28, min_width=240, max_width=980)
+        self.priority_event_detail_label.grid_remove()
 
         self.main_log_panel = ttk.Frame(self.log_content, style="SoftPanel.TFrame")
         self.main_log_panel.columnconfigure(0, weight=1)
@@ -806,7 +819,7 @@ class DesktopApp:
         self.log_tree.tag_configure("ERROR", foreground="#ff8f8f")
         self.log_tree.tag_configure("SUCCESS", foreground="#6ce5b1")
 
-        self.node_logs_title = ttk.Label(self.log_content, text="节点日志（下方，滚动查看更多）", style="Foot.TLabel")
+        self.node_logs_title = ttk.Label(self.log_content, text="节点日志", style="PanelTitle.TLabel")
         self.node_logs_title.grid(row=3, column=0, sticky="w", pady=(10, 0))
 
         self.node_logs_container = ttk.Frame(self.log_content, style="SoftPanel.TFrame")
@@ -1126,6 +1139,37 @@ class DesktopApp:
         entry = ttk.Entry(wrapper)
         entry.grid(row=1, column=0, sticky="ew", pady=(6, 0))
         return entry
+
+    def _register_adaptive_wrap_label(
+        self,
+        label: ttk.Label,
+        container: Any | None = None,
+        *,
+        padding: int = 32,
+        min_width: int = 220,
+        max_width: int = 960,
+    ) -> ttk.Label:
+        """让长文本标签跟随容器宽度自动换行，避免窗口初次打开时遮挡错位。"""
+        target = container or getattr(label, "master", None) or self.root
+
+        def _apply(_event: Any | None = None) -> None:
+            try:
+                if not label.winfo_exists() or not target.winfo_exists():
+                    return
+                width = int(target.winfo_width() or 0)
+                if width <= 1:
+                    return
+                wraplength = max(min_width, min(width - padding, max_width))
+                label.configure(wraplength=wraplength)
+            except Exception:
+                return
+
+        try:
+            target.bind("<Configure>", _apply, add="+")
+        except Exception:
+            pass
+        self.root.after_idle(_apply)
+        return label
 
     def _bind_events(self) -> None:
         self.backend_combo.bind("<<ComboboxSelected>>", lambda _event: self._update_model_choices())
@@ -1798,6 +1842,11 @@ class DesktopApp:
         priority_title, priority_detail = _format_priority_event_card(priority_item)
         self.priority_event_title_var.set(priority_title)
         self.priority_event_detail_var.set(priority_detail)
+        if self.priority_event_detail_label is not None:
+            if priority_detail.strip():
+                self.priority_event_detail_label.grid()
+            else:
+                self.priority_event_detail_label.grid_remove()
         filtered_recent = [item for item in system_recent if _matches_log_filter(item, selected_filter)]
         display_recent = filtered_recent[-160:]
         keys = [item["key"] for item in display_recent]
@@ -2044,7 +2093,9 @@ class DesktopApp:
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
         ttk.Label(header, textvariable=self.stream_viewer_title_var, style="Header.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(header, textvariable=self.stream_viewer_meta_var, style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        stream_viewer_meta_label = ttk.Label(header, textvariable=self.stream_viewer_meta_var, style="Body.TLabel", justify="left")
+        stream_viewer_meta_label.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self._register_adaptive_wrap_label(stream_viewer_meta_label, header, padding=36, min_width=320, max_width=920)
 
         body = ttk.Frame(shell, style="Panel.TFrame", padding=16)
         body.grid(row=1, column=0, sticky="nsew", pady=(16, 0))
@@ -2056,7 +2107,9 @@ class DesktopApp:
         footer = ttk.Frame(shell, style="Panel.TFrame", padding=(10, 12))
         footer.grid(row=2, column=0, sticky="ew", pady=(16, 0))
         footer.columnconfigure(0, weight=1)
-        ttk.Label(footer, text="点击右侧监控卡片可切换查看对象，画面将随实时流同步刷新。", style="Foot.TLabel").grid(row=0, column=0, sticky="w")
+        stream_footer_label = ttk.Label(footer, text="点击右侧监控卡片可切换查看对象，画面将随实时流同步刷新。", style="Foot.TLabel", justify="left")
+        stream_footer_label.grid(row=0, column=0, sticky="ew")
+        self._register_adaptive_wrap_label(stream_footer_label, footer, padding=24, min_width=320, max_width=920)
         ttk.Button(footer, text="关闭", command=_close_window).grid(row=0, column=1, sticky="e")
 
         self._refresh_stream_viewer(stream_id)
@@ -2166,10 +2219,14 @@ class DesktopApp:
 
     def _show_about_and_copyright(self) -> None:
         self._show_about_window()
-        self.root.after(150, self._show_copyright_window)
 
     def _show_about_window(self) -> None:
         self._log_gui_action("open_about_window")
+        if self.about_window is not None and self.about_window.winfo_exists():
+            self.about_window.deiconify()
+            self.about_window.lift()
+            self.about_window.focus_force()
+            return
         window = tk.Toplevel(self.root)
         window.title(f"关于 {APP_DISPLAY_NAME}")
         self._set_window_geometry(window, 820, 560, 680, 480)
@@ -2177,6 +2234,13 @@ class DesktopApp:
         window.transient(self.root)
         self._apply_window_icon(window)
         self.window_refs.append(window)
+        self.about_window = window
+
+        def _close_window() -> None:
+            self.about_window = None
+            window.destroy()
+
+        window.protocol("WM_DELETE_WINDOW", _close_window)
 
         shell = ttk.Frame(window, style="Root.TFrame", padding=20)
         shell.pack(fill="both", expand=True)
@@ -2193,7 +2257,9 @@ class DesktopApp:
         ttk.Label(shell, text=APP_DISPLAY_NAME, style="Header.TLabel").grid(row=0, column=1, sticky="w")
         ttk.Label(shell, text=APP_SHORT_TAGLINE, style="Brand.TLabel").grid(row=1, column=1, sticky="w", pady=(8, 0))
         ttk.Label(shell, text=f"版本 v{self.app_version} | {COMPANY_NAME}", style="Body.TLabel").grid(row=2, column=1, sticky="w", pady=(12, 0))
-        ttk.Label(shell, text=APP_DESCRIPTION, style="Body.TLabel", wraplength=520).grid(row=3, column=1, sticky="w", pady=(12, 0))
+        description_label = ttk.Label(shell, text=APP_DESCRIPTION, style="Body.TLabel", justify="left")
+        description_label.grid(row=3, column=1, sticky="ew", pady=(12, 0))
+        self._register_adaptive_wrap_label(description_label, shell, padding=190, min_width=280, max_width=620)
 
         body = ttk.Frame(shell, style="Panel.TFrame", padding=18)
         body.grid(row=4, column=0, columnspan=2, sticky="nsew", pady=(20, 0))
@@ -2206,7 +2272,9 @@ class DesktopApp:
             "4. 软件图标、版本资源、版权信息统一内置\n"
             "5. 适合软件著作权截图、演示与交付"
         )
-        ttk.Label(body, text=feature_text, style="Body.TLabel", justify="left").grid(row=1, column=0, sticky="w", pady=(12, 0))
+        feature_label = ttk.Label(body, text=feature_text, style="Body.TLabel", justify="left")
+        feature_label.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+        self._register_adaptive_wrap_label(feature_label, body, padding=36, min_width=260, max_width=700)
         ttk.Button(body, text="关闭", command=window.destroy).grid(row=2, column=0, sticky="e", pady=(20, 0))
 
     def _show_copyright_window(self) -> None:
@@ -2776,7 +2844,7 @@ class DesktopApp:
             "open_model_config": (self._show_cloud_backend_window, "好的，正在打开模型配置。", "open_view", "已切换到模型配置"),
             "open_training_center": (self._show_training_window, "好的，正在打开训练中心。", "open_view", "已切换到训练中心"),
             "open_manual": (self._show_manual_window, "好的，正在打开使用手册。", "open_view", "已切换到使用手册"),
-            "open_about": (self._show_about_and_copyright, "好的，正在打开关于系统。", "open_view", "已切换到关于系统"),
+            "open_about": (self._show_about_window, "好的，正在打开关于系统。", "open_view", "已切换到关于系统"),
             "toggle_sidebar": (self._toggle_left_panel, "好的，正在切换界面侧栏。", "open_view", "已切换界面侧栏"),
             "shutdown_app": (self._on_close, "好的，正在关闭软件。", "shutdown_app", "正在关闭软件"),
         }
@@ -3062,11 +3130,14 @@ class DesktopApp:
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
         ttk.Label(header, text="多知识库管理", style="Header.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(
+        kb_header_hint = ttk.Label(
             header,
             text="支持公共背景知识库与专家专属知识库；文本、语音、视频、图片都可一键导入。",
             style="Body.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(8, 0))
+            justify="left",
+        )
+        kb_header_hint.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self._register_adaptive_wrap_label(kb_header_hint, header, padding=36, min_width=320, max_width=920)
 
         control = ttk.Frame(shell, style="Panel.TFrame", padding=16)
         control.grid(row=1, column=0, sticky="nsew", pady=(16, 0))
@@ -3138,7 +3209,9 @@ class DesktopApp:
         footer = ttk.Frame(shell, style="Panel.TFrame", padding=(10, 12))
         footer.grid(row=2, column=0, sticky="ew", pady=(16, 0))
         footer.columnconfigure(0, weight=1)
-        ttk.Label(footer, textvariable=self.kb_status_var, style="Foot.TLabel").grid(row=0, column=0, sticky="w")
+        kb_status_label = ttk.Label(footer, textvariable=self.kb_status_var, style="Foot.TLabel", justify="left")
+        kb_status_label.grid(row=0, column=0, sticky="ew")
+        self._register_adaptive_wrap_label(kb_status_label, footer, padding=24, min_width=320, max_width=1080)
         ttk.Button(footer, text="关闭", command=_close_window).grid(row=0, column=1, sticky="e")
 
         self._sync_knowledge_scope_choices()
@@ -3279,11 +3352,14 @@ class DesktopApp:
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
         ttk.Label(header, text="专家模型管理", style="Header.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(
+        expert_header_hint = ttk.Label(
             header,
             text="默认发布版不内置大体积专家模型。请按需导入模型资产；需要知识库的专家，再导入对应知识文件。",
             style="Body.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(8, 0))
+            justify="left",
+        )
+        expert_header_hint.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self._register_adaptive_wrap_label(expert_header_hint, header, padding=36, min_width=320, max_width=920)
 
         body = ttk.Frame(shell, style="Panel.TFrame", padding=16)
         body.grid(row=1, column=0, sticky="nsew", pady=(16, 0))
@@ -3340,7 +3416,9 @@ class DesktopApp:
         footer = ttk.Frame(shell, style="Panel.TFrame", padding=(10, 12))
         footer.grid(row=2, column=0, sticky="ew", pady=(16, 0))
         footer.columnconfigure(0, weight=1)
-        ttk.Label(footer, textvariable=self.expert_status_var, style="Foot.TLabel").grid(row=0, column=0, sticky="w")
+        expert_status_label = ttk.Label(footer, textvariable=self.expert_status_var, style="Foot.TLabel", justify="left")
+        expert_status_label.grid(row=0, column=0, sticky="ew")
+        self._register_adaptive_wrap_label(expert_status_label, footer, padding=24, min_width=320, max_width=1080)
         ttk.Button(footer, text="关闭", command=_close_window).grid(row=0, column=1, sticky="e")
 
         self._populate_expert_tree()
@@ -3464,7 +3542,9 @@ class DesktopApp:
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
         ttk.Label(header, text="实验档案中心", style="Header.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(header, text="按实验项目、实验名称、实验人员和时间检索运行归档。", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        archive_header_hint = ttk.Label(header, text="按实验项目、实验名称、实验人员和时间检索运行归档。", style="Body.TLabel", justify="left")
+        archive_header_hint.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self._register_adaptive_wrap_label(archive_header_hint, header, padding=36, min_width=320, max_width=920)
 
         body = ttk.Frame(shell, style="Panel.TFrame", padding=16)
         body.grid(row=1, column=0, sticky="nsew", pady=(16, 0))
@@ -3498,7 +3578,9 @@ class DesktopApp:
         footer = ttk.Frame(shell, style="Panel.TFrame", padding=(10, 12))
         footer.grid(row=2, column=0, sticky="ew", pady=(16, 0))
         footer.columnconfigure(0, weight=1)
-        ttk.Label(footer, textvariable=self.archive_status_var, style="Foot.TLabel").grid(row=0, column=0, sticky="w")
+        archive_status_label = ttk.Label(footer, textvariable=self.archive_status_var, style="Foot.TLabel", justify="left")
+        archive_status_label.grid(row=0, column=0, sticky="ew")
+        self._register_adaptive_wrap_label(archive_status_label, footer, padding=24, min_width=320, max_width=1080)
         ttk.Button(footer, text="刷新列表", command=self._refresh_archive_catalog).grid(row=0, column=1, sticky="e", padx=(0, 8))
         ttk.Button(footer, text="关闭", command=_close_window).grid(row=0, column=2, sticky="e")
 
@@ -3935,7 +4017,9 @@ class DesktopApp:
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
         ttk.Label(header, text="训练工作台", style="Header.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(header, text="LLM 与 YOLO 训练能力已拆分为两个独立工作台，可分别导入数据并启动训练。", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        training_header_hint = ttk.Label(header, text="LLM 与 YOLO 训练能力已拆分为两个独立工作台，可分别导入数据并启动训练。", style="Body.TLabel", justify="left")
+        training_header_hint.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self._register_adaptive_wrap_label(training_header_hint, header, padding=36, min_width=320, max_width=920)
 
         body = ttk.Frame(shell, style="Panel.TFrame", padding=16)
         body.grid(row=1, column=0, sticky="nsew", pady=(16, 0))
@@ -3969,7 +4053,9 @@ class DesktopApp:
         llm_tab = ttk.Frame(self.training_notebook, style="Panel.TFrame", padding=14)
         llm_tab.columnconfigure(0, weight=1)
         ttk.Label(llm_tab, text="LLM 训练工作台", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(llm_tab, text="面向 SFT / 指令微调流程，独立导入数据并启动 LLM 训练。", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        llm_hint_label = ttk.Label(llm_tab, text="面向 SFT / 指令微调流程，独立导入数据并启动 LLM 训练。", style="Body.TLabel", justify="left")
+        llm_hint_label.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self._register_adaptive_wrap_label(llm_hint_label, llm_tab, padding=36, min_width=320, max_width=980)
         llm_form = ttk.Frame(llm_tab, style="SoftPanel.TFrame", padding=12)
         llm_form.grid(row=2, column=0, sticky="ew", pady=(14, 0))
         llm_form.columnconfigure(1, weight=1)
@@ -3992,7 +4078,9 @@ class DesktopApp:
         vision_tab.columnconfigure(0, weight=1)
         vision_tab.rowconfigure(5, weight=1)
         ttk.Label(vision_tab, text="YOLO 训练工作台", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(vision_tab, text="把图片导入、框选标注和 YOLO 训练放到一个面板里，方便用户持续补数据和测试。", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        vision_hint_label = ttk.Label(vision_tab, text="把图片导入、框选标注和 YOLO 训练放到一个面板里，方便用户持续补数据和测试。", style="Body.TLabel", justify="left")
+        vision_hint_label.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self._register_adaptive_wrap_label(vision_hint_label, vision_tab, padding=36, min_width=320, max_width=980)
         vision_form = ttk.Frame(vision_tab, style="SoftPanel.TFrame", padding=12)
         vision_form.grid(row=2, column=0, sticky="ew", pady=(14, 0))
         vision_form.columnconfigure(1, weight=1)
@@ -4108,7 +4196,9 @@ class DesktopApp:
         footer = ttk.Frame(shell, style="Panel.TFrame", padding=(10, 12))
         footer.grid(row=2, column=0, sticky="ew", pady=(16, 0))
         footer.columnconfigure(0, weight=1)
-        ttk.Label(footer, textvariable=self.training_status_var, style="Foot.TLabel").grid(row=0, column=0, sticky="w")
+        training_status_label = ttk.Label(footer, textvariable=self.training_status_var, style="Foot.TLabel", justify="left")
+        training_status_label.grid(row=0, column=0, sticky="ew")
+        self._register_adaptive_wrap_label(training_status_label, footer, padding=24, min_width=320, max_width=980)
 
         self._refresh_training_overview()
         self._refresh_training_annotation_panel()
@@ -4257,11 +4347,14 @@ class DesktopApp:
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
         ttk.Label(header, text="模型服务配置", style="Header.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(
+        cloud_header_hint = ttk.Label(
             header,
             text="这里统一配置云端 AI 模型的 API 参数与模型命名。除 Ollama 外，其余模型不会预置候选项，需在这里保存后才会加入左侧“模型选择”。",
             style="Body.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(8, 0))
+            justify="left",
+        )
+        cloud_header_hint.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self._register_adaptive_wrap_label(cloud_header_hint, header, padding=36, min_width=320, max_width=720)
 
         body = ttk.Frame(shell, style="Panel.TFrame", padding=16)
         body.grid(row=1, column=0, sticky="nsew", pady=(16, 0))
@@ -4291,7 +4384,9 @@ class DesktopApp:
         footer = ttk.Frame(shell, style="Panel.TFrame", padding=(10, 12))
         footer.grid(row=2, column=0, sticky="ew", pady=(16, 0))
         footer.columnconfigure(0, weight=1)
-        ttk.Label(footer, textvariable=self.cloud_status_var, style="Foot.TLabel").grid(row=0, column=0, sticky="w")
+        cloud_status_label = ttk.Label(footer, textvariable=self.cloud_status_var, style="Foot.TLabel", justify="left")
+        cloud_status_label.grid(row=0, column=0, sticky="ew")
+        self._register_adaptive_wrap_label(cloud_status_label, footer, padding=24, min_width=320, max_width=720)
 
         self._sync_cloud_provider_choices()
         self._refresh_cloud_backend_catalog()

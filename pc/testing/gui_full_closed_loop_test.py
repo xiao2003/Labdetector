@@ -264,6 +264,8 @@ def _collect_window_state(app) -> Dict[str, Any]:
         "archive_window": bool(app.archive_window is not None and app.archive_window.winfo_exists()),
         "training_window": bool(app.training_window is not None and app.training_window.winfo_exists()),
         "cloud_window": bool(app.cloud_window is not None and app.cloud_window.winfo_exists()),
+        "about_window": bool(app.about_window is not None and app.about_window.winfo_exists()),
+        "copyright_window": bool(app.copyright_window is not None and app.copyright_window.winfo_exists()),
         "open_windows": len([item for item in app.window_refs if item.winfo_exists()]),
     }
 
@@ -390,7 +392,7 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
             app.runtime._start_background_aux_services = lambda **kwargs: None
 
             app._show_manual_window()
-            app._show_about_and_copyright()
+            app._show_about_window()
             app._show_cloud_backend_window()
             app._show_knowledge_base_window()
             app._show_expert_window()
@@ -412,6 +414,14 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
             )
             report["windows"] = _collect_window_state(app)
             add_step("windows_opened", **report["windows"])
+            if not report["windows"].get("about_window"):
+                raise AssertionError("关于系统窗口未打开")
+            if report["windows"].get("copyright_window"):
+                raise AssertionError("关于系统仍会额外弹出版权窗口")
+            if str(app.priority_event_detail_var.get()).strip():
+                raise AssertionError("默认高优事件说明仍显示了多余的小字")
+            if app.priority_event_detail_label is not None and app.priority_event_detail_label.winfo_ismapped():
+                raise AssertionError("默认高优事件详情标签未隐藏")
 
             app._run_self_check()
             _wait_for(
