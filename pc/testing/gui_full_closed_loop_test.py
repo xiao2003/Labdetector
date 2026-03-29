@@ -360,7 +360,7 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
             expert_manager,
             "_run_llm_interpreter",
             lambda _expert, _frame, _context, raw_response: raw_response,
-        ), patch("pc.voice.voice_interaction.get_voice_interaction", lambda: None), patch(
+        ), patch(
             "pc.core.orchestrator_runtime.orchestrator_state_path",
             lambda: orchestrator_state_file,
         ), patch(
@@ -381,6 +381,9 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
                 timeout=35,
                 message="GUI 启动基础状态未就绪",
             )
+            allowed_bootstrap_states = {"系统已可用", "后台准备中", "后台准备失败（已回退规则链）"}
+            if str(app.hero_var.get()).strip() not in allowed_bootstrap_states:
+                raise AssertionError(f"首屏状态未收敛到产品化三态: {app.hero_var.get()!r}")
             add_step("bootstrap_ready", planner_backend=app.current_state.get("orchestrator", {}).get("planner_backend", ""), orchestrator_status=app.current_state.get("orchestrator", {}).get("status", ""))
 
             app.runtime._configure_backend = lambda: None
@@ -434,7 +437,7 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
                 app._import_selected_expert_knowledge_text()
             _wait_for(
                 pump,
-                lambda: "导入完成" in str(app.kb_status_var.get()),
+                lambda: "最近一次导入" in str(app.kb_status_var.get()) and "新增文档" in str(app.kb_status_var.get()),
                 timeout=90,
                 message="危化知识导入未完成",
             )
@@ -460,6 +463,23 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
                 ],
             }
             add_step("knowledge_and_expert_ready", scope_count=report["knowledge"]["scope_count"], expert_count=report["experts"]["expert_count"])
+
+            app._handle_voice_local_command("打开知识中心", "open_knowledge_center")
+            _wait_for(
+                pump,
+                lambda: any("管家已执行动作: open_view -> 已切换到知识中心" in str(row.get("detail") or "") for row in list(app.log_rows)),
+                timeout=15,
+                message="自治动作结果日志未写入事件流",
+            )
+
+            app.runtime._log_raw_line("[WARN] 高危告警：检测到 HF 泄漏，请立即停止操作。", level="WARN")
+            app._render_logs(app.runtime.get_state().get("logs", []))
+            _wait_for(
+                pump,
+                lambda: "最新高优事件" in str(app.priority_event_title_var.get()) and "HF 泄漏" in str(app.priority_event_detail_var.get()),
+                timeout=10,
+                message="高优事件头部卡片未更新",
+            )
 
             workspace_name = f"gui_full_closed_loop_{time.strftime('%Y%m%d_%H%M%S')}"
             _set_entry(app.training_workspace_entry, workspace_name)
@@ -515,11 +535,13 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
                 timeout=15,
                 message="标注结果未写入标签文件",
             )
+            pi_dataset_root = Path(__file__).resolve().parents[1] / "training_assets" / "pi_detector" / "datasets"
+            initial_pi_datasets = len([item for item in pi_dataset_root.iterdir() if item.is_dir()]) if pi_dataset_root.exists() else 0
             with patch.object(app, "_pick_paths_for_import", return_value=[str(Path(workspace_dir) / "pi_detector")]):
                 app._import_pi_dataset_from_dialog()
             _wait_for(
                 pump,
-                lambda: "Pi 数据导入完成" in str(app.training_status_var.get()),
+                lambda: pi_dataset_root.exists() and len([item for item in pi_dataset_root.iterdir() if item.is_dir()]) > initial_pi_datasets,
                 timeout=30,
                 message="Pi 数据集导入未完成",
             )

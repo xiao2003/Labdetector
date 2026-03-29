@@ -236,12 +236,6 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
             if event_name == "危化品识别"
             else "PPE 规范提醒：检测到人员但未完整佩戴实验服、手套和护目镜。",
         ), patch("pc.core.orchestrator.ask_assistant_with_rag", lambda frame, question, rag_context, model_name: f"离线答复：已收到指令“{question}”，当前系统运行正常。"), patch(
-            "pc.voice.voice_interaction.VoiceInteraction._extract_knowledge_with_llm",
-            lambda self, transcript: [],
-        ), patch(
-            "pc.voice.voice_interaction.get_voice_interaction",
-            lambda: None,
-        ), patch(
             "pc.communication.network_scanner.scan_multi_nodes",
             endpoint_map,
         ), patch(
@@ -265,6 +259,9 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
                 timeout=80,
                 message="GUI 启动基础状态未就绪",
             )
+            allowed_bootstrap_states = {"系统已可用", "后台准备中", "后台准备失败（已回退规则链）"}
+            if str(app.hero_var.get()).strip() not in allowed_bootstrap_states:
+                raise AssertionError(f"首屏状态未收敛到产品化三态: {app.hero_var.get()!r}")
             app.runtime._configure_backend = lambda: None
             app.runtime._start_background_aux_services = lambda **kwargs: None
             app.runtime._ensure_training_dependencies_ready = lambda: None
@@ -325,8 +322,14 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
             _wait_for(
                 pump,
                 lambda: any(row.get("scope") == "common" and int(row.get("doc_count", 0) or 0) >= 1 for row in app.knowledge_catalog),
-                timeout=45,
+                timeout=90,
                 message="公共知识导入未完成",
+            )
+            _wait_for(
+                pump,
+                lambda: "最近一次导入" in str(app.kb_status_var.get()) and "新增文档" in str(app.kb_status_var.get()),
+                timeout=20,
+                message="知识导入业务反馈未更新",
             )
 
             app.expert_tree.selection_set("safety.chem_safety_expert")
@@ -350,7 +353,7 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
                     and any("chem_release_test" in str(name) for name in list(row.get("docs") or []))
                     for row in app.knowledge_catalog
                 ),
-                timeout=45,
+                timeout=90,
                 message="危化品专家知识导入未完成",
             )
 
@@ -375,7 +378,7 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
                     and any("ppe_release_test" in str(name) for name in list(row.get("docs") or []))
                     for row in app.knowledge_catalog
                 ),
-                timeout=45,
+                timeout=90,
                 message="PPE 专家知识导入未完成",
             )
 
@@ -392,6 +395,23 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
                 ],
             }
             add_step("knowledge_and_experts_ready", scope_count=report["knowledge"]["scope_count"], expert_count=report["experts"]["expert_count"])
+
+            app._handle_voice_local_command("打开知识中心", "open_knowledge_center")
+            _wait_for(
+                pump,
+                lambda: any("管家已执行动作: open_view -> 已切换到知识中心" in str(row.get("detail") or "") for row in list(app.log_rows)),
+                timeout=15,
+                message="自治动作结果日志未写入事件流",
+            )
+
+            app.runtime._log_raw_line("[WARN] 高危告警：检测到 HF 泄漏，请立即停止操作。", level="WARN")
+            app._render_logs(app.runtime.get_state().get("logs", []))
+            _wait_for(
+                pump,
+                lambda: "最新高优事件" in str(app.priority_event_title_var.get()) and "HF 泄漏" in str(app.priority_event_detail_var.get()),
+                timeout=10,
+                message="高优事件头部卡片未更新",
+            )
 
             workspace_name = f"gui_release_acceptance_{time.strftime('%Y%m%d_%H%M%S')}"
             _set_entry(app.training_workspace_entry, workspace_name)

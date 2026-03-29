@@ -54,22 +54,24 @@
 
 补充管理员态真实安装验证报告：
 
-- `D:\NeuroLab\release\smoke_install_formal_acceptance_admin_20260329.json`
-
-首启观测到的关键状态：
-
-- `status = downloading`
-- `planner_backend = deterministic`
-
-这符合“模型后台准备、不阻塞 GUI”的正式口径。
+- `D:\NeuroLab\release\smoke_install_formal_acceptance_admin_20260329_r8.json`
 
 管理员态补充结论：
 
 - 安装器退出码 `0`
 - 安装目录内主程序存在
 - 首启成功拉起后台 `pythonw`
-- 本地运行时状态文件最终写为 `warming_up`
-- 说明固定管家层已在首启后进入后台准备链，只是首次预热写状态晚于 25 秒观察窗口
+- 本地运行时状态文件写为：
+  - `status = download_failed`
+  - `planner_backend = deterministic`
+- 失败原因记录为固定模型后台下载触发 SSL EOF
+
+这说明：
+
+- 安装链与 GUI 首启链路本身是通的
+- 固定管家层后台准备链已经被触发
+- 当前环境下模型下载失败时，系统会按正式设计回退到规则链
+- GUI 不会因为固定模型下载失败而卡死或不可用
 
 ### 3. 语音闭环
 
@@ -162,10 +164,12 @@
 - `D:\NeuroLab\release\gui_full_closed_loop_20260329_r4_gitsync.json`
 - `D:\NeuroLab\_github_sync\release\virtual_text_voice_closed_loop_report.json`
 - `D:\NeuroLab\_github_sync\release\gui_release_acceptance_report.json`
+- `D:\NeuroLab\release\smoke_install_formal_acceptance_admin_20260329.json`
 
 这些报告共同覆盖了：
 
-- 事件流与自治痕迹未破坏 GUI 主链
+- 首屏状态三态没有破坏 GUI 主链
+- 事件流筛选、高优事件卡片和自治痕迹未破坏 GUI 主链
 - `PC-Pi` 语音闭环继续成立
 - `PC-Pi` 视频闭环继续成立
 - GUI 发布验收与 Ollama 默认候选校验继续通过
@@ -196,6 +200,16 @@
 - `pc.testing.gui_release_acceptance_test`
 - `pc.testing.installer_first_launch_smoke`
 
+本轮 UI 产品化收口也已纳入正式验收：
+
+- 首屏状态统一为：
+  - `系统已可用`
+  - `后台准备中`
+  - `后台准备失败（已回退规则链）`
+- 事件流顶部增加“最新高优事件”常驻摘要卡片
+- 自治动作日志统一为“动作 -> 结果”格式
+- 知识导入反馈改为作用域 / 新增文档 / 最近一次导入时间的业务结果展示
+
 ## 当前正式结论
 
 基于当前新安装链路，`NeuroLab Hub 1.0.0` 已完成一轮从安装包到 `PC-Pi` 语音/视频闭环结束的正式复验：
@@ -203,6 +217,8 @@
 - 安装包可安装
 - 首次启动 GUI 不因固定模型阻塞
 - 固定管家层后台准备链可观测
+- 当前环境下模型下载失败时，错误路径与规则链回退行为可观测
+- 首屏状态、事件卡片和知识导入反馈均符合产品化口径
 - `PC-Pi` 语音闭环通过
 - `PC-Pi` 视频闭环通过
 - 应用内自治关键场景通过

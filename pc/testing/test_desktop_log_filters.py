@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import unittest
 
-from pc.desktop_app import _classify_log_entry, _matches_log_filter
+from pc.desktop_app import (
+    _classify_log_entry,
+    _format_kb_import_feedback,
+    _format_priority_event_card,
+    _matches_log_filter,
+    _present_hero_message,
+    _present_orchestrator_status,
+    _select_latest_priority_event,
+)
 
 
 class DesktopLogFilterTests(unittest.TestCase):
@@ -24,6 +32,43 @@ class DesktopLogFilterTests(unittest.TestCase):
         self.assertTrue(_matches_log_filter(autonomy_row, "调度"))
         self.assertTrue(_matches_log_filter(voice_row, "调度"))
         self.assertFalse(_matches_log_filter(system_row, "调度"))
+
+    def test_orchestrator_status_is_presented_as_three_product_states(self) -> None:
+        self.assertEqual(_present_orchestrator_status("ready"), "系统已可用")
+        self.assertEqual(_present_orchestrator_status("downloading"), "后台准备中")
+        self.assertEqual(_present_orchestrator_status("warming_up"), "后台准备中")
+        self.assertEqual(_present_orchestrator_status("not_installed"), "后台准备中")
+        self.assertEqual(_present_orchestrator_status("download_failed"), "后台准备失败（已回退规则链）")
+
+    def test_hero_message_falls_back_to_product_state_for_waiting_config(self) -> None:
+        self.assertEqual(_present_hero_message("等待配置", "downloading"), "后台准备中")
+        self.assertEqual(_present_hero_message("", "ready"), "系统已可用")
+        self.assertEqual(_present_hero_message("监控已启动", "ready"), "监控已启动")
+
+    def test_priority_event_prefers_latest_warning(self) -> None:
+        rows = [
+            {"level": "INFO", "category": "运行状态", "summary": "普通事件"},
+            {"level": "WARN", "category": "危化品专家", "summary": "检测到 HF 高危告警"},
+        ]
+        item = _select_latest_priority_event(rows)
+        self.assertIsNotNone(item)
+        title, detail = _format_priority_event_card(item)
+        self.assertIn("危化品专家", title)
+        self.assertIn("HF", detail)
+
+    def test_kb_import_feedback_uses_business_result_text(self) -> None:
+        summary, dialog = _format_kb_import_feedback(
+            {
+                "scope": "expert.safety.chem_safety_expert",
+                "imported_count": 3,
+                "failed_count": 1,
+                "structured_records": 2,
+            }
+        )
+        self.assertIn("最近一次导入", summary)
+        self.assertIn("作用域 expert.safety.chem_safety_expert", summary)
+        self.assertIn("新增文档 3", summary)
+        self.assertIn("新增文档数：3", dialog)
 
 
 if __name__ == "__main__":

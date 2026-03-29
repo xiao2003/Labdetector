@@ -108,6 +108,74 @@ def _matches_log_filter(item: Dict[str, str], selected_filter: str) -> bool:
     return True
 
 
+def _present_orchestrator_status(status: str) -> str:
+    """把管家层状态压缩成面向用户的三态文案。"""
+    normalized = str(status or "").strip().lower()
+    if normalized == "ready":
+        return "系统已可用"
+    if normalized == "download_failed":
+        return "后台准备失败（已回退规则链）"
+    return "后台准备中"
+
+
+def _select_latest_priority_event(rows: List[Dict[str, str]]) -> Dict[str, str] | None:
+    """从最近事件里提取一条需要常驻展示的高优事件摘要。"""
+    for item in reversed(rows):
+        level = str(item.get("level") or "").upper()
+        summary = str(item.get("summary") or "")
+        category = str(item.get("category") or "")
+        if level in {"ERROR", "WARN", "WARNING"}:
+            return item
+        if any(keyword in summary for keyword in ("高危", "危险", "告警", "报警", "立即停止", "泄漏", "火焰", "烟雾")):
+            return item
+        if category in {"自治调度", "节点通信"} and "失败" in summary:
+            return item
+    return None
+
+
+def _format_priority_event_card(item: Dict[str, str] | None) -> tuple[str, str]:
+    """生成头部高优事件卡片文案。"""
+    if item is None:
+        return (
+            "最新高优事件：当前无需要关注的高优事件",
+            "系统将持续监控强告警、节点异常和需要人工关注的自治动作结果。",
+        )
+    category = str(item.get("category") or "运行状态")
+    level = str(item.get("level") or "INFO")
+    summary = str(item.get("summary") or "暂无摘要")
+    return (
+        f"最新高优事件：{category} / {level}",
+        summary,
+    )
+
+
+def _format_kb_import_feedback(payload: Dict[str, Any], *, now: datetime | None = None) -> tuple[str, str]:
+    """把知识导入结果整理成面向业务结果的反馈文案。"""
+    current_time = now or datetime.now()
+    scope_name = str(payload.get("scope") or "").strip() or "common"
+    imported_count = int(payload.get("imported_count", 0) or 0)
+    failed_count = int(payload.get("failed_count", 0) or 0)
+    structured_count = int(payload.get("structured_records", 0) or 0)
+    display_time = current_time.strftime("%Y-%m-%d %H:%M:%S")
+    summary = f"最近一次导入：作用域 {scope_name} | 新增文档 {imported_count} | 最近一次导入时间 {display_time}"
+    dialog_text = (
+        f"作用域：{scope_name}\n"
+        f"新增文档数：{imported_count}\n"
+        f"失败条目数：{failed_count}\n"
+        f"结构化记录数：{structured_count}\n"
+        f"最近一次导入时间：{display_time}"
+    )
+    return summary, dialog_text
+
+
+def _present_hero_message(status_message: str, orchestrator_status: str) -> str:
+    """把运行时状态文案收敛成首屏可读口径，避免旧工程状态词回流到 GUI。"""
+    normalized_message = str(status_message or "").strip()
+    if normalized_message in {"", "等待配置", "欢迎使用 NeuroLab Hub 主控制台"}:
+        return _present_orchestrator_status(orchestrator_status)
+    return normalized_message
+
+
 class DesktopApp:
     def __init__(self) -> None:
         self._enable_dpi_awareness()
@@ -189,6 +257,7 @@ class DesktopApp:
         self.training_annotation_photo: ImageTk.PhotoImage | None = None
         self.training_annotation_status_var = tk.StringVar(value="等待导入训练图片并开始标注")
         self.training_annotation_workspace_dir = ""
+        self.training_annotation_workspace_pending = False
         self.training_annotation_items: List[Dict[str, Any]] = []
         self.training_annotation_current_item: Dict[str, Any] = {}
         self.training_annotation_boxes: List[Dict[str, Any]] = []
@@ -231,6 +300,8 @@ class DesktopApp:
         self.log_detail_text: tk.Text | None = None
         self.log_status_var = tk.StringVar(value="等待系统事件")
         self.log_filter_var = tk.StringVar(value=LOG_FILTER_OPTIONS[0])
+        self.priority_event_title_var = tk.StringVar(value="最新高优事件：当前无需要关注的高优事件")
+        self.priority_event_detail_var = tk.StringVar(value="系统将持续监控强告警、节点异常和需要人工关注的自治动作结果。")
         self.log_row_keys: List[str] = []
         self.log_rows: List[Dict[str, str]] = []
         self.log_filter_combo: ttk.Combobox | None = None
@@ -259,6 +330,8 @@ class DesktopApp:
         self.demo_restore_collapsed: bool = False
         self.startup_self_check_started = False
         self.orchestrator_prepare_started = False
+        self.voice_local_handler_started = False
+        self.voice_local_handler_ready = False
         self.is_closing = False
         self.scroll_routes: Dict[str, Dict[str, Any]] = {}
         self.hidden_demo_enabled = bool(get_config("shadow_demo.enabled", False))
@@ -296,7 +369,7 @@ class DesktopApp:
             "online": tk.StringVar(value="0"),
             "offline": tk.StringVar(value="0"),
             "voice": tk.StringVar(value="OFF"),
-            "orchestrator": tk.StringVar(value="未准备"),
+            "orchestrator": tk.StringVar(value="后台准备中"),
             "planner": tk.StringVar(value="规则链"),
         }
         self.hero_var.set("正在启动 NeuroLab Hub")
@@ -693,7 +766,7 @@ class DesktopApp:
 
         self.log_content = ttk.Frame(self.log_canvas, style="SoftPanel.TFrame")
         self.log_content.columnconfigure(0, weight=1)
-        self.log_content.rowconfigure(1, weight=1)
+        self.log_content.rowconfigure(2, weight=1)
         self.log_content_window = self.log_canvas.create_window((0, 0), window=self.log_content, anchor="nw")
         self.log_content.bind(
             "<Configure>",
@@ -703,10 +776,16 @@ class DesktopApp:
 
         ttk.Label(self.log_content, text="系统事件流", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
 
+        priority_card = ttk.Frame(self.log_content, style="Card.TFrame", padding=12)
+        priority_card.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        priority_card.columnconfigure(0, weight=1)
+        ttk.Label(priority_card, textvariable=self.priority_event_title_var, style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(priority_card, textvariable=self.priority_event_detail_var, style="Body.TLabel", wraplength=self._scaled(860)).grid(row=1, column=0, sticky="w", pady=(8, 0))
+
         self.main_log_panel = ttk.Frame(self.log_content, style="SoftPanel.TFrame")
         self.main_log_panel.columnconfigure(0, weight=1)
         self.main_log_panel.rowconfigure(0, weight=1)
-        self.main_log_panel.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
+        self.main_log_panel.grid(row=2, column=0, sticky="nsew", pady=(10, 0))
         self.log_tree = ttk.Treeview(self.main_log_panel, columns=("time", "level", "category", "summary"), show="headings", height=4)
         self.log_tree.heading("time", text="时间")
         self.log_tree.heading("level", text="级别")
@@ -728,12 +807,12 @@ class DesktopApp:
         self.log_tree.tag_configure("SUCCESS", foreground="#6ce5b1")
 
         self.node_logs_title = ttk.Label(self.log_content, text="节点日志（下方，滚动查看更多）", style="Foot.TLabel")
-        self.node_logs_title.grid(row=2, column=0, sticky="w", pady=(10, 0))
+        self.node_logs_title.grid(row=3, column=0, sticky="w", pady=(10, 0))
 
         self.node_logs_container = ttk.Frame(self.log_content, style="SoftPanel.TFrame")
         self.node_logs_container.columnconfigure(0, weight=1)
         self.node_logs_container.rowconfigure(0, weight=1)
-        self.node_logs_container.grid(row=3, column=0, sticky="nsew", pady=(6, 0))
+        self.node_logs_container.grid(row=4, column=0, sticky="nsew", pady=(6, 0))
         self.node_log_canvas = tk.Canvas(self.node_logs_container, bg="#182330", highlightthickness=0)
         self.node_log_canvas.grid(row=0, column=0, sticky="nsew")
         node_log_scroll = ttk.Scrollbar(self.node_logs_container, orient="vertical", command=self.node_log_canvas.yview)
@@ -1015,8 +1094,15 @@ class DesktopApp:
         if self.runtime is None:
             return
         try:
-            compact = ", ".join(f"{key}={payload[key]!r}" for key in sorted(payload)) if payload else ""
+            compact = ", ".join(
+                f"{key}={payload[key]!r}"
+                for key in sorted(payload)
+                if key not in {"result", "result_text"}
+            ) if payload else ""
+            result_text = str(payload.get("result_text") or payload.get("result") or "").strip()
             detail = f"[AUTONOMY] 管家已执行动作: {action}"
+            if result_text:
+                detail = f"{detail} -> {result_text}"
             if compact:
                 detail = f"{detail} | {compact}"
             self.runtime._log_raw_line(detail, level="INFO")
@@ -1280,7 +1366,7 @@ class DesktopApp:
         if self.startup_self_check_started or self.runtime is None:
             return
         self.startup_self_check_started = True
-        self.hero_var.set("主控制台已就绪，正在后台完成系统自检")
+        self.hero_var.set("后台准备中")
         self._dispatch(
             "startup_self_check",
             lambda: self.runtime.run_self_check(include_microphone=False, include_voice_assets=False),
@@ -1290,7 +1376,7 @@ class DesktopApp:
         if self.orchestrator_prepare_started or self.runtime is None:
             return
         self.orchestrator_prepare_started = True
-        self.hero_var.set("主控制台已就绪，正在后台准备固定管家层模型")
+        self.hero_var.set("后台准备中")
         self._dispatch("orchestrator_prepare", self.runtime.prepare_orchestrator_assets)
 
     def _offer_voice_test(self) -> None:
@@ -1308,7 +1394,7 @@ class DesktopApp:
             self._dispatch("voice_test", self.runtime.run_voice_test)
         else:
             self._log_gui_action("confirm_voice_test", choice="no")
-            self.hero_var.set("主控制台已就绪")
+            self.hero_var.set("系统已可用")
 
     def _start_voice_test_from_ui(self) -> None:
         if self.runtime is None:
@@ -1390,6 +1476,7 @@ class DesktopApp:
                 return
             state = self.runtime.get_streams_state()
             session = state.get("session", {})
+            orchestrator_state = state.get("orchestrator", {})
             phase = str(session.get("phase") or "idle").lower()
             status_message = str(session.get("status_message") or "").strip()
             if phase == "running":
@@ -1398,7 +1485,7 @@ class DesktopApp:
                 badge_text = "启动中"
             else:
                 badge_text = "待机"
-            self.hero_var.set(status_message or "欢迎使用 NeuroLab Hub 主控制台")
+            self.hero_var.set(_present_hero_message(status_message, str(orchestrator_state.get("status") or "")))
             self.session_var.set(badge_text)
             self._update_session_badge()
             self._render_streams(state.get("streams", []))
@@ -1411,6 +1498,7 @@ class DesktopApp:
     def _render_state(self, state: Dict[str, Any], *, include_streams: bool = True) -> None:
         self.current_state = state
         session = state.get("session", {})
+        orchestrator_state = state.get("orchestrator", {})
         phase = str(session.get("phase") or "idle").lower()
         status_message = str(session.get("status_message") or "").strip()
         if phase == "running":
@@ -1419,7 +1507,7 @@ class DesktopApp:
             badge_text = "启动中"
         else:
             badge_text = "待机"
-        self.hero_var.set(status_message or "欢迎使用 NeuroLab Hub 主控制台")
+        self.hero_var.set(_present_hero_message(status_message, str(orchestrator_state.get("status") or "")))
         self.session_var.set(badge_text)
         self._update_session_badge()
         self._render_summary(state)
@@ -1482,14 +1570,7 @@ class DesktopApp:
                 ttk.Label(card, textvariable=variable, style="MetricValue.TLabel").pack(anchor="w", pady=(6, 0))
 
     def _format_orchestrator_status(self, status: str) -> str:
-        normalized = status.strip().lower()
-        return {
-            "ready": "已可用",
-            "warming_up": "后台预热中",
-            "downloading": "后台下载中",
-            "download_failed": "准备失败",
-            "not_installed": "待后台准备",
-        }.get(normalized, "未准备" if not normalized else status)
+        return _present_orchestrator_status(status)
 
     def _format_planner_backend(self, backend: str) -> str:
         normalized = backend.strip().lower()
@@ -1697,8 +1778,8 @@ class DesktopApp:
         if self.log_tree is not None:
             self.log_tree.configure(height=4 if websocket_mode else 6)
         if self.log_content is not None:
-            self.log_content.rowconfigure(1, weight=2 if websocket_mode else 1)
-            self.log_content.rowconfigure(3, weight=1 if websocket_mode else 0)
+            self.log_content.rowconfigure(2, weight=2 if websocket_mode else 1)
+            self.log_content.rowconfigure(4, weight=1 if websocket_mode else 0)
             if self.log_canvas is not None and self.log_content_window is not None:
                 canvas_height = int(self.log_canvas.winfo_height() or 0)
                 if canvas_height > 0:
@@ -1713,6 +1794,10 @@ class DesktopApp:
             self._render_node_logs([])
         selected_filter = str(self.log_filter_var.get() or LOG_FILTER_OPTIONS[0]).strip() or LOG_FILTER_OPTIONS[0]
         system_recent = [item for item in recent if not str(item.get("category", "")).startswith("节点")]
+        priority_item = _select_latest_priority_event(system_recent)
+        priority_title, priority_detail = _format_priority_event_card(priority_item)
+        self.priority_event_title_var.set(priority_title)
+        self.priority_event_detail_var.set(priority_detail)
         filtered_recent = [item for item in system_recent if _matches_log_filter(item, selected_filter)]
         display_recent = filtered_recent[-160:]
         keys = [item["key"] for item in display_recent]
@@ -2665,32 +2750,41 @@ class DesktopApp:
         return {"payload": payload}
 
     def _register_voice_local_handler(self) -> None:
-        try:
-            from pc.voice.voice_interaction import set_voice_local_command_handler
-
-            set_voice_local_command_handler(self._handle_voice_local_command)
-        except Exception:
+        if self.voice_local_handler_started:
             return
+        self.voice_local_handler_started = True
+
+        def _worker() -> None:
+            try:
+                from pc.voice.voice_interaction import set_voice_local_command_handler
+
+                set_voice_local_command_handler(self._handle_voice_local_command)
+                self.voice_local_handler_ready = True
+                self._log_gui_action("voice_local_handler_ready")
+            except Exception as exc:
+                self._log_gui_action("voice_local_handler_failed", error=str(exc))
+
+        threading.Thread(target=_worker, daemon=True, name="UI_voice_local_handler").start()
 
     def _handle_voice_local_command(self, _command_text: str, intent: str) -> str | None:
         mapping = {
-            "start_monitor": (self._start_session, "好的，正在启动监控。"),
-            "stop_monitor": (self._stop_session, "好的，正在停止监控。"),
-            "run_self_check": (self._run_self_check, "好的，正在执行系统自检。"),
-            "open_expert_center": (self._show_expert_window, "好的，正在打开专家中心。"),
-            "open_knowledge_center": (self._show_knowledge_base_window, "好的，正在打开知识中心。"),
-            "open_model_config": (self._show_cloud_backend_window, "好的，正在打开模型配置。"),
-            "open_training_center": (self._show_training_window, "好的，正在打开训练中心。"),
-            "open_manual": (self._show_manual_window, "好的，正在打开使用手册。"),
-            "open_about": (self._show_about_and_copyright, "好的，正在打开关于系统。"),
-            "toggle_sidebar": (self._toggle_left_panel, "好的，正在切换界面侧栏。"),
-            "shutdown_app": (self._on_close, "好的，正在关闭软件。"),
+            "start_monitor": (self._start_session, "好的，正在启动监控。", "start_monitoring", "监控已启动"),
+            "stop_monitor": (self._stop_session, "好的，正在停止监控。", "stop_monitoring", "监控已停止"),
+            "run_self_check": (self._run_self_check, "好的，正在执行系统自检。", "query_system_status", "系统自检已发起"),
+            "open_expert_center": (self._show_expert_window, "好的，正在打开专家中心。", "open_view", "已切换到专家中心"),
+            "open_knowledge_center": (self._show_knowledge_base_window, "好的，正在打开知识中心。", "open_view", "已切换到知识中心"),
+            "open_model_config": (self._show_cloud_backend_window, "好的，正在打开模型配置。", "open_view", "已切换到模型配置"),
+            "open_training_center": (self._show_training_window, "好的，正在打开训练中心。", "open_view", "已切换到训练中心"),
+            "open_manual": (self._show_manual_window, "好的，正在打开使用手册。", "open_view", "已切换到使用手册"),
+            "open_about": (self._show_about_and_copyright, "好的，正在打开关于系统。", "open_view", "已切换到关于系统"),
+            "toggle_sidebar": (self._toggle_left_panel, "好的，正在切换界面侧栏。", "open_view", "已切换界面侧栏"),
+            "shutdown_app": (self._on_close, "好的，正在关闭软件。", "shutdown_app", "正在关闭软件"),
         }
         target = mapping.get(intent)
         if target is None:
             return None
 
-        action, response = target
+        action, response, action_display, result_text = target
 
         def _invoke() -> None:
             if intent == "open_training_center":
@@ -2699,7 +2793,7 @@ class DesktopApp:
                 action()
 
         self.root.after(0, _invoke)
-        self._log_autonomy_action("voice_local_command", intent=intent)
+        self._log_autonomy_action(action_display, target=intent, result_text=result_text)
         return response
 
     def _apply_bootstrap_payload(self, payload: Dict[str, Any]) -> None:
@@ -3501,22 +3595,41 @@ class DesktopApp:
         self.training_status_var.set("正在启动 Pi 检测模型微调")
         self._dispatch("training_pi", lambda: self.runtime.start_pi_detector_finetune({"workspace_dir": workspace_dir, "base_weights": base_weights}))
 
-    def _ensure_training_annotation_workspace(self) -> str:
+    def _request_training_annotation_workspace_prepare(self) -> None:
+        if self.runtime is None:
+            self.training_annotation_status_var.set("训练运行时尚未就绪，请稍候再试。")
+            return
+        if self.training_annotation_workspace_pending:
+            return
+        workspace_name = self.training_workspace_entry.get().strip() if self.training_workspace_entry is not None else ""
+        self.training_annotation_workspace_pending = True
+        self.training_annotation_status_var.set("正在准备标注工作区，请稍候。")
+        self._dispatch("training_workspace", lambda: self.runtime.build_training_workspace(workspace_name))
+
+    def _ensure_training_annotation_workspace(self, *, auto_prepare: bool = False) -> str:
         workspace_dir = str((self.training_overview or {}).get("latest_workspace") or "").strip()
         if not workspace_dir:
-            workspace_name = self.training_workspace_entry.get().strip() if self.training_workspace_entry is not None else ""
-            summary = self.runtime.build_training_workspace(workspace_name)
-            workspace_dir = str(summary.get("workspace_dir") or "").strip()
-            self.training_overview = self.runtime.get_training_overview()
-            self._render_training_overview()
-            self.training_status_var.set(f"训练工作区已生成: {workspace_dir}")
+            if auto_prepare:
+                self._request_training_annotation_workspace_prepare()
+            return ""
         self.training_annotation_workspace_dir = workspace_dir
         return workspace_dir
 
     def _refresh_training_annotation_panel(self) -> None:
         if self.training_annotation_tree is None:
             return
-        workspace_dir = self._ensure_training_annotation_workspace()
+        workspace_dir = self._ensure_training_annotation_workspace(auto_prepare=True)
+        if not workspace_dir:
+            self.training_annotation_items = []
+            self.training_annotation_tree.delete(*self.training_annotation_tree.get_children())
+            self.training_annotation_current_item = {}
+            self.training_annotation_boxes = []
+            self._sync_annotation_box_tree()
+            if self.training_annotation_canvas is not None:
+                self.training_annotation_canvas.delete("all")
+            if not self.training_annotation_workspace_pending:
+                self.training_annotation_status_var.set("请先构建训练工作区，然后导入训练图片。")
+            return
         self.training_annotation_items = annotation_store.list_images(workspace_dir)
         self.training_annotation_tree.delete(*self.training_annotation_tree.get_children())
         for row in self.training_annotation_items:
@@ -3667,6 +3780,9 @@ class DesktopApp:
             messagebox.showwarning(APP_DISPLAY_NAME, "请先选择一张训练图片。", parent=self.training_window or self.root)
             return
         workspace_dir = self._ensure_training_annotation_workspace()
+        if not workspace_dir:
+            messagebox.showwarning(APP_DISPLAY_NAME, "请先构建训练工作区。", parent=self.training_window or self.root)
+            return
         width, height = self.training_annotation_image_size
         summary = annotation_store.save_annotations(
             workspace_dir,
@@ -3706,6 +3822,9 @@ class DesktopApp:
         if not paths:
             return
         workspace_dir = self._ensure_training_annotation_workspace()
+        if not workspace_dir:
+            messagebox.showwarning(APP_DISPLAY_NAME, "请先构建训练工作区。", parent=self.training_window or self.root)
+            return
         summary = annotation_store.import_images(workspace_dir, paths)
         self.training_annotation_status_var.set(f"已导入图片 {summary['imported_count']} 张")
         self._refresh_training_overview()
@@ -3713,6 +3832,9 @@ class DesktopApp:
 
     def _generate_training_annotation_samples(self) -> None:
         workspace_dir = self._ensure_training_annotation_workspace()
+        if not workspace_dir:
+            messagebox.showwarning(APP_DISPLAY_NAME, "请先构建训练工作区。", parent=self.training_window or self.root)
+            return
         sample_root = Path(workspace_dir) / "synthetic_samples"
         sample_root.mkdir(parents=True, exist_ok=True)
         generated_paths: List[str] = []
@@ -4195,6 +4317,8 @@ class DesktopApp:
                     )
                     continue
                 if status == "error":
+                    if name == "training_workspace":
+                        self.training_annotation_workspace_pending = False
                     self.hero_var.set(f"{name} 失败: {payload}")
                     if self.splash is not None:
                         self.splash_message_var.set(f"初始化失败：{payload}")
@@ -4204,7 +4328,7 @@ class DesktopApp:
                 if name == "bootstrap":
                     bootstrap_payload = payload["payload"] if isinstance(payload, dict) and "payload" in payload else payload
                     self._apply_bootstrap_payload(bootstrap_payload)
-                    self.hero_var.set("主控制台已就绪")
+                    self.hero_var.set("后台准备中")
                 elif name == "refresh_models":
                     self.model_catalog = payload
                     self._update_model_choices()
@@ -4215,16 +4339,15 @@ class DesktopApp:
                     self._populate_knowledge_tree()
                     self.hero_var.set("知识库目录已刷新")
                 elif name == "kb_import":
-                    self.kb_status_var.set(
-                        f"导入完成: 作用域 {payload['scope']}，成功 {payload['imported_count']} 项，失败 {payload['failed_count']} 项"
-                    )
+                    kb_summary, kb_dialog = _format_kb_import_feedback(payload)
+                    self.kb_status_var.set(kb_summary)
                     self.hero_var.set("知识库导入已完成")
                     self._render_logs(self.runtime.get_state().get("logs", []))
                     self._refresh_knowledge_bases()
                     self._refresh_expert_catalog()
                     messagebox.showinfo(
                         APP_DISPLAY_NAME,
-                        f"作用域: {payload['scope']}\n成功: {payload['imported_count']}\n失败: {payload['failed_count']}\n结构化记录: {payload.get('structured_records', 0)}",
+                        kb_dialog,
                         parent=self.kb_window or self.expert_window or self.root,
                     )
                 elif name == "expert_catalog":
@@ -4269,19 +4392,13 @@ class DesktopApp:
                 elif name == "startup_self_check":
                     self._render_checks(payload)
                     self._render_logs(self.runtime.get_state().get("logs", []))
-                    self.hero_var.set("主控制台已就绪，后台系统自检已完成")
+                    orchestrator_status = str(self.current_state.get("orchestrator", {}).get("status") or "").strip()
+                    self.hero_var.set(_present_orchestrator_status(orchestrator_status))
                 elif name == "orchestrator_prepare":
                     self._render_logs(self.runtime.get_state().get("logs", []))
                     status_text = str(payload.get("status") or "unknown")
                     reason_text = str(payload.get("reason") or "").strip()
-                    if status_text == "ready":
-                        self.hero_var.set("主控制台已就绪，智能管家已可用")
-                    elif status_text in {"downloading", "warming_up", "not_installed"}:
-                        self.hero_var.set("主控制台已就绪，智能管家正在后台准备")
-                    elif status_text == "download_failed":
-                        self.hero_var.set("主控制台已就绪，智能管家准备失败，当前使用规则链")
-                    else:
-                        self.hero_var.set(f"主控制台已就绪，智能管家状态：{status_text}")
+                    self.hero_var.set(_present_orchestrator_status(status_text))
                     if reason_text:
                         self._log_gui_action("orchestrator_prepare_state", status=status_text, reason=reason_text)
                 elif name == "voice_test":
@@ -4306,12 +4423,15 @@ class DesktopApp:
                     self.training_status_var.set("训练概览已刷新")
                     self.hero_var.set("训练工作台已刷新")
                 elif name == "training_workspace":
+                    self.training_annotation_workspace_pending = False
                     workspace_dir = str(payload.get("workspace_dir") or "").strip()
                     if workspace_dir:
                         overview = dict(self.training_overview or {})
                         overview["latest_workspace"] = workspace_dir
                         self.training_overview = overview
                         self._render_training_overview()
+                        if self.training_window is not None and self.training_window.winfo_exists():
+                            self._refresh_training_annotation_panel()
                     self.training_status_var.set(f"训练工作区已生成: {payload['workspace_dir']}")
                     self.hero_var.set("训练工作区构建完成")
                     self._refresh_training_overview()
