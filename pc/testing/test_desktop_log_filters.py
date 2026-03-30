@@ -4,6 +4,7 @@ import unittest
 
 from pc.desktop_app import (
     _classify_log_entry,
+    _format_archive_record_label,
     _format_node_task_detail,
     _format_kb_import_feedback,
     _format_priority_event_card,
@@ -55,12 +56,13 @@ class DesktopLogFilterTests(unittest.TestCase):
         item = _select_latest_priority_event(rows)
         self.assertIsNotNone(item)
         title, detail = _format_priority_event_card(item)
-        self.assertIn("危化品专家", title)
+        self.assertIn("高优先级事项", title)
+        self.assertIn("HF", title)
         self.assertIn("HF", detail)
 
     def test_priority_event_empty_state_hides_secondary_hint(self) -> None:
         title, detail = _format_priority_event_card(None)
-        self.assertIn("最新高优事件", title)
+        self.assertEqual(title, "高优先级事项：当前无需要处理的事项")
         self.assertEqual(detail, "")
 
     def test_kb_import_feedback_uses_business_result_text(self) -> None:
@@ -106,6 +108,15 @@ class DesktopLogFilterTests(unittest.TestCase):
         self.assertIn("节点：2", detail)
         self.assertIn("状态：running", detail)
         self.assertIn("自动补全已完成", detail)
+
+    def test_archive_record_label_prefers_opened_at(self) -> None:
+        label = _format_archive_record_label(
+            {
+                "session_id": "20260330_101500_websocket_pi_cluster",
+                "opened_at": "2026-03-30 10:15:00",
+            }
+        )
+        self.assertEqual(label, "2026-03-30 10:15:00")
 
 
 if __name__ == "__main__":

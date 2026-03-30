@@ -18,7 +18,7 @@ from typing import Any, Callable, Optional
 import numpy as np
 
 from pc.app_identity import resource_path
-from pc.core.ai_backend import default_model_for_backend
+from pc.core.ai_backend import ask_assistant_with_rag, default_model_for_backend
 from pc.core.config import get_config
 from pc.core.logger import console_error, console_info
 from pc.core.orchestrator import orchestrator

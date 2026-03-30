@@ -65,13 +65,13 @@ def _classify_log_entry(text: str, level: str, lowered: str) -> tuple[str, str]:
         return "自治调度", summary
     if node_voice_in:
         summary = re.sub(r"\s+", " ", node_voice_in.group(2)).strip() or text
-        return f"节点{node_voice_in.group(1)} 上行语音", summary
+        return "节点语音", f"节点 {node_voice_in.group(1)} 上行：{summary}"
     if node_voice_out:
         summary = re.sub(r"\s+", " ", node_voice_out.group(2)).strip() or text
-        return f"节点{node_voice_out.group(1)} 下行播报", summary
+        return "节点播报", f"节点 {node_voice_out.group(1)} 下行：{summary}"
     if node_event:
         summary = re.sub(r"\s+", " ", text).strip()
-        return f"节点{node_event.group(1)} 通信", summary
+        return "节点通信", f"节点 {node_event.group(1)}：{summary}"
     if "自检" in text:
         summary = re.sub(r"\s+", " ", text).strip()
         return "启动自检", summary
@@ -235,6 +235,53 @@ def _format_node_task_detail(node_id: str, task: Dict[str, Any] | None) -> str:
     return "\n".join(detail_lines)
 
 
+def _progress_bar_text(percent: float, *, width: int = 16) -> str:
+    """生成单行进度条文本，供日志区直接展示。"""
+    safe_percent = max(0.0, min(100.0, float(percent)))
+    filled = int(round((safe_percent / 100.0) * width))
+    filled = max(0, min(width, filled))
+    return "[" + ("#" * filled) + ("-" * (width - filled)) + "]"
+
+
+def _build_task_progress_log_item(
+    *,
+    scope_label: str,
+    task: Dict[str, Any] | None,
+    empty_title: str,
+    empty_detail: str,
+) -> Dict[str, str] | None:
+    """把本机或节点任务进度转换成单行日志摘要。"""
+    payload = _task_card_payload(task, empty_title=empty_title, empty_detail=empty_detail)
+    if not bool(payload.get("active")):
+        return None
+    percent = float(payload.get("percent", 0.0) or 0.0)
+    status = str(payload.get("status") or "running").strip().lower()
+    level = "INFO"
+    if status == "error":
+        level = "ERROR"
+    elif status == "success":
+        level = "SUCCESS"
+    summary = f"{scope_label} {str(payload.get('title') or '').strip()} {_progress_bar_text(percent)} {int(round(percent))}%"
+    detail_text = str(payload.get("detail") or "").strip()
+    if detail_text:
+        summary = f"{summary} {detail_text}"
+    updated_at = str(payload.get("updated_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    detail = (
+        f"时间：{updated_at}\n"
+        f"级别：{level}\n"
+        f"模块：任务进度\n"
+        f"内容：{summary}"
+    )
+    return {
+        "key": f"task|{scope_label}|{str(payload.get('title') or '')}|{status}|{int(round(percent))}|{detail_text}",
+        "time": updated_at,
+        "level": level,
+        "category": "任务进度",
+        "summary": summary[:120] if len(summary) <= 120 else summary[:117].rstrip() + "...",
+        "detail": detail,
+    }
+
+
 def _format_archive_record_label(row: Dict[str, Any]) -> str:
     """把实验档案记录编号转换成面向用户的简洁口径。"""
     opened_at = str(row.get("opened_at") or "").strip()
@@ -366,16 +413,9 @@ class DesktopApp:
         self.log_content: ttk.Frame | None = None
         self.log_content_window: int | None = None
         self.log_overall_scroll: ttk.Scrollbar | None = None
-        self.progress_section: ttk.Frame | None = None
-        self.local_task_card: ttk.Frame | None = None
-        self.local_task_title_var = tk.StringVar(value="本机当前无任务")
-        self.local_task_detail_var = tk.StringVar(value="等待系统自检或运行时准备。")
-        self.local_task_percent_var = tk.StringVar(value="0%")
-        self.local_task_progress: ttk.Progressbar | None = None
         self.local_task_status_label: ttk.Label | None = None
         self.local_task_empty_hint: ttk.Label | None = None
         self.node_task_title_label: ttk.Label | None = None
-        self.node_task_container: ttk.Frame | None = None
         self.node_task_cards: Dict[str, Dict[str, Any]] = {}
         self.node_logs_title: ttk.Label | None = None
         self.main_log_panel: ttk.Frame | None = None
@@ -385,6 +425,7 @@ class DesktopApp:
         self.log_filter_var = tk.StringVar(value=LOG_FILTER_OPTIONS[0])
         self.priority_event_title_var = tk.StringVar(value="高优先级事项：当前无需要处理的事项")
         self.priority_event_detail_var = tk.StringVar(value="")
+        self.task_progress_rows: List[Dict[str, str]] = []
         self.log_row_keys: List[str] = []
         self.log_rows: List[Dict[str, str]] = []
         self.log_filter_combo: ttk.Combobox | None = None
@@ -859,7 +900,7 @@ class DesktopApp:
 
         self.log_content = ttk.Frame(self.log_canvas, style="SoftPanel.TFrame")
         self.log_content.columnconfigure(0, weight=1)
-        self.log_content.rowconfigure(3, weight=1)
+        self.log_content.rowconfigure(1, weight=1)
         self.log_content_window = self.log_canvas.create_window((0, 0), window=self.log_content, anchor="nw")
         self.log_content.bind(
             "<Configure>",
@@ -867,49 +908,15 @@ class DesktopApp:
         )
         self.log_canvas.bind("<Configure>", self._on_log_canvas_configure)
 
-        self.progress_section = ttk.Frame(self.log_content, style="SoftPanel.TFrame")
-        self.progress_section.grid(row=0, column=0, sticky="ew")
-        self.progress_section.columnconfigure(0, weight=1)
-        self.progress_section.columnconfigure(1, weight=1)
-        self.progress_section.columnconfigure(2, weight=1)
-
-        self.local_task_card = ttk.Frame(self.progress_section, style="Card.TFrame", padding=12)
-        self.local_task_card.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
-        self.local_task_card.columnconfigure(0, weight=1)
-        ttk.Label(self.local_task_card, text="本机任务进度", style="MetricLabel.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(self.local_task_card, textvariable=self.local_task_title_var, style="PanelTitle.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
-        local_detail_label = ttk.Label(self.local_task_card, textvariable=self.local_task_detail_var, style="CardBody.TLabel", justify="left")
-        local_detail_label.grid(row=2, column=0, sticky="ew", pady=(6, 0))
-        self._register_adaptive_wrap_label(local_detail_label, self.local_task_card, padding=24, min_width=220, max_width=420)
-        progress_row = ttk.Frame(self.local_task_card, style="Card.TFrame")
-        progress_row.grid(row=3, column=0, sticky="ew", pady=(8, 0))
-        progress_row.columnconfigure(0, weight=1)
-        self.local_task_progress = ttk.Progressbar(progress_row, mode="determinate", maximum=100)
-        self.local_task_progress.grid(row=0, column=0, sticky="ew")
-        ttk.Label(progress_row, textvariable=self.local_task_percent_var, style="Foot.TLabel").grid(row=0, column=1, sticky="e", padx=(10, 0))
-
-        ttk.Separator(self.progress_section, orient="vertical").grid(row=0, column=1, sticky="ns")
-
-        node_task_card = ttk.Frame(self.progress_section, style="Card.TFrame", padding=12)
-        node_task_card.grid(row=0, column=2, sticky="nsew", padx=(10, 0))
-        node_task_card.columnconfigure(0, weight=1)
-        self.node_task_title_label = ttk.Label(node_task_card, text="节点任务进度", style="MetricLabel.TLabel")
-        self.node_task_title_label.grid(row=0, column=0, sticky="w")
-        self.node_task_container = ttk.Frame(node_task_card, style="Card.TFrame")
-        self.node_task_container.grid(row=1, column=0, sticky="ew", pady=(8, 0))
-        self.node_task_container.columnconfigure(0, weight=1)
-
-        ttk.Separator(self.log_content, orient="horizontal").grid(row=1, column=0, sticky="ew", pady=(10, 2))
-
         priority_card = ttk.Frame(self.log_content, style="Card.TFrame", padding=12)
-        priority_card.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        priority_card.grid(row=0, column=0, sticky="ew", pady=(8, 0))
         priority_card.columnconfigure(0, weight=1)
         ttk.Label(priority_card, textvariable=self.priority_event_title_var, style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
 
         self.main_log_panel = ttk.Frame(self.log_content, style="SoftPanel.TFrame")
         self.main_log_panel.columnconfigure(0, weight=1)
         self.main_log_panel.rowconfigure(0, weight=1)
-        self.main_log_panel.grid(row=3, column=0, sticky="nsew", pady=(10, 0))
+        self.main_log_panel.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
         self.log_tree = ttk.Treeview(self.main_log_panel, columns=("time", "level", "category", "summary"), show="headings", height=4)
         self.log_tree.heading("time", text="时间")
         self.log_tree.heading("level", text="级别")
@@ -930,12 +937,12 @@ class DesktopApp:
         self.log_tree.tag_configure("ERROR", foreground="#ff8f8f")
         self.log_tree.tag_configure("SUCCESS", foreground="#6ce5b1")
 
-        ttk.Separator(self.log_content, orient="horizontal").grid(row=4, column=0, sticky="ew", pady=(10, 2))
+        ttk.Separator(self.log_content, orient="horizontal").grid(row=2, column=0, sticky="ew", pady=(10, 2))
 
         self.node_logs_container = ttk.Frame(self.log_content, style="SoftPanel.TFrame")
         self.node_logs_container.columnconfigure(0, weight=1)
         self.node_logs_container.rowconfigure(0, weight=1)
-        self.node_logs_container.grid(row=5, column=0, sticky="nsew", pady=(6, 0))
+        self.node_logs_container.grid(row=3, column=0, sticky="nsew", pady=(6, 0))
         self.node_log_canvas = tk.Canvas(self.node_logs_container, bg="#182330", highlightthickness=0)
         self.node_log_canvas.grid(row=0, column=0, sticky="nsew")
         node_log_scroll = ttk.Scrollbar(self.node_logs_container, orient="vertical", command=self.node_log_canvas.yview)
@@ -949,7 +956,7 @@ class DesktopApp:
         self.node_log_canvas.bind("<Configure>", self._on_node_log_canvas_configure)
         self.node_logs_title = ttk.Label(self.node_log_panel, text="节点状态", style="PanelTitle.TLabel")
         self.node_logs_title.grid(row=0, column=0, sticky="w")
-        self.node_log_empty_label = ttk.Label(self.node_log_panel, text="等待节点连接或节点任务进度。", style="Foot.TLabel")
+        self.node_log_empty_label = ttk.Label(self.node_log_panel, text="等待节点连接或节点状态更新。", style="Foot.TLabel")
         self.node_log_empty_label.grid(row=1, column=0, sticky="w", pady=(8, 0))
 
         splitter.add(wall_section, minsize=320)
@@ -1766,55 +1773,27 @@ class DesktopApp:
     def _render_task_progress(self, task_state: Dict[str, Any]) -> None:
         local_task = dict((task_state or {}).get("local") or {})
         node_tasks = dict((task_state or {}).get("nodes") or {})
-
-        title, detail, percent, status = _format_task_progress_line(
-            local_task,
+        progress_rows: List[Dict[str, str]] = []
+        local_item = _build_task_progress_log_item(
+            scope_label="本机任务",
+            task=local_task,
             empty_title="本机当前无任务",
             empty_detail="等待系统自检、自动补全或运行时准备。",
         )
-        self.local_task_title_var.set(title)
-        self.local_task_detail_var.set(detail)
-        self.local_task_percent_var.set(f"{int(round(percent))}%")
-        if self.local_task_progress is not None:
-            self.local_task_progress.configure(value=percent)
-        if self.local_task_card is not None:
-            self.local_task_card.configure(style="Card.TFrame")
-        if self.local_task_status_label is not None:
-            self.local_task_status_label.configure(style="Foot.TLabel")
-        self._render_node_task_cards(node_tasks)
-
-    def _render_node_task_cards(self, node_tasks: Dict[str, Dict[str, Any]]) -> None:
-        if self.node_task_container is None:
-            return
-        for child in list(self.node_task_container.winfo_children()):
-            child.destroy()
-
-        if not node_tasks:
-            ttk.Label(self.node_task_container, text="当前没有节点任务。", style="Foot.TLabel").grid(row=0, column=0, sticky="w")
-            return
+        if local_item is not None:
+            progress_rows.append(local_item)
 
         ordered_ids = sorted(node_tasks.keys(), key=lambda value: int(value) if str(value).isdigit() else str(value))
-        for row_index, node_id in enumerate(ordered_ids):
-            payload = _task_card_payload(
-                node_tasks.get(node_id),
+        for node_id in ordered_ids:
+            item = _build_task_progress_log_item(
+                scope_label=f"节点 {node_id}",
+                task=node_tasks.get(node_id),
                 empty_title=f"节点 {node_id} 当前无任务",
                 empty_detail="等待节点发起自检或安装。",
             )
-            card = ttk.Frame(self.node_task_container, style="SoftPanel.TFrame", padding=8)
-            card.grid(row=row_index, column=0, sticky="ew", pady=(0 if row_index == 0 else 8, 0))
-            card.columnconfigure(0, weight=1)
-            ttk.Label(card, text=f"节点 {node_id}", style="MetricLabel.TLabel").grid(row=0, column=0, sticky="w")
-            ttk.Label(card, text=str(payload["title"]), style="CardBody.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
-            detail_label = ttk.Label(card, text=str(payload["detail"]), style="CardFoot.TLabel", justify="left")
-            detail_label.grid(row=2, column=0, sticky="ew", pady=(4, 0))
-            self._register_adaptive_wrap_label(detail_label, card, padding=18, min_width=180, max_width=420)
-            progress_row = ttk.Frame(card, style="SoftPanel.TFrame")
-            progress_row.grid(row=3, column=0, sticky="ew", pady=(6, 0))
-            progress_row.columnconfigure(0, weight=1)
-            progress = ttk.Progressbar(progress_row, mode="determinate", maximum=100)
-            progress.grid(row=0, column=0, sticky="ew")
-            progress.configure(value=float(payload["percent"]))
-            ttk.Label(progress_row, text=f"{int(round(float(payload['percent'])))}%", style="Foot.TLabel").grid(row=0, column=1, sticky="e", padx=(8, 0))
+            if item is not None:
+                progress_rows.append(item)
+        self.task_progress_rows = progress_rows
 
     def _normalize_log_entry(self, row: Dict[str, Any]) -> Dict[str, str] | None:
         raw_text = str(row.get("rendered") or row.get("text") or "").strip()
@@ -1854,8 +1833,11 @@ class DesktopApp:
             return
         grouped: Dict[str, List[Dict[str, str]]] = {}
         for item in recent:
-            category = item.get("category", "")
-            match = re.match(r"^节点(\d+)\s+(上行语音|下行播报|通信)$", category)
+            category = str(item.get("category", "")).strip()
+            summary = str(item.get("summary", "")).strip()
+            if category not in {"节点语音", "节点播报", "节点通信"}:
+                continue
+            match = re.match(r"^节点\s+(\d+)\s+", summary)
             if not match:
                 continue
             node_id = match.group(1)
@@ -1867,7 +1849,7 @@ class DesktopApp:
 
         if not grouped:
             if self.node_log_empty_label is not None:
-                self.node_log_empty_label.configure(text="等待节点连接或节点任务进度。")
+                self.node_log_empty_label.configure(text="等待节点连接或节点状态更新。")
                 self.node_log_empty_label.grid()
             if self.node_log_canvas is not None:
                 self.node_log_canvas.configure(scrollregion=self.node_log_canvas.bbox("all"))
@@ -1944,8 +1926,8 @@ class DesktopApp:
         if self.log_tree is not None:
             self.log_tree.configure(height=4 if websocket_mode else 6)
         if self.log_content is not None:
-            self.log_content.rowconfigure(3, weight=2 if websocket_mode else 1)
-            self.log_content.rowconfigure(5, weight=1 if websocket_mode else 0)
+            self.log_content.rowconfigure(1, weight=2 if websocket_mode else 1)
+            self.log_content.rowconfigure(3, weight=1 if websocket_mode else 0)
             if self.log_canvas is not None and self.log_content_window is not None:
                 canvas_height = int(self.log_canvas.winfo_height() or 0)
                 if canvas_height > 0:
@@ -1959,7 +1941,7 @@ class DesktopApp:
         else:
             self._render_node_logs([])
         selected_filter = str(self.log_filter_var.get() or LOG_FILTER_OPTIONS[0]).strip() or LOG_FILTER_OPTIONS[0]
-        system_recent = [item for item in recent if not str(item.get("category", "")).startswith("节点")]
+        system_recent = list(self.task_progress_rows) + [item for item in recent if not str(item.get("category", "")).startswith("节点")]
         priority_item = _select_latest_priority_event(system_recent)
         priority_title, priority_detail = _format_priority_event_card(priority_item)
         self.priority_event_title_var.set(priority_title)

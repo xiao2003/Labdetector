@@ -338,6 +338,9 @@ def run_virtual_text_voice_closed_loop_test(report_file: str) -> Dict[str, Any]:
             "pc.core.orchestrator.ask_assistant_with_rag",
             lambda frame, question, rag_context, model_name: f"离线答复：已收到指令“{question}”，当前系统运行正常。",
         ), patch(
+            "pc.voice.voice_interaction.ask_assistant_with_rag",
+            lambda frame, question, rag_context, model_name: f"离线答复：已收到指令“{question}”，当前系统运行正常。",
+        ), patch(
             "pc.voice.voice_interaction.VoiceInteraction._extract_knowledge_with_llm",
             lambda self, transcript: [],
         ), patch(

@@ -470,9 +470,11 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
             if report["windows"].get("copyright_window"):
                 raise AssertionError("关于系统仍会额外弹出版权窗口")
             if str(app.priority_event_detail_var.get()).strip():
-                raise AssertionError("默认高优事件说明仍显示了多余的小字")
-            if app.priority_event_detail_label is not None and app.priority_event_detail_label.winfo_ismapped():
-                raise AssertionError("默认高优事件详情标签未隐藏")
+                raise AssertionError("默认高优事项仍保留了额外详情文本")
+            if app.priority_event_detail_label is not None:
+                raise AssertionError("高优事项详情标签未被移除")
+            if app.log_detail_panel is not None:
+                raise AssertionError("事件详情栏未移除")
 
             app._run_self_check()
             _wait_for(
@@ -483,9 +485,14 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
             )
             _wait_for(
                 pump,
-                lambda: "本机" in str(app.local_task_title_var.get()) or "自检" in str(app.local_task_title_var.get()),
+                lambda: any(
+                    str(row.get("category") or "") == "任务进度"
+                    and "本机任务" in str(row.get("summary") or "")
+                    and "[" in str(row.get("summary") or "")
+                    for row in list(app.log_rows)
+                ),
                 timeout=10,
-                message="本机任务进度区未更新",
+                message="本机任务进度日志未写入主界面",
             )
             add_step("self_check_completed", items=len(app.current_state.get("self_check", [])))
 
@@ -543,7 +550,7 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
             app._render_logs(app.runtime.get_state().get("logs", []))
             _wait_for(
                 pump,
-                lambda: "最新高优事件" in str(app.priority_event_title_var.get()) and "HF 泄漏" in str(app.priority_event_detail_var.get()),
+                lambda: "高优先级事项" in str(app.priority_event_title_var.get()) and "HF 泄漏" in str(app.priority_event_title_var.get()),
                 timeout=10,
                 message="高优事件头部卡片未更新",
             )
@@ -643,9 +650,14 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
             app.runtime.request_remote_self_checks()
             _wait_for(
                 pump,
-                lambda: bool((app.current_state.get("tasks") or {}).get("nodes")),
+                lambda: any(
+                    str(row.get("category") or "") == "任务进度"
+                    and "节点 " in str(row.get("summary") or "")
+                    and "[" in str(row.get("summary") or "")
+                    for row in list(app.log_rows)
+                ),
                 timeout=20,
-                message="节点任务进度未回传到主界面",
+                message="节点任务进度日志未回传到主界面",
             )
             _wait_for(
                 pump,

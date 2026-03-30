@@ -40,8 +40,8 @@ MANUAL_REVIEW_ITEMS = [
     "左侧 4 个主操作入口保持 2x2 排布",
     "首屏状态只出现三态产品文案",
     "高优先级事项卡片空态和高危态都可读",
-    "本机任务进度区可见且文案清晰",
-    "节点任务进度区可见且不会挤压主界面",
+    "任务进度以单行进度条形式进入日志流，文案清晰",
+    "节点状态区不显示额外进度卡片，也不会挤压主界面",
     "系统事件列表无第二行额外说明小字",
     "节点状态区为卡片样式而不是多张小日志表",
     "知识中心文字无遮挡、按钮不重叠",
@@ -75,6 +75,11 @@ def _parse_args() -> argparse.Namespace:
         "--manual-review-file",
         default="",
         help="人工 GUI 观感验收记录 Markdown 路径；为空时自动生成模板。",
+    )
+    parser.add_argument(
+        "--installer-smoke-report",
+        default="",
+        help="已存在的管理员态安装首启 smoke 报告路径；提供后不再在总控链内部重复执行。",
     )
     parser.add_argument(
         "--allow-manual-pending",
@@ -317,7 +322,14 @@ def main() -> int:
     voice_payload = _load_json(voice_report)
 
     smoke_payload: dict[str, Any] = {}
-    if args.skip_installer_smoke:
+    provided_smoke_report = Path(args.installer_smoke_report).resolve() if args.installer_smoke_report else None
+    if provided_smoke_report and provided_smoke_report.exists():
+        smoke_payload = _load_json(provided_smoke_report)
+        report["steps"]["installer_smoke"] = {
+            "ok": bool(smoke_payload),
+            "reused_report": str(provided_smoke_report),
+        }
+    elif args.skip_installer_smoke:
         report["steps"]["installer_smoke"] = {
             "ok": False,
             "skipped": True,
@@ -378,6 +390,7 @@ def main() -> int:
             gui_release_report,
             gui_full_report,
             voice_report,
+            provided_smoke_report if provided_smoke_report else Path(),
             report_dir / "installer_first_launch_smoke_report.json",
             manual_review_path,
         ]

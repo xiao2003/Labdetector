@@ -329,9 +329,14 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
             )
             _wait_for(
                 pump,
-                lambda: "本机" in str(app.local_task_title_var.get()) or "自检" in str(app.local_task_title_var.get()),
+                lambda: any(
+                    str(row.get("category") or "") == "任务进度"
+                    and "本机任务" in str(row.get("summary") or "")
+                    and "[" in str(row.get("summary") or "")
+                    for row in list(app.log_rows)
+                ),
                 timeout=10,
-                message="本机任务进度区未更新",
+                message="本机任务进度日志未写入主界面",
             )
             add_step("self_check_completed", items=len(app.current_state.get("self_check", [])))
 
@@ -550,14 +555,8 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
 
             _wait_for(
                 pump,
-                lambda: len(_new_training_jobs()) >= 2 or "已启动" in str(app.training_status_var.get()),
-                timeout=60,
-                message="训练任务未成功创建",
-            )
-            _wait_for(
-                pump,
                 lambda: llm_output_file.exists() and pi_output_file.exists() and _new_training_deployments_ready(),
-                timeout=90,
+                timeout=150,
                 message="训练产物或部署结果未生成",
             )
             failed_jobs = [
@@ -568,6 +567,18 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
             if failed_jobs:
                 raise AssertionError(f"训练任务执行失败: {[job.get('job_id') for job in failed_jobs]}")
             training_jobs = _new_training_jobs()
+            llm_deployments = [
+                row
+                for row in model_linker.list_llm_deployments()
+                if str(row.get("deployment_id") or "") not in initial_llm_deployment_ids
+                and str(row.get("workspace_dir") or "") == workspace_dir
+            ]
+            pi_deployments = [
+                row
+                for row in model_linker.list_pi_detector_deployments()
+                if str(row.get("deployment_id") or "") not in initial_pi_deployment_ids
+                and str(row.get("workspace_dir") or "") == workspace_dir
+            ]
             report["training"] = {
                 "workspace_dir": workspace_dir,
                 "annotation_image_count": len(app.training_annotation_items),
@@ -575,8 +586,18 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
                 "training_status": str(app.training_status_var.get()),
                 "overview": dict(app.training_overview or {}),
                 "jobs": training_jobs,
+                "llm_output_file": str(llm_output_file),
+                "pi_output_file": str(pi_output_file),
+                "llm_deployments": llm_deployments,
+                "pi_deployments": pi_deployments,
             }
-            add_step("training_ready", job_count=len(training_jobs), workspace_dir=workspace_dir)
+            add_step(
+                "training_ready",
+                job_count=len(training_jobs),
+                llm_deployment_count=len(llm_deployments),
+                pi_deployment_count=len(pi_deployments),
+                workspace_dir=workspace_dir,
+            )
 
             app.mode_combo.set(app.mode_reverse["websocket"])
             _set_entry(app.expected_entry, str(node_count))
@@ -600,9 +621,14 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
             app.runtime.request_remote_self_checks()
             _wait_for(
                 pump,
-                lambda: bool((app.current_state.get("tasks") or {}).get("nodes")),
+                lambda: any(
+                    str(row.get("category") or "") == "任务进度"
+                    and "节点 " in str(row.get("summary") or "")
+                    and "[" in str(row.get("summary") or "")
+                    for row in list(app.log_rows)
+                ),
                 timeout=20,
-                message="节点任务进度未回传到主界面",
+                message="节点任务进度日志未回传到主界面",
             )
             _wait_for(
                 pump,
