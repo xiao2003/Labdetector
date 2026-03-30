@@ -87,7 +87,47 @@
 
 ## 四、测试方法
 
-### 4.0 正式验收范围
+### 4.0 正式总控验收入口
+
+当前正式验收已收敛为单一总控入口：
+
+- `pc/testing/formal_acceptance_suite.py`
+
+推荐用法：
+
+```powershell
+& 'C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe' -m pc.testing.formal_acceptance_suite `
+  --installer "release/NeuroLab-Hub-Setup-v1.0.0.exe" `
+  --report-dir "release/formal_acceptance_yyyyMMdd_HHmmss"
+```
+
+本地仅验证总控链时，可暂时使用：
+
+```powershell
+& 'C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe' -m pc.testing.formal_acceptance_suite `
+  --skip-installer-smoke `
+  --allow-manual-pending `
+  --report-dir "release/formal_acceptance_smoke"
+```
+
+总控入口会统一串联：
+
+1. 结构与 Pi 边缘回归
+2. GUI 发布验收
+3. GUI 全闭环
+4. `PC-Pi` 语音/视频闭环
+5. 管理员安装首启 smoke
+6. 人工 GUI 观感验收记录
+7. 汇总报告与 `fresh_validation` 产物生成
+
+总控目录默认产出：
+
+- `formal_acceptance_report.json`
+- `fresh_validation_summary_1.0.0.md`
+- `NeuroLab_Hub_1.0.0_fresh_validation.zip`
+- 自动生成的 `manual_gui_review_checklist.md`
+
+### 4.1 正式验收范围
 
 当前正式验收不是局部函数验证，而是从安装包开始，到 `PC-Pi` 语音/视频闭环结束，覆盖 6 层架构、每层功能与层间协作。
 
@@ -104,7 +144,7 @@
 9. `PC-Pi` 视频闭环
 10. 应用内自治
 
-### 4.1 分层验收矩阵
+### 4.2 分层验收矩阵
 
 #### 安装包交付层
 
@@ -184,7 +224,7 @@
 - `self-check` 发现缺失后会自动补全并自动再次自检
 - `pi_cli status` 正确反映轻前端角色
 
-### 4.2 代码与最小回归
+### 4.3 代码与最小回归
 
 推荐至少执行：
 
@@ -192,7 +232,7 @@
 python -m unittest   pc.testing.test_orchestrator_runtime   pc.testing.test_orchestrator_model   pc.testing.test_expert_manager_voice_routing   pc.testing.test_monitoring_speech_policy   pc.testing.test_remote_voice_routing   pi.testing.test_voice_interaction   pi.testing.test_runtime_installer   pi.testing.test_pi_config
 ```
 
-### 4.3 Pi 语音闭环
+### 4.4 Pi 语音闭环
 
 无真实语音板时，使用音频文件驱动验证：
 
@@ -207,7 +247,7 @@ python -m unittest   pc.testing.test_orchestrator_runtime   pc.testing.test_orch
 - 执行层模型或专家执行链正常回传
 - Pi 本地播报与停止播报正常
 
-### 4.4 视频闭环
+### 4.5 视频闭环
 
 验证目标：
 
@@ -216,7 +256,7 @@ python -m unittest   pc.testing.test_orchestrator_runtime   pc.testing.test_orch
 - 强告警自动播报
 - 用户主动请求时触发关键帧上传和专家分析
 
-### 4.5 首启体验验证
+### 4.6 首启体验验证
 
 正式验证要求：
 
@@ -271,7 +311,7 @@ python -m unittest   pc.testing.test_orchestrator_runtime   pc.testing.test_orch
 - 这说明安装链与 GUI 首启链是通的，但当前环境下外网模型下载不稳定
 - 系统已按正式设计回退到规则链，不阻塞 GUI，也不导致主程序不可用
 
-### 4.6 专家能力驱动调度验证
+### 4.7 专家能力驱动调度验证
 
 当前正式要求是：专家调度依据专家元数据、知识域可用性、输入类型与上下文，不依赖固定场景硬编码。
 
@@ -281,7 +321,7 @@ python -m unittest   pc.testing.test_orchestrator_runtime   pc.testing.test_orch
 - 专家知识域缺失时，系统会降为“无知识增强执行”，而不是误判专家不存在
 - 新增专家能力事实后，无需修改核心路由即可进入候选
 
-### 4.7 Ollama 默认模型清单验证
+### 4.8 Ollama 默认模型清单验证
 
 当前 GUI 中 Ollama 内置候选必须显示：
 
@@ -296,7 +336,7 @@ python -m unittest   pc.testing.test_orchestrator_runtime   pc.testing.test_orch
 - 本地有 `ollama list` 结果时优先显示本机已安装模型
 - 自定义模型入口仍可用
 
-### 4.8 事件流筛选与自治痕迹验证
+### 4.9 事件流筛选与自治痕迹验证
 
 当前正式 GUI 口径要求：
 

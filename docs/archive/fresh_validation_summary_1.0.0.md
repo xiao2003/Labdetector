@@ -174,6 +174,31 @@
 - `PC-Pi` 视频闭环继续成立
 - GUI 发布验收与 Ollama 默认候选校验继续通过
 
+## 正式总控验收入口
+
+当前正式验收入口已收敛为：
+
+- `pc/testing/formal_acceptance_suite.py`
+
+它会按固定顺序统一串联：
+
+1. 结构与 Pi 边缘回归
+2. GUI 发布验收
+3. GUI 全闭环
+4. `PC-Pi` 语音/视频闭环
+5. 安装首启 smoke
+6. 人工 GUI 观感验收
+7. 汇总报告与 fresh validation 产物生成
+
+本地已验证总控脚本可在以下模式下跑通并产出：
+
+- `--skip-installer-smoke`
+- `--allow-manual-pending`
+
+对应产物目录示例：
+
+- `release/formal_acceptance_suite_smoke/`
+
 ## 本轮实际执行的关键验证
 
 ### 单元与结构回归

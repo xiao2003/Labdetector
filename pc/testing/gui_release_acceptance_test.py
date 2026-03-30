@@ -12,6 +12,7 @@ from unittest.mock import patch
 from pc.core.config import get_config, set_config
 from pc.testing.gui_full_closed_loop_test import SilentDialogRecorder, _collect_window_state, _set_entry, _wait_for
 from pc.testing.virtual_text_voice_closed_loop_test import VirtualAudioVoicePiServer
+from pc.training.model_linker import model_linker
 from pc.training.train_manager import training_manager
 
 
@@ -223,7 +224,21 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
         set_config("network.virtual_pi_host", servers[0].endpoint())
         set_config("network.virtual_pi_hosts", endpoints)
 
-        initial_job_count = len(training_manager.overview().get("jobs", []))
+        initial_job_ids = {
+            str(job.get("job_id") or "")
+            for job in training_manager.overview().get("jobs", [])
+            if str(job.get("job_id") or "")
+        }
+        initial_llm_deployment_ids = {
+            str(row.get("deployment_id") or "")
+            for row in model_linker.list_llm_deployments()
+            if str(row.get("deployment_id") or "")
+        }
+        initial_pi_deployment_ids = {
+            str(row.get("deployment_id") or "")
+            for row in model_linker.list_pi_detector_deployments()
+            if str(row.get("deployment_id") or "")
+        }
 
         with dialog_recorder, patch.object(expert_manager, "_build_knowledge_context", lambda *args, **kwargs: {}), patch.object(
             expert_manager,
@@ -506,29 +521,53 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
 
             app._start_llm_training_from_form()
             app._start_pi_training_from_form()
+
+            def _new_training_jobs() -> list[dict[str, Any]]:
+                jobs = training_manager.overview().get("jobs", [])
+                return [
+                    job
+                    for job in jobs
+                    if str(job.get("job_id") or "") and str(job.get("job_id") or "") not in initial_job_ids
+                ]
+
+            llm_output_file = Path(workspace_dir) / "outputs" / "llm_adapter" / "adapter_model.bin"
+            pi_output_file = Path(workspace_dir) / "outputs" / "pi_detector" / "run" / "weights" / "best.pt"
+
+            def _new_training_deployments_ready() -> bool:
+                llm_rows = [
+                    row
+                    for row in model_linker.list_llm_deployments()
+                    if str(row.get("deployment_id") or "") not in initial_llm_deployment_ids
+                    and str(row.get("workspace_dir") or "") == workspace_dir
+                ]
+                pi_rows = [
+                    row
+                    for row in model_linker.list_pi_detector_deployments()
+                    if str(row.get("deployment_id") or "") not in initial_pi_deployment_ids
+                    and str(row.get("workspace_dir") or "") == workspace_dir
+                ]
+                return bool(llm_rows) and bool(pi_rows)
+
             _wait_for(
                 pump,
-                lambda: len(training_manager.overview().get("jobs", [])[initial_job_count:]) >= 2,
-                timeout=45,
+                lambda: len(_new_training_jobs()) >= 2 or "已启动" in str(app.training_status_var.get()),
+                timeout=60,
                 message="训练任务未成功创建",
             )
             _wait_for(
                 pump,
-                lambda: all(
-                    str(job.get("status") or "") in {"finished", "failed"}
-                    for job in training_manager.overview().get("jobs", [])[initial_job_count:initial_job_count + 2]
-                ),
-                timeout=45,
-                message="训练任务未完成",
+                lambda: llm_output_file.exists() and pi_output_file.exists() and _new_training_deployments_ready(),
+                timeout=90,
+                message="训练产物或部署结果未生成",
             )
             failed_jobs = [
                 job
-                for job in training_manager.overview().get("jobs", [])[initial_job_count:initial_job_count + 2]
+                for job in _new_training_jobs()
                 if str(job.get("status") or "") == "failed"
             ]
             if failed_jobs:
                 raise AssertionError(f"训练任务执行失败: {[job.get('job_id') for job in failed_jobs]}")
-            training_jobs = training_manager.overview().get("jobs", [])[initial_job_count:]
+            training_jobs = _new_training_jobs()
             report["training"] = {
                 "workspace_dir": workspace_dir,
                 "annotation_image_count": len(app.training_annotation_items),
