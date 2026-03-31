@@ -1,7 +1,7 @@
 # NeuroLab Hub 正式验收总控链结果
 
-- 开始时间：2026-03-30 23:32:52
-- 结束时间：2026-03-30 23:46:23
+- 开始时间：2026-03-31 15:36:09
+- 结束时间：2026-03-31 15:38:04
 - 总结论：通过
 
 ## 分层结果
@@ -15,12 +15,11 @@
 
 ## 关键报告
 
-- D:\NeuroLab\release\formal_acceptance_delivery_20260330\gui_release_acceptance_report.json
-- D:\NeuroLab\release\formal_acceptance_delivery_20260330\gui_full_closed_loop_report.json
-- D:\NeuroLab\release\formal_acceptance_delivery_20260330\virtual_text_voice_closed_loop_report.json
-- D:\NeuroLab\release\smoke_install_formal_acceptance_admin_20260330_flatten_delivery.json
-- D:\NeuroLab\release\formal_acceptance_delivery_20260330\installer_first_launch_smoke_report.json
-- D:\NeuroLab\release\manual_gui_review_delivery_20260330.md
+- D:\NeuroLab\release\formal_acceptance_delivery_20260331\gui_release_acceptance_report.json
+- D:\NeuroLab\release\formal_acceptance_delivery_20260331\gui_full_closed_loop_report.json
+- D:\NeuroLab\release\formal_acceptance_delivery_20260331\virtual_text_voice_closed_loop_report.json
+- D:\NeuroLab\release\smoke_install_formal_acceptance_admin_20260331_delivery.json
+- D:\NeuroLab\release\manual_gui_review_delivery_20260331.md
 
 ## 失败项
 

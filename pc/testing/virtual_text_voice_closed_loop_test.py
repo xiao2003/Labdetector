@@ -179,6 +179,10 @@ class VirtualAudioVoicePiServer:
             elif message.startswith("CMD:EXPERT_RESULT:"):
                 payload = json.loads(message.replace("CMD:EXPERT_RESULT:", "", 1))
                 self.received_expert_results.append(payload)
+                if bool(payload.get("speak", False)):
+                    text = str(payload.get("text") or "").strip()
+                    if text:
+                        self.received_tts.append(text)
                 ack = {
                     "event_id": str(payload.get("event_id", "")),
                     "status": "ok",

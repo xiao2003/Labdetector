@@ -121,6 +121,15 @@ VOICE_AI_DEPENDENCY_MAP = {
 
 def _now_text() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _progress_bar_text(percent: float, width: int = 16) -> str:
+    safe_percent = max(0.0, min(100.0, float(percent or 0.0)))
+    filled = int(round((safe_percent / 100.0) * width))
+    filled = max(0, min(width, filled))
+    return "[" + ("#" * filled) + ("-" * (width - filled)) + "]"
+
+
 class LabDetectorRuntime:
     def __init__(self) -> None:
         self.version = get_app_version()
@@ -167,6 +176,7 @@ class LabDetectorRuntime:
         self.session_metadata: Dict[str, Any] = {}
         self.archive_session_id = ""
         self.orchestrator_state: Dict[str, Any] = read_runtime_state()
+        self.on_task_progress_changed: Optional[Callable[[Dict[str, Any]], None]] = None
 
     def set_server_meta(self, host: str, port: int) -> None:
         self.server_meta = {"host": host, "port": port}
@@ -337,8 +347,13 @@ class LabDetectorRuntime:
         }
         if normalized["status"] == "idle":
             self.local_task_progress = {}
+            self._notify_task_progress_changed()
             return
         self.local_task_progress = normalized
+        self._log_info(
+            f"本机任务进度 {_progress_bar_text(normalized['percent'])} {int(round(normalized['percent']))}% {normalized['detail'] or normalized['title']}"
+        )
+        self._notify_task_progress_changed()
 
     def update_node_task_progress(self, node_id: str, payload: Dict[str, Any]) -> None:
         normalized = {
@@ -360,9 +375,25 @@ class LabDetectorRuntime:
         if normalized["status"] in {"success", "error"}:
             summary = normalized["detail"] or normalized["title"] or "节点任务已完成"
             self.node_task_progress[str(node_id)] = normalized
-            self._log_info(f"节点 [{node_id}] 任务进度更新: {summary}")
+            self._log_info(
+                f"节点 {node_id} 任务进度 {_progress_bar_text(normalized['percent'])} {int(round(normalized['percent']))}% {summary}"
+            )
+            self._notify_task_progress_changed()
             return
         self.node_task_progress[str(node_id)] = normalized
+        self._log_info(
+            f"节点 {node_id} 任务进度 {_progress_bar_text(normalized['percent'])} {int(round(normalized['percent']))}% {normalized['detail'] or normalized['title']}"
+        )
+        self._notify_task_progress_changed()
+
+    def _notify_task_progress_changed(self) -> None:
+        callback = self.on_task_progress_changed
+        if callback is None:
+            return
+        try:
+            callback(self.get_task_progress_state())
+        except Exception:
+            pass
 
     def request_remote_self_checks(self) -> bool:
         if self.mode != "websocket" or self.manager is None:

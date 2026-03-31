@@ -37,8 +37,8 @@ _DEFAULT_CONFIG = {
     },
     "orchestrator": {
         "enabled": "True",
-        "model_name": "Qwen2.5-1.5B-Instruct",
-        "model_relpath": "pc/models/orchestrator/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+        "model_name": "Qwen3.5-0.8B",
+        "model_relpath": "pc/models/orchestrator/Qwen3.5-0.8B.q4_k_m.gguf",
         "runtime_relpath": "pc/runtime/llm_orchestrator/llama-cli.exe",
         "asset_manifest_relpath": "pc/models/orchestrator/orchestrator_assets.json",
         "timeout_seconds": "8",

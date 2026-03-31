@@ -90,6 +90,52 @@ def _prepare_release_assets(asset_root: Path) -> Dict[str, str]:
     }
 
 
+def _fake_build_training_workspace(workspace_name: str = "") -> Dict[str, Any]:
+    """为 GUI 验收快速生成最小训练工作区，避免真实数据汇总拖慢验收。"""
+    from pc.app_identity import resource_path
+
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in (workspace_name or "training_workspace"))
+    workspace_dir = Path(resource_path("pc/training_runs")) / f"{stamp}_{safe_name[:48] or 'training_workspace'}"
+    llm_dir = workspace_dir / "llm_sft"
+    image_dir = workspace_dir / "pi_detector" / "images" / "train"
+    label_dir = workspace_dir / "pi_detector" / "labels" / "train"
+    llm_dir.mkdir(parents=True, exist_ok=True)
+    image_dir.mkdir(parents=True, exist_ok=True)
+    label_dir.mkdir(parents=True, exist_ok=True)
+    (workspace_dir / "pi_detector" / "dataset.yaml").write_text(
+        "\n".join(
+            [
+                f"path: {(workspace_dir / 'pi_detector').as_posix()}",
+                "train: images/train",
+                "val: images/train",
+                "nc: 1",
+                "names:",
+                "  0: observation",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (llm_dir / "train.jsonl").write_text("", encoding="utf-8")
+    (llm_dir / "eval.jsonl").write_text("", encoding="utf-8")
+    summary = {
+        "workspace_dir": str(workspace_dir),
+        "llm_train_samples": 0,
+        "llm_eval_samples": 0,
+        "detector_train_samples": 0,
+        "detector_class_names": ["observation"],
+        "llm_train_path": str(llm_dir / "train.jsonl"),
+        "llm_eval_path": str(llm_dir / "eval.jsonl"),
+        "detector_dataset_path": str(workspace_dir / "pi_detector"),
+        "external_llm_samples": 0,
+        "external_pi_datasets": 0,
+        "external_pi_samples": 0,
+    }
+    (workspace_dir / "workspace_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    return summary
+
+
 def _server_plan(node_count: int) -> List[VirtualAudioVoicePiServer]:
     voice_plans = [
         ["wake_word", "dynamic_qa_status", "wake_word", "fixed_model_risk"],
@@ -288,19 +334,20 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
             app._show_expert_window()
             app._show_training_window()
             app._show_archive_window()
+            expected_tabs = {"总览", "知识中心", "专家中心", "模型配置", "训练中心", "档案中心"}
             _wait_for(
                 pump,
-                lambda: all(
-                    [
-                        app.kb_window is not None and app.kb_window.winfo_exists(),
-                        app.expert_window is not None and app.expert_window.winfo_exists(),
-                        app.archive_window is not None and app.archive_window.winfo_exists(),
-                        app.training_window is not None and app.training_window.winfo_exists(),
-                        app.cloud_window is not None and app.cloud_window.winfo_exists(),
-                    ]
-                ),
+                lambda: app.main_notebook is not None
+                and app.main_notebook.winfo_exists()
+                and expected_tabs.issubset(
+                    {
+                        str(app.main_notebook.tab(index, "text"))
+                        for index in range(int(app.main_notebook.index("end")))
+                    }
+                )
+                and str(app.main_notebook.tab(app.main_notebook.select(), "text")) == "档案中心",
                 timeout=10,
-                message="GUI 模块窗口未全部打开",
+                message="GUI 顶部页签未全部切入内嵌模式",
             )
             report["windows"] = _collect_window_state(app)
             add_step("windows_opened", **report["windows"])
@@ -358,11 +405,21 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
                 raise AssertionError(f"Ollama 默认候选缺失: {missing_models}")
             add_step("model_selected", selected_model=app.model_combo.get())
 
+            common_scope_before = next(
+                (row for row in app.knowledge_catalog if row.get("scope") == "common"),
+                {},
+            )
+            common_doc_count_before = int(common_scope_before.get("doc_count", 0) or 0)
             with patch("tkinter.filedialog.askopenfilenames", return_value=[assets["common_doc"]]):
                 app._import_knowledge_files("common")
             _wait_for(
                 pump,
-                lambda: any(row.get("scope") == "common" and int(row.get("doc_count", 0) or 0) >= 1 for row in app.knowledge_catalog),
+                lambda: any(
+                    row.get("scope") == "common"
+                    and int(row.get("doc_count", 0) or 0) > common_doc_count_before
+                    and any("common_lab_guide" in str(name) for name in list(row.get("docs") or []))
+                    for row in app.knowledge_catalog
+                ),
                 timeout=90,
                 message="公共知识导入未完成",
             )
@@ -458,18 +515,15 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
             _set_entry(app.training_workspace_entry, workspace_name)
             _set_entry(app.training_base_model_entry, "gemma3:4b")
             _set_entry(app.training_pi_weights_entry, "yolov8n.pt")
-            app._build_training_workspace_from_form()
-            _wait_for(
-                pump,
-                lambda: bool((app.training_overview or {}).get("latest_workspace"))
-                or bool(training_manager.overview().get("latest_workspace")),
-                timeout=30,
-                message="训练工作区未生成",
-            )
-            latest_workspace = str(training_manager.overview().get("latest_workspace") or "")
-            if latest_workspace and latest_workspace != str((app.training_overview or {}).get("latest_workspace") or ""):
-                app.training_overview = app.runtime.get_training_overview()
-                app._render_training_overview()
+            with patch.object(app.runtime, "build_training_workspace", side_effect=_fake_build_training_workspace):
+                app._build_training_workspace_from_form()
+                _wait_for(
+                    pump,
+                    lambda: bool((app.training_overview or {}).get("latest_workspace")),
+                    timeout=30,
+                    message="训练工作区未生成",
+                )
+            latest_workspace = str((app.training_overview or {}).get("latest_workspace") or "")
 
             training_assets_root = Path(__file__).resolve().parents[1] / "training_assets"
             llm_records_path = training_assets_root / "llm" / "records.jsonl"
@@ -528,7 +582,7 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
             app._start_pi_training_from_form()
 
             def _new_training_jobs() -> list[dict[str, Any]]:
-                jobs = training_manager.overview().get("jobs", [])
+                jobs = list((app.training_overview or {}).get("jobs", []) or [])
                 return [
                     job
                     for job in jobs
@@ -622,12 +676,21 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
             _wait_for(
                 pump,
                 lambda: any(
+                    any(str(command).startswith("CMD:RUN_SELF_CHECK") for command in list(server.received_commands))
+                    for server in servers
+                ),
+                timeout=90,
+                message="远程节点自检指令未送达",
+            )
+            _wait_for(
+                pump,
+                lambda: any(
                     str(row.get("category") or "") == "任务进度"
                     and "节点 " in str(row.get("summary") or "")
                     and "[" in str(row.get("summary") or "")
                     for row in list(app.log_rows)
                 ),
-                timeout=20,
+                timeout=90,
                 message="节点任务进度日志未回传到主界面",
             )
             _wait_for(

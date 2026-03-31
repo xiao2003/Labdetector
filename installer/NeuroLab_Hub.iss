@@ -61,6 +61,7 @@ Name: "{app}\APP"; Attribs: hidden system
 Source: "{#ReleaseDir}\NeuroLab Hub.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ReleaseDir}\NeuroLab Hub LLM.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ReleaseDir}\NeuroLab Hub Vision.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ReleaseDir}\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#ReleaseDir}\APP\*"; DestDir: "{app}\APP"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]

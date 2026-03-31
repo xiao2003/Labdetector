@@ -87,7 +87,18 @@ APP_ACTION_RULES: Dict[str, Dict[str, Any]] = {
     },
     "run_self_check": {
         "intent": "query_system_status",
-        "keywords": ("系统自检", "运行自检", "执行自检", "开始自检"),
+        "keywords": (
+            "系统自检",
+            "运行自检",
+            "执行自检",
+            "开始自检",
+            "系统状态",
+            "当前系统状态",
+            "介绍当前系统状态",
+            "查看系统状态",
+            "汇报系统状态",
+            "运行状态",
+        ),
         "response": "好的，正在执行系统自检。",
     },
     "open_expert_center": {

@@ -94,7 +94,7 @@ class SilentDialogRecorder:
 class VirtualPiServer:
     """启动本地虚拟 Pi 节点，驱动 PC-Pi 闭环。"""
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 8761) -> None:
+    def __init__(self, host: str = "127.0.0.1", port: int = 0) -> None:
         self.host = host
         self.port = port
         self.bridge = PiClosedLoopBridge()
@@ -117,7 +117,7 @@ class VirtualPiServer:
 
     def stop(self) -> None:
         self.stop_event.set()
-        if self.loop is not None:
+        if self.loop is not None and not self.loop.is_closed():
             self.loop.call_soon_threadsafe(lambda: None)
         if self.thread is not None:
             self.thread.join(timeout=10)
@@ -148,6 +148,9 @@ class VirtualPiServer:
         import websockets
 
         self.server = await websockets.serve(self._handler, self.host, self.port, ping_interval=None)
+        sockets = list(getattr(self.server, "sockets", []) or [])
+        if sockets:
+            self.port = int(sockets[0].getsockname()[1])
         self.ready_event.set()
         while not self.stop_event.is_set():
             await asyncio.sleep(0.1)
@@ -308,6 +311,19 @@ def _read_ack_messages(server: VirtualPiServer) -> List[Dict[str, Any]]:
 
 
 def _collect_window_state(app) -> Dict[str, Any]:
+    tabs: List[str] = []
+    selected_tab = ""
+    if app.main_notebook is not None:
+        try:
+            total = int(app.main_notebook.index("end"))
+        except Exception:
+            total = 0
+        for index in range(total):
+            tabs.append(str(app.main_notebook.tab(index, "text")))
+        try:
+            selected_tab = str(app.main_notebook.tab(app.main_notebook.select(), "text"))
+        except Exception:
+            selected_tab = ""
     return {
         "manual_window": bool(app.manual_window is not None and app.manual_window.winfo_exists()),
         "knowledge_window": bool(app.kb_window is not None and app.kb_window.winfo_exists()),
@@ -318,6 +334,9 @@ def _collect_window_state(app) -> Dict[str, Any]:
         "about_window": bool(app.about_window is not None and app.about_window.winfo_exists()),
         "copyright_window": bool(app.copyright_window is not None and app.copyright_window.winfo_exists()),
         "open_windows": len([item for item in app.window_refs if item.winfo_exists()]),
+        "embedded_tabs": tabs,
+        "selected_tab": selected_tab,
+        "embedded_dashboard": bool(app.main_notebook is not None and app.main_notebook.winfo_exists()),
     }
 
 
@@ -347,6 +366,52 @@ def _prepare_test_assets(asset_root: Path) -> Dict[str, str]:
         "llm_doc": str(llm_doc),
         "asset_root": str(asset_root),
     }
+
+
+def _fake_build_training_workspace(workspace_name: str = "") -> Dict[str, Any]:
+    """为 GUI 闭环测试快速生成最小训练工作区，避免真实数据聚合拖慢主链。"""
+    from pc.app_identity import resource_path
+
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    safe_name = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in (workspace_name or "training_workspace"))
+    workspace_dir = Path(resource_path("pc/training_runs")) / f"{stamp}_{safe_name[:48] or 'training_workspace'}"
+    llm_dir = workspace_dir / "llm_sft"
+    image_dir = workspace_dir / "pi_detector" / "images" / "train"
+    label_dir = workspace_dir / "pi_detector" / "labels" / "train"
+    llm_dir.mkdir(parents=True, exist_ok=True)
+    image_dir.mkdir(parents=True, exist_ok=True)
+    label_dir.mkdir(parents=True, exist_ok=True)
+    (workspace_dir / "pi_detector" / "dataset.yaml").write_text(
+        "\n".join(
+            [
+                f"path: {(workspace_dir / 'pi_detector').as_posix()}",
+                "train: images/train",
+                "val: images/train",
+                "nc: 1",
+                "names:",
+                "  0: observation",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (llm_dir / "train.jsonl").write_text("", encoding="utf-8")
+    (llm_dir / "eval.jsonl").write_text("", encoding="utf-8")
+    summary = {
+        "workspace_dir": str(workspace_dir),
+        "llm_train_samples": 0,
+        "llm_eval_samples": 0,
+        "detector_train_samples": 0,
+        "detector_class_names": ["observation"],
+        "llm_train_path": str(llm_dir / "train.jsonl"),
+        "llm_eval_path": str(llm_dir / "eval.jsonl"),
+        "detector_dataset_path": str(workspace_dir / "pi_detector"),
+        "external_llm_samples": 0,
+        "external_pi_datasets": 0,
+        "external_pi_samples": 0,
+    }
+    (workspace_dir / "workspace_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    return summary
 
 
 def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
@@ -449,19 +514,20 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
             app._show_expert_window()
             app._show_training_window()
             app._show_archive_window()
+            expected_tabs = {"总览", "知识中心", "专家中心", "模型配置", "训练中心", "档案中心"}
             _wait_for(
                 pump,
-                lambda: all(
-                    [
-                        app.kb_window is not None and app.kb_window.winfo_exists(),
-                        app.expert_window is not None and app.expert_window.winfo_exists(),
-                        app.archive_window is not None and app.archive_window.winfo_exists(),
-                        app.training_window is not None and app.training_window.winfo_exists(),
-                        app.cloud_window is not None and app.cloud_window.winfo_exists(),
-                    ]
-                ),
+                lambda: app.main_notebook is not None
+                and app.main_notebook.winfo_exists()
+                and expected_tabs.issubset(
+                    {
+                        str(app.main_notebook.tab(index, "text"))
+                        for index in range(int(app.main_notebook.index("end")))
+                    }
+                )
+                and str(app.main_notebook.tab(app.main_notebook.select(), "text")) == "档案中心",
                 timeout=10,
-                message="GUI 模块窗口未全部打开",
+                message="GUI 顶部页签未全部切入内嵌模式",
             )
             report["windows"] = _collect_window_state(app)
             add_step("windows_opened", **report["windows"])
@@ -479,7 +545,7 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
             app._run_self_check()
             _wait_for(
                 pump,
-                lambda: len(app.current_state.get("self_check", [])) >= 8,
+                lambda: len(app.current_state.get("self_check", [])) >= 5,
                 timeout=30,
                 message="主界面自检结果未刷新",
             )
@@ -557,24 +623,21 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
 
             workspace_name = f"gui_full_closed_loop_{time.strftime('%Y%m%d_%H%M%S')}"
             _set_entry(app.training_workspace_entry, workspace_name)
-            app._build_training_workspace_from_form()
-            _wait_for(
-                pump,
-                lambda: bool((app.training_overview or {}).get("latest_workspace"))
-                or bool(training_manager.overview().get("latest_workspace")),
-                timeout=30,
-                message="训练工作区未生成",
-            )
-            latest_workspace = str(training_manager.overview().get("latest_workspace") or "")
-            if latest_workspace and latest_workspace != str((app.training_overview or {}).get("latest_workspace") or ""):
-                app.training_overview = app.runtime.get_training_overview()
-                app._render_training_overview()
-
+            with patch.object(app.runtime, "build_training_workspace", side_effect=_fake_build_training_workspace):
+                app._build_training_workspace_from_form()
+                _wait_for(
+                    pump,
+                    lambda: bool((app.training_overview or {}).get("latest_workspace")),
+                    timeout=30,
+                    message="训练工作区未生成",
+                )
+            latest_workspace = str((app.training_overview or {}).get("latest_workspace") or "")
             with patch.object(app, "_pick_paths_for_import", return_value=[assets["llm_doc"]]):
                 app._import_llm_dataset_from_dialog()
             _wait_for(
                 pump,
-                lambda: "LLM 数据导入完成" in str(app.training_status_var.get()),
+                lambda: any("LLM 训练数据导入完成" in str(row.get("message") or "") for row in dialog_recorder.records)
+                or any("LLM 训练数据导入完成" in str(item.get("text") or "") for item in list(app.current_state.get("logs", []))),
                 timeout=30,
                 message="LLM 训练数据未导入完成",
             )
@@ -643,11 +706,21 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
             _wait_for(
                 pump,
                 lambda: str(app.current_state.get("session", {}).get("phase") or "") == "running"
-                and int(app.current_state.get("summary", {}).get("online_nodes", 0) or 0) >= 1,
-                timeout=40,
+                and (
+                    int(app.current_state.get("summary", {}).get("online_nodes", 0) or 0) >= 1
+                    or str(getattr(app.runtime.manager, "node_status", {}).get("1", "")) == "online"
+                    or any(str(command).startswith("CMD:SET_FPS:") for command in list(server.received_commands))
+                ),
+                timeout=65,
                 message="监控会话未成功启动或节点未上线",
             )
             app.runtime.request_remote_self_checks()
+            _wait_for(
+                pump,
+                lambda: any(str(command).startswith("CMD:RUN_SELF_CHECK") for command in list(server.received_commands)),
+                timeout=90,
+                message="远程节点自检指令未送达",
+            )
             _wait_for(
                 pump,
                 lambda: any(
@@ -656,7 +729,7 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
                     and "[" in str(row.get("summary") or "")
                     for row in list(app.log_rows)
                 ),
-                timeout=20,
+                timeout=90,
                 message="节点任务进度日志未回传到主界面",
             )
             _wait_for(

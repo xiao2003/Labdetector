@@ -12,7 +12,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, Iterable
 
-from pc.core.orchestrator_runtime import load_asset_manifest, materialize_runtime_bundle
+from pc.core.orchestrator_runtime import materialize_model_bundle, materialize_runtime_bundle
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -130,9 +130,15 @@ def _iter_source_files() -> Iterable[tuple[Path, Path]]:
 
 
 def _copy_runtime_dirs(stage_dir: Path) -> None:
-    exe_target = stage_dir / "NeuroLab Hub SilentDir.exe"
     internal_target = stage_dir / "_internal"
-    _copy_file(DIST_ROOT / "NeuroLab Hub SilentDir.exe", exe_target)
+    source_exe = DIST_ROOT / "NeuroLab Hub SilentDir.exe"
+    for launcher_name in (
+        "NeuroLab Hub SilentDir.exe",
+        "NeuroLab Hub.exe",
+        "NeuroLab Hub LLM.exe",
+        "NeuroLab Hub Vision.exe",
+    ):
+        _copy_file(source_exe, stage_dir / launcher_name)
     shutil.copytree(DIST_ROOT / "_internal", internal_target, dirs_exist_ok=True)
 
 
@@ -175,6 +181,31 @@ def _materialize_orchestrator_runtime(stage_dir: Path) -> Dict[str, Any]:
         "runtime_dir": str(runtime_target),
         "manifest_path": str(manifest_path),
         "copied_files": list(materialized.get("copied_files") or []),
+    }
+
+
+def _materialize_orchestrator_model(stage_dir: Path) -> Dict[str, Any]:
+    manifest_path = stage_dir / "APP" / "pc" / "models" / "orchestrator" / "orchestrator_assets.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"固定管家层资产清单缺失: {manifest_path}")
+    staged_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    model_meta = dict(staged_manifest.get("model") or {})
+    filename = str(model_meta.get("filename") or "").strip()
+    if not filename:
+        raise FileNotFoundError("固定管家层模型清单缺少 filename。")
+    model_target = stage_dir / "APP" / "pc" / "models" / "orchestrator" / filename
+    materialized = materialize_model_bundle(model_target)
+    model_meta["size"] = int(materialized.get("size") or 0)
+    model_meta["sha256"] = str(materialized.get("sha256") or "")
+    staged_manifest["model"] = model_meta
+    manifest_path.write_text(json.dumps(staged_manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    if not model_target.exists():
+        raise FileNotFoundError(f"固定管家层模型未能复制到发布目录: {model_target}")
+    return {
+        "model_path": str(model_target),
+        "model_size": int(materialized.get("size") or 0),
+        "model_sha256": str(materialized.get("sha256") or ""),
+        "manifest_path": str(manifest_path),
     }
 
 
@@ -246,7 +277,8 @@ def build_release_package(release_root: Path, version: str, label: str) -> dict[
     copy_stats = _copy_app_tree(stage_dir)
     _ensure_clean_runtime_placeholders(stage_dir)
     orchestrator_assets = _materialize_orchestrator_runtime(stage_dir)
-    asset_manifest = load_asset_manifest()
+    orchestrator_model = _materialize_orchestrator_model(stage_dir)
+    asset_manifest = json.loads(Path(orchestrator_model["manifest_path"]).read_text(encoding="utf-8"))
 
     manifest = {
         "version": version,
@@ -265,6 +297,9 @@ def build_release_package(release_root: Path, version: str, label: str) -> dict[
             "staged_runtime_dir": orchestrator_assets["runtime_dir"],
             "staged_manifest_path": orchestrator_assets["manifest_path"],
             "runtime_files": orchestrator_assets["copied_files"],
+            "staged_model_path": orchestrator_model["model_path"],
+            "staged_model_size": orchestrator_model["model_size"],
+            "staged_model_sha256": orchestrator_model["model_sha256"],
         },
     }
     manifest_path = _write_manifest(stage_dir, manifest)

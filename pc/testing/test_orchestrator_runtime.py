@@ -51,7 +51,6 @@ class OrchestratorRuntimeTests(unittest.TestCase):
                  patch("pc.core.orchestrator_runtime.orchestrator_state_path", return_value=state_path), \
                  patch("pc.core.orchestrator_runtime.runtime_binary_path", return_value=runtime_path), \
                  patch("pc.core.orchestrator_runtime.model_binary_path", return_value=model_path), \
-                 patch("pc.core.orchestrator_runtime._download_model_if_needed", return_value=model_path), \
                  patch("pc.core.orchestrator_runtime.warm_up_orchestrator_runtime", side_effect=subprocess.TimeoutExpired(["llama-cli"], 90)):
                 payload = prepare_orchestrator_assets()
 

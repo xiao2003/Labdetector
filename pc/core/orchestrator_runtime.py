@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, Optional
 
 from pc.app_identity import resource_path
 from pc.core.config import get_config
-from pc.core.runtime_assets import orchestrator_download_dir, orchestrator_model_dir, orchestrator_state_path
+from pc.core.runtime_assets import orchestrator_state_path
 from pc.core.subprocess_utils import run_hidden
 
 
@@ -107,7 +107,10 @@ def model_binary_path() -> Path:
     filename = str(manifest.get("model", {}).get("filename") or "").strip()
     if not filename:
         raise OrchestratorRuntimeError("固定管家层模型清单缺少 filename。")
-    return orchestrator_model_dir() / filename
+    return _resolve_project_resource(
+        "orchestrator.model_relpath",
+        f"pc/models/orchestrator/{filename}",
+    )
 
 
 def read_runtime_state() -> Dict[str, Any]:
@@ -159,6 +162,24 @@ def _build_runtime_cache_root() -> Path:
     root = asset_manifest_path().resolve().parents[3] / ".build" / "orchestrator_runtime" / version
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def _build_model_cache_root() -> Path:
+    manifest = load_asset_manifest()
+    revision = str(manifest.get("model", {}).get("revision") or manifest.get("model", {}).get("filename") or "unknown").strip() or "unknown"
+    root = asset_manifest_path().resolve().parents[3] / ".build" / "orchestrator_model" / revision
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def orchestrator_model_dir() -> Path:
+    """兼容旧测试入口，返回固定模型所在目录。"""
+    return model_binary_path().parent
+
+
+def orchestrator_download_dir() -> Path:
+    """兼容旧测试入口，返回模型缓存目录。"""
+    return _build_model_cache_root()
 
 
 def _log(log_callback: Optional[Callable[[str], None]], message: str) -> None:
@@ -362,28 +383,58 @@ def _extract_first_json_object(raw_text: str) -> Dict[str, Any]:
     return payload
 
 
-def _download_model_if_needed(log_callback: Optional[Callable[[str], None]] = None) -> Path:
+def _prepare_model_cache(log_callback: Optional[Callable[[str], None]] = None) -> Path:
     manifest = load_asset_manifest()
     model_meta = dict(manifest.get("model") or {})
-    target_path = model_binary_path()
+    filename = str(model_meta.get("filename") or "").strip()
+    if not filename:
+        raise OrchestratorRuntimeError("固定管家层模型清单缺少 filename。")
     expected_size = int(model_meta.get("size") or 0)
     expected_sha256 = str(model_meta.get("sha256") or "").strip()
-    if target_path.exists():
-        actual_size = target_path.stat().st_size
-        if actual_size == expected_size and _sha256_of_file(target_path).lower() == expected_sha256.lower():
-            return target_path
-    download_dir = orchestrator_download_dir()
-    archive_path = download_dir / str(model_meta.get("filename") or "model.gguf")
+    download_url = str(model_meta.get("download_url") or "").strip()
+    if not download_url:
+        raise OrchestratorRuntimeError("固定管家层模型清单缺少 download_url。")
+    cache_root = _build_model_cache_root()
+    archive_path = cache_root / filename
+    if archive_path.exists():
+        actual_size = archive_path.stat().st_size
+        actual_sha256 = _sha256_of_file(archive_path)
+        if (not expected_size or actual_size == expected_size) and (not expected_sha256 or actual_sha256.lower() == expected_sha256.lower()):
+            return archive_path
     _download_file(
-        url=str(model_meta.get("download_url") or "").strip(),
+        url=download_url,
         target_path=archive_path,
         expected_sha256=expected_sha256,
         expected_size=expected_size,
         log_callback=log_callback,
     )
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(archive_path, target_path)
-    return target_path
+    return archive_path
+
+
+def materialize_model_bundle(
+    destination_path: Path,
+    *,
+    log_callback: Optional[Callable[[str], None]] = None,
+) -> Dict[str, Any]:
+    manifest = load_asset_manifest()
+    source_path = model_binary_path()
+    if source_path.exists():
+        cache_path = source_path
+    else:
+        cache_path = _prepare_model_cache(log_callback=log_callback)
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    if cache_path.resolve() != destination_path.resolve():
+        shutil.copy2(cache_path, destination_path)
+    actual_size = destination_path.stat().st_size
+    actual_sha256 = _sha256_of_file(destination_path)
+    return {
+        "model_path": str(destination_path),
+        "filename": destination_path.name,
+        "size": actual_size,
+        "sha256": actual_sha256,
+        "vendor": str(manifest.get("model", {}).get("vendor") or ""),
+        "revision": str(manifest.get("model", {}).get("revision") or ""),
+    }
 
 
 def warm_up_orchestrator_runtime(log_callback: Optional[Callable[[str], None]] = None) -> None:
@@ -412,14 +463,14 @@ def prepare_orchestrator_assets(log_callback: Optional[Callable[[str], None]] = 
                 planner_backend="deterministic",
             )
 
+        if not model_binary_path().exists():
+            return _write_runtime_state(
+                STATE_NOT_INSTALLED,
+                reason="固定管家层模型未随安装包就位",
+                planner_backend="deterministic",
+            )
+
         try:
-            if not model_binary_path().exists():
-                _write_runtime_state(
-                    STATE_DOWNLOADING,
-                    reason="固定管家层模型正在后台下载",
-                    planner_backend="deterministic",
-                )
-                _download_model_if_needed(log_callback=log_callback)
             _write_runtime_state(
                 STATE_WARMING_UP,
                 reason="固定管家层模型正在后台预热",
@@ -472,8 +523,8 @@ def get_runtime_status() -> OrchestratorRuntimeStatus:
         reason = "缺少内置 llama.cpp 运行时"
         planner_backend = "deterministic"
         status_name = STATE_NOT_INSTALLED
-    elif not model_exists and status_name == STATE_DOWNLOADING:
-        reason = "固定管家层模型正在后台下载"
+    elif not model_exists:
+        reason = "固定管家层模型未随安装包就位"
     elif status_name == STATE_WARMING_UP:
         reason = "固定管家层模型正在后台预热"
     elif status_name == STATE_DOWNLOAD_FAILED:
@@ -482,10 +533,7 @@ def get_runtime_status() -> OrchestratorRuntimeStatus:
     elif ready:
         reason = "固定管家层运行时已就绪"
     elif model_exists:
-        reason = "固定管家层模型已下载，等待后台预热"
-        planner_backend = "deterministic"
-    else:
-        reason = "固定管家层模型尚未下载"
+        reason = "固定管家层模型已就位，等待后台预热"
         planner_backend = "deterministic"
 
     return OrchestratorRuntimeStatus(

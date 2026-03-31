@@ -919,6 +919,8 @@ def set_voice_local_command_handler(handler: Optional[Callable[[str, str], Optio
     _pending_local_command_handler = handler
     if _voice_interaction is not None:
         _voice_interaction.set_local_command_handler(handler)
+    if _remote_text_router is not None:
+        _remote_text_router.set_local_command_handler(handler)
 
 
 def get_voice_interaction() -> Optional[VoiceInteraction]:
@@ -937,5 +939,7 @@ def get_remote_text_router() -> Optional[VoiceInteraction]:
     global _remote_text_router
     if _remote_text_router is None:
         _remote_text_router = VoiceInteraction(initialize_audio_models=False)
+        if _pending_local_command_handler is not None:
+            _remote_text_router.set_local_command_handler(_pending_local_command_handler)
     return _remote_text_router
 

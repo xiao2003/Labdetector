@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import patch
 
+from pc.core.orchestrator import orchestrator
 from pc.core.orchestrator_model import infer_edge_plan, infer_voice_plan
 from pc.core.orchestrator_runtime import OrchestratorRuntimeError
 
@@ -53,6 +54,22 @@ class OrchestratorModelTests(unittest.TestCase):
             plan = infer_edge_plan("危化品识别", context={"pi_id": "pi-1"})
 
         self.assertIsNone(plan)
+
+    def test_plan_voice_command_treats_system_status_as_app_action(self) -> None:
+        with patch("pc.core.orchestrator.infer_voice_plan", return_value=None), patch(
+            "pc.core.orchestrator.expert_manager.route_voice_command"
+        ) as route_voice_command:
+            result = orchestrator.plan_voice_command(
+                "介绍当前系统状态",
+                source="pi:1",
+                frame=None,
+                model_name="gemma3:4b",
+                context={"node_id": "1"},
+            )
+
+        self.assertEqual(result.intent, "app_action")
+        self.assertEqual(result.actions, [{"type": "app_action", "intent": "run_self_check"}])
+        route_voice_command.assert_not_called()
 
 
 if __name__ == "__main__":
