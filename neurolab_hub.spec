@@ -114,7 +114,7 @@ exe = EXE(
     disable_windowed_traceback=False,
     icon=icon_file if os.path.exists(icon_file) else None,
     version=version_file if os.path.exists(version_file) else None,
-    contents_directory="APP",
+    contents_directory="_internal",
 )
 
 coll = COLLECT(

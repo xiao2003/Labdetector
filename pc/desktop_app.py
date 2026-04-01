@@ -94,7 +94,21 @@ def _classify_log_entry(text: str, level: str, lowered: str) -> tuple[str, str]:
         summary = re.sub(r"\s+", " ", text).strip()
         return "模型服务", summary
     summary = re.sub(r"\s+", " ", text).strip()
-    return "运行状态", summary
+    return "系统", summary
+
+
+def _present_log_category(category: str) -> str:
+    """把内部分类收敛成界面可读口径，避免出现工程味标签。"""
+    normalized = str(category or "").strip()
+    if normalized == "任务进度":
+        return "层状态"
+    if normalized in {"节点语音", "节点播报", "节点通信"}:
+        return "Pi 节点"
+    if normalized in {"启动自检", "模型服务"}:
+        return "系统"
+    if normalized == "语音交互":
+        return "语音"
+    return normalized or "系统"
 
 
 def _matches_log_filter(item: Dict[str, str], selected_filter: str) -> bool:
@@ -173,7 +187,7 @@ def _format_kb_import_feedback(payload: Dict[str, Any], *, now: datetime | None 
 
 
 def _present_hero_message(status_message: str, orchestrator_status: str) -> str:
-    """把运行时状态文案收敛成首屏可读口径，避免旧工程状态词回流到 GUI。"""
+    """把系统状态文案收敛成首屏可读口径，避免旧工程状态词回流到 GUI。"""
     normalized_message = str(status_message or "").strip()
     if normalized_message in {"", "等待配置", "欢迎使用 NeuroLab Hub 主控制台"}:
         return _present_orchestrator_status(orchestrator_status)
@@ -443,6 +457,9 @@ class DesktopApp:
         self.log_filter_var = tk.StringVar(value=LOG_FILTER_OPTIONS[0])
         self.priority_event_title_var = tk.StringVar(value="高优先级事项：当前无需要处理的事项")
         self.priority_event_detail_var = tk.StringVar(value="")
+        self.layer_issue_title_var = tk.StringVar(value="当前未发现需要处理的异常")
+        self.layer_issue_detail_var = tk.StringVar(value="首次启动后，系统会自动补全缺失项并再次自检。")
+        self.layer_issue_action_var = tk.StringVar(value="暂无修复动作")
         self.task_progress_rows: List[Dict[str, str]] = []
         self.log_row_keys: List[str] = []
         self.log_rows: List[Dict[str, str]] = []
@@ -455,6 +472,9 @@ class DesktopApp:
         self.node_log_empty_label: ttk.Label | None = None
         self.node_log_cards: Dict[str, ttk.Treeview] = {}
         self.node_log_cache: Dict[str, List[str]] = {}
+        self.layer_issue_button: ttk.Button | None = None
+        self.layer_issue_card: ttk.Frame | None = None
+        self.current_layer_issue: Dict[str, Any] = {}
         self.main_splitter: tk.PanedWindow | None = None
         self.main_splitter_user_resized = False
         self.main_splitter_mode = "idle"
@@ -573,7 +593,13 @@ class DesktopApp:
         style.configure("SplashHint.TLabel", background="#182330", foreground="#9fb6c9", font=("Microsoft YaHei UI", 9))
         style.configure("TButton", font=("Microsoft YaHei UI", 10), padding=(self._scaled(10), self._scaled(8)))
         style.configure("Accent.TButton", font=("Microsoft YaHei UI", 10, "bold"), padding=(self._scaled(10), self._scaled(8)))
+        style.configure("Nav.TButton", font=("Microsoft YaHei UI", 11, "bold"), padding=(self._scaled(12), self._scaled(8)))
         style.configure("TCombobox", padding=self._scaled(6))
+        try:
+            style.layout("Dashboard.TNotebook.Tab", [])
+        except Exception:
+            pass
+        style.configure("Dashboard.TNotebook", background="#0f1720", borderwidth=0, tabmargins=(0, 0, 0, 0))
         style.configure(
             "Treeview",
             rowheight=self._scaled(38),
@@ -718,7 +744,7 @@ class DesktopApp:
         shell = ttk.Frame(self.root, style="Root.TFrame", padding=14)
         shell.pack(fill="both", expand=True)
         shell.columnconfigure(0, weight=1)
-        shell.rowconfigure(1, weight=1)
+        shell.rowconfigure(2, weight=1)
         self.shell_frame = shell
 
         hero = ttk.Frame(shell, style="Panel.TFrame", padding=14)
@@ -740,16 +766,24 @@ class DesktopApp:
             padx=(12, 0),
             pady=(8, 0),
         )
-        self.hero_message_label = ttk.Label(
-            hero_left,
-            textvariable=self.hero_var,
-            style="Body.TLabel",
-            justify="left",
+        hero_nav = ttk.Frame(hero, style="Panel.TFrame")
+        hero_nav.grid(row=0, column=1, sticky="ne", padx=(16, 0))
+        hero_nav_buttons = ttk.Frame(hero_nav, style="Panel.TFrame")
+        hero_nav_buttons.grid(row=0, column=0, sticky="e")
+        self._grid_action_bar(
+            hero_nav_buttons,
+            [
+                ttk.Button(hero_nav_buttons, text="总览", style="Nav.TButton", command=lambda: self._select_dashboard_tab("overview")),
+                ttk.Button(hero_nav_buttons, text="专家中心", style="Nav.TButton", command=lambda: self._select_dashboard_tab("expert")),
+                ttk.Button(hero_nav_buttons, text="知识中心", style="Nav.TButton", command=lambda: self._select_dashboard_tab("knowledge")),
+                ttk.Button(hero_nav_buttons, text="模型配置", style="Nav.TButton", command=lambda: self._select_dashboard_tab("cloud")),
+                ttk.Button(hero_nav_buttons, text="训练中心", style="Nav.TButton", command=lambda: self._select_dashboard_tab("training")),
+                ttk.Button(hero_nav_buttons, text="档案中心", style="Nav.TButton", command=lambda: self._select_dashboard_tab("archive")),
+            ],
+            columns=6,
         )
-        self.hero_message_label.pack(anchor="w", fill="x", pady=(12, 0))
-        self._register_adaptive_wrap_label(self.hero_message_label, hero_left, padding=28, min_width=320, max_width=1120)
         self.session_badge = tk.Label(
-            hero_left,
+            hero_nav,
             textvariable=self.session_var,
             bg="#f6c344",
             fg="#0f1720",
@@ -757,22 +791,10 @@ class DesktopApp:
             padx=10,
             pady=6,
         )
-        self.session_badge.pack(anchor="w", pady=(12, 0))
+        self.session_badge.grid(row=0, column=1, sticky="e", padx=(12, 0))
+        self.hero_message_label = None
 
-        hero_actions = ttk.Frame(hero, style="Panel.TFrame")
-        hero_actions.grid(row=0, column=1, sticky="ne", padx=(16, 0))
-        self._grid_action_bar(
-            hero_actions,
-            [
-                ttk.Button(hero_actions, text="语音测试", command=self._start_voice_test_from_ui),
-                ttk.Button(hero_actions, text="系统自检", command=self._run_self_check),
-                ttk.Button(hero_actions, text="启动监控", style="Accent.TButton", command=self._start_session),
-                ttk.Button(hero_actions, text="停止监控", command=self._stop_session),
-            ],
-            columns=4,
-        )
-
-        notebook = ttk.Notebook(shell)
+        notebook = ttk.Notebook(shell, style="Dashboard.TNotebook")
         notebook.grid(row=1, column=0, sticky="nsew")
         self.main_notebook = notebook
 
@@ -802,28 +824,12 @@ class DesktopApp:
         self.wall_canvas = tk.Canvas(hidden_host, bg="#182330", highlightthickness=0, width=4, height=4)
         self.wall_inner = ttk.Frame(self.wall_canvas, style="Root.TFrame")
         self.wall_window = self.wall_canvas.create_window((0, 0), window=self.wall_inner, anchor="nw")
-        self.log_canvas = tk.Canvas(hidden_host, bg="#182330", highlightthickness=0, width=4, height=4)
-        self.log_content = ttk.Frame(self.log_canvas, style="Root.TFrame")
-        self.log_content_window = self.log_canvas.create_window((0, 0), window=self.log_content, anchor="nw")
-        self.log_tree = ttk.Treeview(hidden_host, columns=("time", "level", "category", "summary"), show="headings", height=4)
-        self.log_tree.heading("time", text="时间")
-        self.log_tree.heading("level", text="级别")
-        self.log_tree.heading("category", text="来源")
-        self.log_tree.heading("summary", text="事件摘要")
-        self.log_detail_text = tk.Text(hidden_host, bg="#0f1720", fg="#dbe6f2", insertbackground="#dbe6f2", relief="flat", font=("Microsoft YaHei UI", 10), wrap="word")
-        self.log_tree.tag_configure("INFO", foreground="#dbe6f2")
-        self.log_tree.tag_configure("WARN", foreground="#ffd166")
-        self.log_tree.tag_configure("WARNING", foreground="#ffd166")
-        self.log_tree.tag_configure("ERROR", foreground="#ff8f8f")
-        self.log_tree.tag_configure("SUCCESS", foreground="#6ce5b1")
 
         footer = ttk.Frame(shell, style="Panel.TFrame", padding=(20, 10))
         footer.grid(row=2, column=0, sticky="ew", pady=(16, 0))
         footer.columnconfigure(0, weight=1)
         ttk.Label(footer, textvariable=self.footer_var, style="Foot.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(footer, text=f"{COMPANY_NAME} | v{self.app_version}", style="Foot.TLabel").grid(row=0, column=1, sticky="e")
-        if self.log_tree is not None:
-            self._register_scroll_target(self.log_tree, self.log_tree)
         if self.check_tree is not None:
             self._register_scroll_target(self.check_tree, self.check_tree)
 
@@ -838,44 +844,84 @@ class DesktopApp:
         self.pc_dashboard_panel.rowconfigure(1, weight=1)
 
         summary_panel = ttk.Frame(self.pc_dashboard_panel, style="SoftPanel.TFrame", padding=16)
-        summary_panel.grid(row=0, column=0, sticky="ew")
-        ttk.Label(summary_panel, text="PC 仪表盘", style="PanelTitle.TLabel").pack(anchor="w")
-        self.summary_frame = ttk.Frame(summary_panel, style="SoftPanel.TFrame")
-        self.summary_frame.pack(fill="x", pady=(12, 0))
+        summary_panel.grid(row=0, column=0, sticky="nsew")
+        summary_panel.columnconfigure(0, weight=1)
+        summary_panel.rowconfigure(2, weight=1)
+        summary_header = ttk.Frame(summary_panel, style="SoftPanel.TFrame")
+        summary_header.grid(row=0, column=0, sticky="ew")
+        summary_header.columnconfigure(0, weight=1)
+        ttk.Label(summary_header, text="总仪表盘", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
+        overview_actions = ttk.Frame(summary_header, style="SoftPanel.TFrame")
+        overview_actions.grid(row=0, column=1, sticky="e")
+        self._grid_action_bar(
+            overview_actions,
+            [
+                ttk.Button(overview_actions, text="刷新模型", command=self._refresh_models),
+                ttk.Button(overview_actions, text="系统自检", command=self._run_self_check),
+                ttk.Button(overview_actions, text="启动监控", style="Accent.TButton", command=self._start_session),
+                ttk.Button(overview_actions, text="停止监控", command=self._stop_session),
+            ],
+            columns=4,
+        )
+        self.layer_issue_card = ttk.Frame(summary_panel, style="Card.TFrame", padding=12)
+        self.layer_issue_card.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+        self.layer_issue_card.columnconfigure(0, weight=1)
+        ttk.Label(self.layer_issue_card, textvariable=self.layer_issue_title_var, style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
+        layer_issue_detail = ttk.Label(
+            self.layer_issue_card,
+            textvariable=self.layer_issue_detail_var,
+            style="Body.TLabel",
+            justify="left",
+        )
+        layer_issue_detail.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self._register_adaptive_wrap_label(layer_issue_detail, self.layer_issue_card, padding=24, min_width=280, max_width=760)
+        self.layer_issue_button = ttk.Button(self.layer_issue_card, textvariable=self.layer_issue_action_var, command=self._repair_selected_layer_issue)
+        self.layer_issue_button.grid(row=0, column=1, rowspan=2, sticky="e", padx=(12, 0))
+        self.summary_frame = None
+        self.pc_layer_cards_frame = ttk.Frame(summary_panel, style="SoftPanel.TFrame")
+        self.pc_layer_cards_frame.grid(row=2, column=0, sticky="nsew", pady=(12, 0))
+        for column in range(3):
+            self.pc_layer_cards_frame.columnconfigure(column, weight=1)
+        self.pi_layer_cards_frame = None
 
-        pc_status_panel = ttk.Frame(self.pc_dashboard_panel, style="SoftPanel.TFrame", padding=16)
-        pc_status_panel.grid(row=1, column=0, sticky="nsew", pady=(14, 0))
-        pc_status_panel.columnconfigure(0, weight=1)
-        pc_status_panel.rowconfigure(1, weight=1)
-        ttk.Label(pc_status_panel, text="PC 层状态", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
-        self.pc_layer_cards_frame = ttk.Frame(pc_status_panel, style="SoftPanel.TFrame")
-        self.pc_layer_cards_frame.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
-        self.pc_layer_cards_frame.columnconfigure(0, weight=1)
-        self.pc_layer_cards_frame.columnconfigure(1, weight=1)
+        log_panel = ttk.Frame(self.pc_dashboard_panel, style="Panel.TFrame")
+        log_panel.grid(row=1, column=0, sticky="nsew", pady=(14, 0))
+        log_panel.columnconfigure(0, weight=1)
+        log_panel.rowconfigure(1, weight=1)
 
-        self.pi_dashboard_panel = ttk.Frame(parent, style="Panel.TFrame")
-        self.pi_dashboard_panel.grid(row=0, column=1, sticky="nsew")
-        self.pi_dashboard_panel.columnconfigure(0, weight=1)
-        self.pi_dashboard_panel.rowconfigure(2, weight=1)
+        log_header = ttk.Frame(log_panel, style="SoftPanel.TFrame", padding=16)
+        log_header.grid(row=0, column=0, sticky="ew")
+        log_header.columnconfigure(0, weight=1)
+        self.dashboard_priority_label = ttk.Label(log_header, textvariable=self.priority_event_title_var, style="PanelTitle.TLabel", justify="left")
+        self.dashboard_priority_label.grid(row=0, column=0, sticky="ew")
+        self._register_adaptive_wrap_label(self.dashboard_priority_label, log_header, padding=24, min_width=260, max_width=520)
 
-        priority_panel = ttk.Frame(self.pi_dashboard_panel, style="Card.TFrame", padding=16)
-        priority_panel.grid(row=0, column=0, sticky="ew")
-        priority_panel.columnconfigure(0, weight=1)
-        self.dashboard_priority_label = ttk.Label(priority_panel, textvariable=self.priority_event_title_var, style="PanelTitle.TLabel", justify="left")
-        self.dashboard_priority_label.grid(row=0, column=0, sticky="w")
-        self._register_adaptive_wrap_label(self.dashboard_priority_label, priority_panel, padding=24, min_width=220, max_width=520)
+        log_body = ttk.Frame(log_panel, style="SoftPanel.TFrame", padding=16)
+        log_body.grid(row=1, column=0, sticky="nsew", pady=(14, 0))
+        log_body.columnconfigure(0, weight=1)
+        log_body.rowconfigure(0, weight=1)
+        self.log_tree = ttk.Treeview(log_body, columns=("time", "level", "category", "summary"), show="headings")
+        self.log_tree.heading("time", text="时间")
+        self.log_tree.heading("level", text="级别")
+        self.log_tree.heading("category", text="层/节点")
+        self.log_tree.heading("summary", text="事项")
+        self.log_tree.column("time", width=142, anchor="w")
+        self.log_tree.column("level", width=90, anchor="center")
+        self.log_tree.column("category", width=110, anchor="center")
+        self.log_tree.column("summary", width=460, anchor="w")
+        self.log_tree.grid(row=0, column=0, sticky="nsew")
+        log_scroll = ttk.Scrollbar(log_body, orient="vertical", command=self.log_tree.yview)
+        log_scroll.grid(row=0, column=1, sticky="ns")
+        self.log_tree.configure(yscrollcommand=log_scroll.set)
+        self.log_tree.tag_configure("INFO", foreground="#dbe6f2")
+        self.log_tree.tag_configure("WARN", foreground="#ffd166")
+        self.log_tree.tag_configure("WARNING", foreground="#ffd166")
+        self.log_tree.tag_configure("ERROR", foreground="#ff8f8f")
+        self.log_tree.tag_configure("SUCCESS", foreground="#6ce5b1")
+        self._register_scroll_target(self.log_tree, self.log_tree)
 
-        pi_status_panel = ttk.Frame(self.pi_dashboard_panel, style="SoftPanel.TFrame", padding=16)
-        pi_status_panel.grid(row=1, column=0, sticky="nsew", pady=(14, 0))
-        pi_status_panel.columnconfigure(0, weight=1)
-        pi_status_panel.rowconfigure(1, weight=1)
-        ttk.Label(pi_status_panel, text="Pi 层状态", style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
-        self.pi_layer_cards_frame = ttk.Frame(pi_status_panel, style="SoftPanel.TFrame")
-        self.pi_layer_cards_frame.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
-        self.pi_layer_cards_frame.columnconfigure(0, weight=1)
-
-        node_panel_wrap = ttk.Frame(self.pi_dashboard_panel, style="SoftPanel.TFrame", padding=16)
-        node_panel_wrap.grid(row=2, column=0, sticky="nsew", pady=(14, 0))
+        node_panel_wrap = ttk.Frame(parent, style="SoftPanel.TFrame", padding=16)
+        node_panel_wrap.grid(row=0, column=1, sticky="nsew")
         node_panel_wrap.columnconfigure(0, weight=1)
         node_panel_wrap.rowconfigure(0, weight=1)
         self.node_logs_container = node_panel_wrap
@@ -889,7 +935,7 @@ class DesktopApp:
         self.node_log_panel.columnconfigure(0, weight=1)
         self.node_log_panel.bind("<Configure>", lambda _e: self.node_log_canvas.configure(scrollregion=self.node_log_canvas.bbox("all")) if self.node_log_canvas is not None else None)
         self.node_log_canvas.bind("<Configure>", self._on_node_log_canvas_configure)
-        self.node_logs_title = ttk.Label(self.node_log_panel, text="Pi 节点状态", style="PanelTitle.TLabel")
+        self.node_logs_title = ttk.Label(self.node_log_panel, text="监控状态", style="PanelTitle.TLabel")
         self.node_logs_title.grid(row=0, column=0, sticky="w")
         self.node_log_empty_label = ttk.Label(self.node_log_panel, text="等待节点连接或节点状态更新。", style="Foot.TLabel")
         self.node_log_empty_label.grid(row=1, column=0, sticky="w", pady=(8, 0))
@@ -1074,10 +1120,8 @@ class DesktopApp:
             session_actions,
             [
                 ttk.Button(session_actions, text="刷新模型", command=self._refresh_models),
-                ttk.Button(session_actions, text="启动监控", style="Accent.TButton", command=self._start_session),
-                ttk.Button(session_actions, text="停止监控", command=self._stop_session),
             ],
-            columns=3,
+            columns=1,
         )
 
         cloud_panel = ttk.Frame(body, style="SoftPanel.TFrame", padding=16)
@@ -1553,7 +1597,7 @@ class DesktopApp:
         }
 
     def _finish_startup(self) -> None:
-        self._set_startup_progress(100, "主界面准备完成", "启动完成", "主界面已就绪，系统自检将转入后台执行")
+        self._set_startup_progress(100, "主界面准备完成", "启动完成", "主界面、基础服务与启动自检均已就绪")
         if self.splash is not None:
             try:
                 self.splash.destroy()
@@ -1564,7 +1608,8 @@ class DesktopApp:
         self.root.lift()
         self.root.focus_force()
         self._start_background_orchestrator_prepare()
-        self._start_background_startup_self_check()
+        if self.skip_startup_splash and self.runtime is not None and not getattr(self.runtime, "self_check_has_run", False):
+            self._start_background_startup_self_check()
         if bool(get_config("ui.prompt_voice_test_on_startup", False)):
             self.root.after(800, self._offer_voice_test)
 
@@ -1890,7 +1935,7 @@ class DesktopApp:
                     "task_name": "本机系统自检",
                     "stage": "scan",
                     "title": "正在检查本机环境",
-                    "detail": "正在检查依赖、运行时和内置资源。",
+                    "detail": "正在检查依赖、内置组件和核心资源。",
                     "percent": 0,
                     "status": "running",
                     "current": 0,
@@ -1936,7 +1981,7 @@ class DesktopApp:
 
     def _start_voice_test_from_ui(self) -> None:
         if self.runtime is None:
-            self.hero_var.set("运行时尚未就绪，请稍后再试")
+            self.hero_var.set("系统尚未完成初始化，请稍后再试")
             return
         self._log_gui_action("manual_voice_test")
         self.hero_var.set("正在准备语音交互测试")
@@ -2083,35 +2128,90 @@ class DesktopApp:
         self.summary_vars["voice"].set("ON" if summary.get("voice_running") else "OFF")
         self.summary_vars["orchestrator"].set(self._format_orchestrator_status(str(orchestrator_state.get("status") or "")))
         self.summary_vars["planner"].set(self._format_planner_backend(str(orchestrator_state.get("planner_backend") or "")))
-
-        desired_columns = 2
-        if desired_columns != self.summary_columns or not self.summary_frame.winfo_children():
-            self.summary_columns = desired_columns
-            for child in list(self.summary_frame.winfo_children()):
-                child.destroy()
-            for column in range(4):
-                self.summary_frame.columnconfigure(column, weight=0, uniform="")
-            cards = [
-                ("模式", self.summary_vars["mode"]),
-                ("语音助手", self.summary_vars["voice"]),
-                ("在线节点", self.summary_vars["online"]),
-                ("离线节点", self.summary_vars["offline"]),
-            ]
-            for column in range(self.summary_columns):
-                self.summary_frame.columnconfigure(column, weight=1, uniform="summary")
-            for idx, (label, variable) in enumerate(cards):
-                card = ttk.Frame(self.summary_frame, style="Card.TFrame", padding=10)
-                row = idx // self.summary_columns
-                column = idx % self.summary_columns
-                card.grid(row=row, column=column, sticky="nsew", padx=5, pady=5)
-                ttk.Label(card, text=label, style="MetricLabel.TLabel").pack(anchor="w")
-                ttk.Label(card, textvariable=variable, style="MetricValue.TLabel").pack(anchor="w", pady=(6, 0))
         self._render_layer_health(state)
+        self._render_layer_issue(state)
 
     def _render_layer_health(self, state: Dict[str, Any]) -> None:
         pc_rows, pi_rows = self._build_layer_rows(state)
-        self._fill_layer_cards(self.pc_layer_cards_frame, pc_rows, columns=2)
-        self._fill_layer_cards(self.pi_layer_cards_frame, pi_rows, columns=1)
+        self._fill_layer_cards(self.pc_layer_cards_frame, pc_rows + pi_rows, columns=3)
+        self._fill_layer_cards(self.pi_layer_cards_frame, [], columns=1)
+
+    def _build_layer_issue_payload(self, state: Dict[str, Any]) -> Dict[str, str]:
+        tasks = dict(state.get("tasks") or {})
+        local_task = dict(tasks.get("local") or {})
+        summary = dict(state.get("summary") or {})
+        orchestrator_state = dict(state.get("orchestrator") or {})
+        orchestrator_status = str(orchestrator_state.get("status") or "").lower()
+        online_nodes = int(summary.get("online_nodes", 0) or 0)
+        expected_nodes = max(1, int(state.get("session", {}).get("expected_nodes", 1) or 1))
+
+        local_status = str(local_task.get("status") or "").lower()
+        if local_status in {"running", "error"}:
+            detail = str(local_task.get("detail") or "本机仍在检查或补全运行环境。").strip()
+            return {
+                "title": "发现本机运行环境问题",
+                "detail": detail,
+                "action_key": "run_self_check",
+                "action_label": "查看并修复",
+            }
+        if orchestrator_status and orchestrator_status != "ready":
+            reason = str(orchestrator_state.get("reason") or "固定管家层尚未完成准备。").strip()
+            return {
+                "title": "发现管家编排层问题",
+                "detail": reason,
+                "action_key": "repair_orchestrator",
+                "action_label": "查看并修复",
+            }
+        if not self.knowledge_catalog or not self.expert_catalog:
+            return {
+                "title": "发现知识或专家目录未就绪",
+                "detail": "知识库或专家目录尚未刷新完成，可能影响问答与任务调度。",
+                "action_key": "refresh_catalogs",
+                "action_label": "查看并修复",
+            }
+        if online_nodes < expected_nodes:
+            return {
+                "title": "发现节点链路未完全就绪",
+                "detail": f"当前在线节点 {online_nodes} 个，低于预期的 {expected_nodes} 个，可发起节点自检并重新同步状态。",
+                "action_key": "request_node_checks",
+                "action_label": "查看并修复",
+            }
+        return {}
+
+    def _render_layer_issue(self, state: Dict[str, Any]) -> None:
+        payload = self._build_layer_issue_payload(state)
+        self.current_layer_issue = payload
+        if self.layer_issue_card is None:
+            return
+        if not payload:
+            self.layer_issue_card.grid_remove()
+            return
+        self.layer_issue_title_var.set(str(payload.get("title") or "发现需要处理的问题"))
+        self.layer_issue_detail_var.set(str(payload.get("detail") or "请查看详情并执行修复。"))
+        self.layer_issue_action_var.set(str(payload.get("action_label") or "查看并修复"))
+        self.layer_issue_card.grid()
+
+    def _repair_selected_layer_issue(self) -> None:
+        action_key = str(self.current_layer_issue.get("action_key") or "").strip()
+        if not action_key:
+            return
+        self._log_gui_action("dashboard_repair", action=action_key)
+        if action_key == "run_self_check":
+            self._run_self_check()
+            return
+        if action_key == "repair_orchestrator" and self.runtime is not None:
+            self.hero_var.set("后台准备中")
+            self._dispatch("orchestrator_prepare", self.runtime.prepare_orchestrator_assets)
+            return
+        if action_key == "refresh_catalogs":
+            self._refresh_knowledge_bases()
+            self._refresh_expert_catalog()
+            self.hero_var.set("系统已可用")
+            return
+        if action_key == "request_node_checks" and self.runtime is not None:
+            self.runtime.request_remote_self_checks()
+            self.hero_var.set("后台准备中")
+            return
 
     def _fill_layer_cards(self, container: ttk.Frame | None, rows: List[tuple[str, str, str, str]], *, columns: int) -> None:
         if container is None:
@@ -2172,26 +2272,26 @@ class DesktopApp:
         elif orchestrator_status == "download_failed":
             planner_ready = ("受限", "72%", "已回退规则链")
         else:
-            planner_ready = ("准备中", "68%", "后台准备中")
+            planner_ready = ("准备中", "82%", "后台准备中")
 
         knowledge_ready = bool(self.knowledge_catalog)
         expert_ready = bool(self.expert_catalog)
         selected_model = str(session.get("selected_model") or "").strip()
-        execution_score = 40
+        execution_score = 70
         if selected_model:
-            execution_score += 20
+            execution_score += 10
         if knowledge_ready:
-            execution_score += 20
+            execution_score += 10
         if expert_ready:
-            execution_score += 20
-        execution_state = "已就绪" if execution_score >= 80 else "部分就绪"
-        execution_link = "知识与专家链已连通" if knowledge_ready and expert_ready else "知识或专家待补齐"
+            execution_score += 10
+        execution_state = "已就绪" if execution_score >= 90 else "部分就绪"
+        execution_link = "知识与专家链已连通" if knowledge_ready and expert_ready else "知识或专家目录待刷新"
 
         local_stage = str(local_task.get("stage") or "").strip()
         local_status = str(local_task.get("status") or "").lower()
         runtime_state = "已就绪"
         runtime_link = "本机运行链通畅"
-        runtime_percent = f"{max(check_ratio, 60)}%"
+        runtime_percent = f"{max(check_ratio, 100 if not self_check else 60)}%"
         if local_status == "running":
             runtime_state = "自检中"
             runtime_link = str(local_task.get("detail") or local_task.get("title") or "正在检查本机能力").strip()
@@ -2205,7 +2305,7 @@ class DesktopApp:
 
         pc_rows = [
             ("交互与展示层", "已就绪", "100%", "仪表盘界面已加载"),
-            ("会话与运行时层", runtime_state, runtime_percent, runtime_link),
+            ("会话与服务层", runtime_state, runtime_percent, runtime_link),
             ("管家编排层", planner_ready[0], planner_ready[1], planner_ready[2]),
             ("执行与知识层", execution_state, f"{execution_score}%", execution_link),
         ]
@@ -2259,7 +2359,7 @@ class DesktopApp:
             scope_label="本机任务",
             task=local_task,
             empty_title="本机当前无任务",
-            empty_detail="等待系统自检、自动补全或运行时准备。",
+            empty_detail="等待系统自检、自动补全或后台准备。",
         )
         if local_item is not None:
             progress_rows.append(local_item)
@@ -2299,7 +2399,8 @@ class DesktopApp:
             return
         iid = f"log-{len(self.log_rows)}"
         self.log_rows.append(item)
-        self.log_tree.insert("", "end", iid=iid, values=(item["time"], item["level"], item["category"], item["summary"]), tags=(item["level"],))
+        display_category = _present_log_category(item.get("category", ""))
+        self.log_tree.insert("", "end", iid=iid, values=(item["time"], item["level"], display_category, item["summary"]), tags=(item["level"],))
 
     def _set_log_detail(self, detail: str) -> None:
         if self.log_detail_text is None:
@@ -2312,30 +2413,39 @@ class DesktopApp:
     def _render_node_logs(self, recent: List[Dict[str, str]], streams: List[Dict[str, Any]] | None = None) -> None:
         if self.node_log_panel is None:
             return
-        grouped: Dict[str, List[Dict[str, str]]] = {}
+        grouped: Dict[str, Dict[str, str]] = {}
         stream_rows = list(streams or [])
         if stream_rows:
             for item in stream_rows:
                 node_id = str(item.get("id") or "").strip() or "0"
-                status = str(item.get("status") or "offline").upper()
-                summary = str(item.get("hint") or item.get("subtitle") or "等待节点状态更新").strip()
-                grouped.setdefault(node_id, []).append(
-                    {
-                        "level": status,
-                        "summary": summary,
-                    }
-                )
-        else:
-            for item in recent:
-                category = str(item.get("category", "")).strip()
-                summary = str(item.get("summary", "")).strip()
-                if category not in {"节点语音", "节点播报", "节点通信"}:
-                    continue
-                match = re.match(r"^节点\s+(\d+)\s+", summary)
-                if not match:
-                    continue
-                node_id = match.group(1)
-                grouped.setdefault(node_id, []).append(item)
+                grouped[node_id] = {
+                    "connection": "已连接" if str(item.get("status") or "").lower() == "online" else "待连接",
+                    "recognition": str(item.get("hint") or item.get("subtitle") or "等待识别结果").strip() or "等待识别结果",
+                    "alert": str(item.get("hint") or item.get("subtitle") or "当前无告警").strip() or "当前无告警",
+                }
+        for item in recent:
+            category = str(item.get("category", "")).strip()
+            summary = str(item.get("summary", "")).strip()
+            match = re.match(r"^节点\s+(\d+)\s+", summary)
+            if not match:
+                continue
+            node_id = match.group(1)
+            entry = grouped.setdefault(
+                node_id,
+                {
+                    "connection": "待连接",
+                    "recognition": "等待识别结果",
+                    "alert": "当前无告警",
+                },
+            )
+            if category == "节点通信":
+                entry["connection"] = "已连接" if "握手成功" in summary or "在线" in summary else entry["connection"]
+            elif category == "节点语音":
+                entry["recognition"] = summary
+            elif category == "节点播报":
+                entry["alert"] = summary
+            elif any(keyword in summary for keyword in ("高危", "告警", "报警", "泄漏", "火焰", "烟雾", "危化")):
+                entry["alert"] = summary
 
         for child in list(self.node_log_panel.winfo_children()):
             if child not in {self.node_logs_title, self.node_log_empty_label}:
@@ -2353,23 +2463,25 @@ class DesktopApp:
             self.node_log_empty_label.grid_remove()
 
         ordered_ids = sorted(grouped.keys(), key=lambda value: int(value) if str(value).isdigit() else str(value))
-        for column in range(2):
+        total_columns = max(1, min(2, len(ordered_ids)))
+        for column in range(total_columns):
             self.node_log_panel.columnconfigure(column, weight=1, uniform="node-state")
 
         for index, node_id in enumerate(ordered_ids):
-            row = index // 2 + 1
-            column = index % 2
-            latest = grouped[node_id][-1]
-            latest_summary = str(latest.get("summary") or "暂无节点摘要")
-            latest_level = str(latest.get("level") or "INFO").upper()
+            row = index // total_columns + 1
+            column = index % total_columns
+            latest = grouped[node_id]
             card = ttk.Frame(self.node_log_panel, style="Card.TFrame", padding=10)
             card.grid(row=row, column=column, sticky="nsew", padx=(0 if column == 0 else 8, 0), pady=(8, 0))
             card.columnconfigure(0, weight=1)
             ttk.Label(card, text=f"节点 {node_id}", style="MetricLabel.TLabel").grid(row=0, column=0, sticky="w")
-            ttk.Label(card, text=f"最近状态：{latest_level}", style="PanelTitle.TLabel").grid(row=1, column=0, sticky="w", pady=(6, 0))
-            summary_label = ttk.Label(card, text=latest_summary, style="CardBody.TLabel", justify="left")
-            summary_label.grid(row=2, column=0, sticky="ew", pady=(4, 0))
-            self._register_adaptive_wrap_label(summary_label, card, padding=20, min_width=220, max_width=420)
+            ttk.Label(card, text=f"连接：{latest['connection']}", style="PanelTitle.TLabel").grid(row=1, column=0, sticky="w", pady=(6, 0))
+            recognition_label = ttk.Label(card, text=f"识别：{latest['recognition']}", style="CardBody.TLabel", justify="left")
+            recognition_label.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+            alert_label = ttk.Label(card, text=f"告警：{latest['alert']}", style="CardBody.TLabel", justify="left")
+            alert_label.grid(row=3, column=0, sticky="ew", pady=(6, 0))
+            self._register_adaptive_wrap_label(recognition_label, card, padding=20, min_width=220, max_width=420)
+            self._register_adaptive_wrap_label(alert_label, card, padding=20, min_width=220, max_width=420)
         if self.node_log_canvas is not None:
             self.node_log_canvas.configure(scrollregion=self.node_log_canvas.bbox("all"))
 
@@ -2399,8 +2511,14 @@ class DesktopApp:
         if self.log_tree is None:
             return
         recent = [item for item in (self._normalize_log_entry(row) for row in logs[-160:]) if item is not None]
+        suppressed_categories = {"任务进度", "启动自检", "运行状态"}
         selected_filter = str(self.log_filter_var.get() or LOG_FILTER_OPTIONS[0]).strip() or LOG_FILTER_OPTIONS[0]
-        system_recent = list(self.task_progress_rows) + [item for item in recent if not str(item.get("category", "")).startswith("节点")]
+        system_recent = [
+            item
+            for item in recent
+            if not str(item.get("category", "")).startswith("节点")
+            and str(item.get("category", "")) not in suppressed_categories
+        ]
         priority_item = _select_latest_priority_event(system_recent)
         priority_title, priority_detail = _format_priority_event_card(priority_item)
         self.priority_event_title_var.set(priority_title)
@@ -3274,11 +3392,11 @@ class DesktopApp:
             activeforeground="#0f1720",
         )
         software_menu.add_command(label="总览面板", command=lambda: self._select_dashboard_tab("overview"))
-        software_menu.add_command(label="知识中心", command=self._show_knowledge_base_window)
-        software_menu.add_command(label="专家中心", command=self._show_expert_window)
-        software_menu.add_command(label="模型配置", command=self._show_cloud_backend_window)
-        software_menu.add_command(label="训练中心", command=self._show_training_window)
-        software_menu.add_command(label="档案中心", command=self._show_archive_window)
+        software_menu.add_command(label="知识中心", command=lambda: self._select_dashboard_tab("knowledge"))
+        software_menu.add_command(label="专家中心", command=lambda: self._select_dashboard_tab("expert"))
+        software_menu.add_command(label="模型配置", command=lambda: self._select_dashboard_tab("cloud"))
+        software_menu.add_command(label="训练中心", command=lambda: self._select_dashboard_tab("training"))
+        software_menu.add_command(label="档案中心", command=lambda: self._select_dashboard_tab("archive"))
         software_menu.add_separator()
         software_menu.add_command(label="运行启动自检", command=self._run_self_check)
         software_menu.add_command(label="刷新模型", command=self._refresh_models)
@@ -3334,11 +3452,11 @@ class DesktopApp:
         self.app_version = runtime.version
         self._post_startup_progress({
             "value": 36,
-            "message": "正在加载配置与模型",
-            "step": "配置加载",
-            "detail": "正在加载主界面、配置与模型，系统自检将在主界面就绪后后台执行",
+            "message": "正在执行启动自检",
+            "step": "启动自检",
+            "detail": "正在完成缺失检查、自动补全和主界面启动前的最后准备",
         })
-        payload = runtime.bootstrap(include_self_check=False, include_catalogs=False)
+        payload = runtime.bootstrap(include_self_check=not self.skip_startup_splash, include_catalogs=True)
         return {"payload": payload}
 
     def _register_voice_local_handler(self) -> None:
@@ -4129,7 +4247,7 @@ class DesktopApp:
 
     def _refresh_training_overview(self) -> None:
         if self.runtime is None:
-            self.training_status_var.set("训练运行时尚未就绪，请稍候再试。")
+            self.training_status_var.set("训练工作台尚未完成初始化，请稍候再试。")
             self._render_training_overview()
             return
         self.hero_var.set("正在准备 NeuroLab Hub 可视化界面")
@@ -4216,7 +4334,7 @@ class DesktopApp:
 
     def _request_training_annotation_workspace_prepare(self) -> None:
         if self.runtime is None:
-            self.training_annotation_status_var.set("训练运行时尚未就绪，请稍候再试。")
+            self.training_annotation_status_var.set("训练工作台尚未完成初始化，请稍候再试。")
             return
         if self.training_annotation_workspace_pending:
             return
@@ -4513,7 +4631,7 @@ class DesktopApp:
     def _show_training_window(self, focus: str = "") -> None:
         self._log_gui_action("open_training_window", focus=focus or "")
         if self.runtime is None:
-            self.training_status_var.set("训练运行时尚未就绪，正在等待主控制台初始化")
+            self.training_status_var.set("训练工作台尚未完成初始化，正在等待主控制台加载")
             self.root.after(300, lambda: self._show_training_window(focus))
             return
         self._select_dashboard_tab("training")
@@ -4952,6 +5070,13 @@ class DesktopApp:
                     continue
                 if status == "progress" and name == "task_progress_sync":
                     if isinstance(payload, dict):
+                        local_task = dict(payload.get("local") or {})
+                        if self.splash is not None and local_task:
+                            local_percent = max(0.0, min(100.0, float(local_task.get("percent", 0.0) or 0.0)))
+                            splash_value = 18.0 + (local_percent * 0.64)
+                            splash_step = str(local_task.get("task_name") or local_task.get("title") or "启动自检").strip()
+                            splash_detail = str(local_task.get("detail") or local_task.get("title") or "正在检查本机能力").strip()
+                            self._set_startup_progress(splash_value, "正在执行启动自检", splash_step, splash_detail)
                         self._render_task_progress(payload)
                         if self.runtime is not None:
                             self._render_logs(self.runtime.get_state().get("logs", []))
@@ -5024,8 +5149,12 @@ class DesktopApp:
                     self._refresh_cloud_backend_catalog()
                     self._refresh_models()
                 elif name == "self_check":
-                    self._render_checks(payload)
-                    self._render_logs(self.runtime.get_state().get("logs", []))
+                    state_snapshot = self.runtime.get_state() if self.runtime is not None else None
+                    if isinstance(state_snapshot, dict):
+                        self._render_state(state_snapshot)
+                    else:
+                        self._render_checks(payload)
+                        self._render_logs(self.runtime.get_state().get("logs", []))
                     local_task = (self.runtime.get_task_progress_state() or {}).get("local") if self.runtime is not None else {}
                     task_status = str((local_task or {}).get("status") or "").lower()
                     if task_status == "error":
@@ -5033,8 +5162,12 @@ class DesktopApp:
                     else:
                         self.hero_var.set("系统已可用")
                 elif name == "startup_self_check":
-                    self._render_checks(payload)
-                    self._render_logs(self.runtime.get_state().get("logs", []))
+                    state_snapshot = self.runtime.get_state() if self.runtime is not None else None
+                    if isinstance(state_snapshot, dict):
+                        self._render_state(state_snapshot)
+                    else:
+                        self._render_checks(payload)
+                        self._render_logs(self.runtime.get_state().get("logs", []))
                     orchestrator_status = str(self.current_state.get("orchestrator", {}).get("status") or "").strip()
                     self.hero_var.set(_present_orchestrator_status(orchestrator_status))
                 elif name == "orchestrator_prepare":

@@ -40,8 +40,13 @@ except ImportError:
         return
 
 try:
+    try:
+        import pyaudio  # noqa: F401
+    except ImportError:
+        import pyaudiowpatch as pyaudio  # type: ignore
+        sys.modules.setdefault("pyaudio", pyaudio)
+
     import speech_recognition as sr
-    import pyaudio  # noqa: F401
 
     if sys.platform == "win32":
         os.environ["PSX_NO_CONSOLE"] = "1"

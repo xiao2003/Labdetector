@@ -29,10 +29,18 @@ STRUCTURE_TESTS = [
 PI_TESTS = [
     "pi.testing.test_pi_config",
     "pi.testing.test_pi_self_check_progress",
+    "pi.testing.test_pi_cli_runtime_flow",
     "pi.testing.test_voice_interaction",
     "pi.testing.test_runtime_installer",
     "pi.testing.test_audio_replay",
     "pi.testing.test_model_downloader_offline",
+]
+
+SELF_HEAL_TESTS = [
+    "pc.testing.test_runtime_self_heal",
+    "pc.testing.test_orchestrator_runtime",
+    "pi.testing.test_pi_self_check_progress",
+    "pi.testing.test_pi_cli_runtime_flow",
 ]
 
 MANUAL_REVIEW_ITEMS = [
@@ -277,6 +285,25 @@ def main() -> int:
     )
     report["steps"]["structure_and_pi"] = structure_result
 
+    self_heal_report = report_dir / "self_heal_validation_report.json"
+    self_heal_result = _run_command(
+        [str(python_exe), "-m", "unittest", *SELF_HEAL_TESTS],
+        cwd=PROJECT_ROOT,
+    )
+    self_heal_payload = {
+        "ok": bool(self_heal_result.get("ok")),
+        "command": list(self_heal_result.get("command") or []),
+        "started_at": self_heal_result.get("started_at", ""),
+        "finished_at": self_heal_result.get("finished_at", ""),
+        "stdout": self_heal_result.get("stdout", ""),
+        "stderr": self_heal_result.get("stderr", ""),
+    }
+    self_heal_report.write_text(json.dumps(self_heal_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    report["steps"]["self_heal_validation"] = {
+        **self_heal_result,
+        "report": str(self_heal_report),
+    }
+
     gui_release_report = report_dir / "gui_release_acceptance_report.json"
     gui_release_result = _run_command(
         [
@@ -360,16 +387,18 @@ def main() -> int:
 
     layers = {
         "交互与展示层": _layer_status(bool(gui_release_payload.get("success")), bool(gui_full_payload.get("success")), bool(manual_review.get("passed", False) or args.allow_manual_pending)),
-        "会话与运行时层": _layer_status(bool(structure_result.get("ok")), bool(gui_release_payload.get("success")), bool(smoke_payload.get("process_started", False) or args.skip_installer_smoke)),
-        "管家编排层": _layer_status(bool(structure_result.get("ok")), bool(voice_payload.get("success"))),
+        "会话与运行时层": _layer_status(bool(structure_result.get("ok")), bool(self_heal_result.get("ok")), bool(gui_release_payload.get("success")), bool(smoke_payload.get("process_started", False) or args.skip_installer_smoke)),
+        "管家编排层": _layer_status(bool(structure_result.get("ok")), bool(self_heal_result.get("ok")), bool(voice_payload.get("success"))),
         "执行与知识层": _layer_status(bool(structure_result.get("ok")), bool(gui_release_payload.get("success")), bool(gui_full_payload.get("success"))),
         "通信与节点管理层": _layer_status(bool(voice_payload.get("success")), bool(gui_full_payload.get("success"))),
-        "Pi 轻前端边缘层": _layer_status(bool(structure_result.get("ok")), bool(voice_payload.get("success"))),
+        "Pi 轻前端边缘层": _layer_status(bool(structure_result.get("ok")), bool(self_heal_result.get("ok")), bool(voice_payload.get("success"))),
     }
     report["layers"] = {key: {"status": value} for key, value in layers.items()}
 
     if not structure_result.get("ok"):
         report["failures"].append("结构与 Pi 边缘回归未通过。")
+    if not self_heal_result.get("ok"):
+        report["failures"].append("缺失项自动修复与自动复检验证未通过。")
     if not gui_release_payload.get("success"):
         report["failures"].append("GUI 发布验收未通过。")
     if not gui_full_payload.get("success"):
@@ -390,6 +419,7 @@ def main() -> int:
             gui_release_report,
             gui_full_report,
             voice_report,
+            self_heal_report,
             provided_smoke_report if provided_smoke_report else Path(),
             report_dir / "installer_first_launch_smoke_report.json",
             manual_review_path,
@@ -399,6 +429,7 @@ def main() -> int:
     report["success"] = not any(
         [
             not structure_result.get("ok"),
+            not self_heal_result.get("ok"),
             not gui_release_payload.get("success"),
             not gui_full_payload.get("success"),
             not voice_payload.get("success"),
@@ -424,6 +455,7 @@ def main() -> int:
             gui_release_report,
             gui_full_report,
             voice_report,
+            self_heal_report,
             report_dir / "installer_first_launch_smoke_report.json",
             manual_review_path,
             summary_path,

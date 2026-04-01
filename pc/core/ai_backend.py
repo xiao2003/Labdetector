@@ -4,6 +4,7 @@ import base64
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -261,6 +262,10 @@ def list_openai_compatible_models(backend: str) -> List[str]:
 
 
 def list_ollama_models() -> List[str]:
+    cache_key = "_ollama_models_cache"
+    cache_ts_key = "_ollama_models_cache_ts"
+    error_ts_key = "_ollama_models_error_ts"
+    cached_models = list(_STATE.get(cache_key) or [])
     try:
         ollama_exe = "ollama"
         default_path = r"C:\Users\Administrator\AppData\Local\Programs\Ollama\ollama.exe"
@@ -271,7 +276,7 @@ def list_ollama_models() -> List[str]:
             [ollama_exe, "list"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=15,
             env=ollama_runtime_env(),
         )
         if result.returncode == 0:
@@ -280,17 +285,27 @@ def list_ollama_models() -> List[str]:
                 parts = line.split()
                 if parts:
                     models.append(parts[0])
-            return sorted(set(models))
+            unique_models = sorted(set(models))
+            _STATE[cache_key] = list(unique_models)
+            _STATE[cache_ts_key] = time.time()
+            return unique_models
     except Exception as exc:
-        console_error(f"获取 Ollama 模型列表失败: {exc}")
+        now = time.time()
+        last_error_ts = float(_STATE.get(error_ts_key, 0.0) or 0.0)
+        if now - last_error_ts >= 60.0:
+            console_error(f"获取 Ollama 模型列表失败: {exc}")
+            _STATE[error_ts_key] = now
 
     try:
-        response = _ollama_session().get(f"{ollama_host()}/api/tags", timeout=5)
+        response = _ollama_session().get(f"{ollama_host()}/api/tags", timeout=8)
         response.raise_for_status()
         models = [str(item.get("name", "")) for item in response.json().get("models", []) if item.get("name")]
-        return sorted(set(models))
+        unique_models = sorted(set(models))
+        _STATE[cache_key] = list(unique_models)
+        _STATE[cache_ts_key] = time.time()
+        return unique_models
     except Exception:
-        return []
+        return cached_models
 
 
 def ensure_ollama_model_available(model: str) -> bool:

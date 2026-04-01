@@ -66,6 +66,8 @@ def _default_state() -> Dict[str, Any]:
         "model_path": "",
         "runtime_version": "",
         "model_name": "",
+        "warmup_attempts": 0,
+        "last_ready_at": "",
         "updated_at": _now_text(),
     }
 
@@ -137,8 +139,15 @@ def _write_runtime_state(
     reason: str,
     error: str = "",
     planner_backend: str = "deterministic",
+    warmup_attempts: Optional[int] = None,
 ) -> Dict[str, Any]:
     manifest = load_asset_manifest()
+    previous_state = read_runtime_state()
+    previous_attempts = int(previous_state.get("warmup_attempts", 0) or 0)
+    if warmup_attempts is None:
+        warmup_attempts = previous_attempts
+    if status == STATE_READY:
+        warmup_attempts = 0
     payload = {
         "status": status,
         "planner_backend": planner_backend,
@@ -148,6 +157,8 @@ def _write_runtime_state(
         "model_path": str(model_binary_path()),
         "runtime_version": str(manifest.get("runtime", {}).get("version") or ""),
         "model_name": str(manifest.get("model", {}).get("filename") or ""),
+        "warmup_attempts": int(warmup_attempts or 0),
+        "last_ready_at": _now_text() if status == STATE_READY else str(previous_state.get("last_ready_at") or ""),
         "updated_at": _now_text(),
     }
     path = orchestrator_state_path()
@@ -357,7 +368,7 @@ def _invoke_runtime_for_warmup(prompt: str) -> str:
         text=True,
         encoding="utf-8",
         errors="replace",
-        timeout=90.0,
+        timeout=240.0,
         check=False,
     )
     if completed.returncode != 0:
@@ -456,51 +467,80 @@ def prepare_orchestrator_assets(log_callback: Optional[Callable[[str], None]] = 
             )
 
         runtime_path = runtime_binary_path()
+        model_path = model_binary_path()
+        repaired_items: list[str] = []
+        try:
+            if not runtime_path.exists():
+                _log(log_callback, "检测到固定管家层 runtime 缺失，开始自动补齐。")
+                materialize_runtime_bundle(runtime_path.parent, log_callback=log_callback)
+                repaired_items.append("runtime")
+            if not model_path.exists():
+                _log(log_callback, "检测到固定管家层模型文件缺失，开始自动补齐。")
+                materialize_model_bundle(model_path, log_callback=log_callback)
+                repaired_items.append("model")
+        except Exception as exc:
+            return _write_runtime_state(
+                STATE_DOWNLOAD_FAILED,
+                reason="固定管家层自动补齐失败",
+                error=str(exc),
+                planner_backend="deterministic",
+            )
+
         if not runtime_path.exists():
             return _write_runtime_state(
                 STATE_NOT_INSTALLED,
-                reason="固定管家层 runtime 尚未随安装包就位",
+                reason="固定管家层 runtime 仍未就位",
                 planner_backend="deterministic",
             )
 
-        if not model_binary_path().exists():
+        if not model_path.exists():
             return _write_runtime_state(
                 STATE_NOT_INSTALLED,
-                reason="固定管家层模型未随安装包就位",
+                reason="固定管家层模型文件仍未就位",
                 planner_backend="deterministic",
             )
 
+        if repaired_items:
+            _log(log_callback, f"固定管家层自动补齐完成: {', '.join(repaired_items)}")
+
+        state = read_runtime_state()
+        warmup_attempts = int(state.get("warmup_attempts", 0) or 0)
         try:
             _write_runtime_state(
                 STATE_WARMING_UP,
                 reason="固定管家层模型正在后台预热",
                 planner_backend="deterministic",
+                warmup_attempts=warmup_attempts + 1,
             )
             warm_up_orchestrator_runtime(log_callback=log_callback)
             return _write_runtime_state(
                 STATE_READY,
                 reason="固定管家层模型已就绪",
                 planner_backend="embedded_model",
+                warmup_attempts=0,
             )
         except subprocess.TimeoutExpired:
             return _write_runtime_state(
                 STATE_WARMING_UP,
-                reason="固定管家层模型首次预热耗时较长，后台将继续准备",
+                reason="固定管家层模型预热耗时较长，后台将继续准备",
                 planner_backend="deterministic",
+                warmup_attempts=warmup_attempts + 1,
             )
         except Exception as exc:
             error_text = str(exc)
             if model_binary_path().exists() and "timed out" in error_text.lower():
                 return _write_runtime_state(
                     STATE_WARMING_UP,
-                    reason="固定管家层模型首次预热耗时较长，后台将继续准备",
+                    reason="固定管家层模型预热耗时较长，后台将继续准备",
                     planner_backend="deterministic",
+                    warmup_attempts=warmup_attempts + 1,
                 )
             return _write_runtime_state(
                 STATE_DOWNLOAD_FAILED,
                 reason="固定管家层模型后台准备失败",
                 error=error_text,
                 planner_backend="deterministic",
+                warmup_attempts=warmup_attempts + 1,
             )
 
 
@@ -520,18 +560,22 @@ def get_runtime_status() -> OrchestratorRuntimeStatus:
         planner_backend = "deterministic"
         status_name = STATE_NOT_INSTALLED
     elif not runtime_exists:
-        reason = "缺少内置 llama.cpp 运行时"
+        reason = "缺少内置 llama.cpp 组件"
         planner_backend = "deterministic"
         status_name = STATE_NOT_INSTALLED
     elif not model_exists:
         reason = "固定管家层模型未随安装包就位"
     elif status_name == STATE_WARMING_UP:
-        reason = "固定管家层模型正在后台预热"
+        attempts = int(state.get("warmup_attempts", 0) or 0)
+        if attempts > 1:
+            reason = f"固定管家层模型正在后台预热（第 {attempts} 次）"
+        else:
+            reason = "固定管家层模型正在后台预热"
     elif status_name == STATE_DOWNLOAD_FAILED:
         error = str(state.get("error") or "").strip()
         reason = error or "固定管家层模型后台准备失败"
     elif ready:
-        reason = "固定管家层运行时已就绪"
+        reason = "固定管家层组件已就绪"
     elif model_exists:
         reason = "固定管家层模型已就位，等待后台预热"
         planner_backend = "deterministic"

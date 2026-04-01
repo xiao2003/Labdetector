@@ -44,6 +44,16 @@ _ensure_release_root_on_path()
 from pi.testing.closed_loop_bridge import PiClosedLoopBridge, default_simulated_scenarios
 
 
+def _fast_orchestrator_self_check(_self, *, auto_repair: bool = True) -> Dict[str, Any]:
+    """GUI 闭环测试只验证界面与协作链，不在这里执行真实大模型补齐。"""
+    return {
+        "status": "pass",
+        "title": "固定管家层运行时",
+        "summary": "固定管家层已就绪",
+        "repairable": bool(auto_repair),
+    }
+
+
 class SilentDialogRecorder:
     """静默接管 GUI 弹窗，避免测试过程中阻塞。"""
 
@@ -474,7 +484,7 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
         set_config("network.virtual_pi_host", server.endpoint())
         set_config("network.virtual_pi_hosts", server.endpoint())
 
-        with dialog_recorder, patch.object(expert_manager, "_build_knowledge_context", lambda *args, **kwargs: {}), patch.object(
+        with dialog_recorder, patch("pc.webui.runtime.LabDetectorRuntime._check_orchestrator_assets", _fast_orchestrator_self_check), patch.object(expert_manager, "_build_knowledge_context", lambda *args, **kwargs: {}), patch.object(
             expert_manager,
             "_run_llm_interpreter",
             lambda _expert, _frame, _context, raw_response: raw_response,
@@ -507,8 +517,6 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
             app.runtime._configure_backend = lambda: None
             app.runtime._start_background_aux_services = lambda **kwargs: None
 
-            app._show_manual_window()
-            app._show_about_window()
             app._show_cloud_backend_window()
             app._show_knowledge_base_window()
             app._show_expert_window()
@@ -531,16 +539,16 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
             )
             report["windows"] = _collect_window_state(app)
             add_step("windows_opened", **report["windows"])
-            if not report["windows"].get("about_window"):
-                raise AssertionError("关于系统窗口未打开")
-            if report["windows"].get("copyright_window"):
-                raise AssertionError("关于系统仍会额外弹出版权窗口")
+            if report["windows"].get("manual_window") or report["windows"].get("about_window") or report["windows"].get("copyright_window"):
+                raise AssertionError("主界面仍存在额外弹窗")
             if str(app.priority_event_detail_var.get()).strip():
                 raise AssertionError("默认高优事项仍保留了额外详情文本")
             if app.priority_event_detail_label is not None:
                 raise AssertionError("高优事项详情标签未被移除")
             if app.log_detail_panel is not None:
                 raise AssertionError("事件详情栏未移除")
+            if app.node_logs_title is None or str(app.node_logs_title.cget("text")) != "监控状态":
+                raise AssertionError("节点监控面板标题未更新为“监控状态”")
 
             app._run_self_check()
             _wait_for(
@@ -549,17 +557,8 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
                 timeout=30,
                 message="主界面自检结果未刷新",
             )
-            _wait_for(
-                pump,
-                lambda: any(
-                    str(row.get("category") or "") == "任务进度"
-                    and "本机任务" in str(row.get("summary") or "")
-                    and "[" in str(row.get("summary") or "")
-                    for row in list(app.log_rows)
-                ),
-                timeout=10,
-                message="本机任务进度日志未写入主界面",
-            )
+            if any(str(row.get("category") or "") == "任务进度" for row in list(app.log_rows)):
+                raise AssertionError("本机自检进度仍显示在主日志中")
             add_step("self_check_completed", items=len(app.current_state.get("self_check", [])))
 
             app.backend_combo.set(app.backend_reverse["ollama"])
@@ -723,15 +722,12 @@ def run_gui_full_closed_loop_test(report_file: str) -> Dict[str, Any]:
             )
             _wait_for(
                 pump,
-                lambda: any(
-                    str(row.get("category") or "") == "任务进度"
-                    and "节点 " in str(row.get("summary") or "")
-                    and "[" in str(row.get("summary") or "")
-                    for row in list(app.log_rows)
-                ),
+                lambda: any(child.winfo_class() in {"TFrame", "Frame"} for child in list(app.node_log_panel.winfo_children())[1:]),
                 timeout=90,
-                message="节点任务进度日志未回传到主界面",
+                message="节点监控状态未刷新到主界面",
             )
+            if any(str(row.get("category") or "") == "任务进度" for row in list(app.log_rows)):
+                raise AssertionError("节点自检进度仍显示在主日志中")
             _wait_for(
                 pump,
                 lambda: len(server.received_results) >= 2 and len(server.acks) >= 2,

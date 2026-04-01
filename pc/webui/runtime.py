@@ -67,7 +67,7 @@ from pc.core.expert_closed_loop import (
     parse_pi_expert_packet,
 )
 from pc.core.orchestrator import orchestrator
-from pc.core.orchestrator_runtime import prepare_orchestrator_assets, read_runtime_state
+from pc.core.orchestrator_runtime import get_runtime_status, prepare_orchestrator_assets, read_runtime_state
 from pc.communication.multi_ws_manager import MultiPiManager
 from pc.tools.model_downloader import check_and_download_vosk
 from pc.tools.gpu_runtime_helper import detect_gpu_environment, install_cuda_enabled_pytorch
@@ -417,6 +417,65 @@ class LabDetectorRuntime:
             self._log_info(f"固定管家层当前状态: {state.get('status', 'unknown')} / {state.get('reason', '')}")
         return dict(state)
 
+    def _check_orchestrator_assets(self, *, auto_repair: bool = True) -> Dict[str, Any]:
+        logs: List[str] = []
+
+        def _capture(message: str) -> None:
+            text = str(message or "").strip()
+            if text:
+                logs.append(f"[INFO] {text}")
+
+        status = get_runtime_status()
+        logs.append(
+            "[INFO] 当前固定管家层状态: "
+            f"status={status.status} planner_backend={status.planner_backend} reason={status.reason}"
+        )
+        if status.ready:
+            return {
+                "status": "pass",
+                "summary": "固定管家层组件已就绪",
+                "detail": status.reason,
+                "raw_output": "\n".join(logs),
+            }
+
+        if not auto_repair:
+            return {
+                "status": "error",
+                "summary": "固定管家层组件仍未就绪",
+                "detail": status.reason,
+                "raw_output": "\n".join(logs),
+            }
+
+        prepared = prepare_orchestrator_assets(log_callback=_capture)
+        self.orchestrator_state = dict(prepared)
+        prepared_status = str(prepared.get("status") or "")
+        planner_backend = str(prepared.get("planner_backend") or "deterministic")
+        reason = str(prepared.get("reason") or status.reason)
+        logs.append(
+            "[INFO] 固定管家层自动补齐结果: "
+            f"status={prepared_status} planner_backend={planner_backend} reason={reason}"
+        )
+        if prepared_status == "ready" and planner_backend == "embedded_model":
+            return {
+                "status": "pass",
+                "summary": "固定管家层已自动补齐并恢复 embedded_model",
+                "detail": reason,
+                "raw_output": "\n".join(logs),
+            }
+        if prepared_status == "warming_up":
+            return {
+                "status": "warn",
+                "summary": "固定管家层已自动补齐，正在后台预热",
+                "detail": reason,
+                "raw_output": "\n".join(logs),
+            }
+        return {
+            "status": "error",
+            "summary": "固定管家层自动补齐失败",
+            "detail": reason,
+            "raw_output": "\n".join(logs),
+        }
+
     def run_self_check(
         self,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
@@ -470,13 +529,14 @@ class LabDetectorRuntime:
             if "自动补齐" in summary:
                 repaired.append(summary)
             if "安装完成" in raw_output and "CUDA" in raw_output:
-                repaired.append("CUDA 运行时")
+                repaired.append("CUDA 支持组件")
             return [item for item in repaired if item]
 
         def run_checks_once(*, disable_auto_install: bool, phase_label: str) -> tuple[List[Dict[str, Any]], List[str]]:
             results: List[Dict[str, Any]] = []
             repaired_items: List[str] = []
             previous_values: Dict[str, Any] = {}
+            checks = build_checks(disable_auto_install=disable_auto_install)
             if disable_auto_install:
                 for key in auto_install_keys:
                     previous_values[key] = get_config(key, True)
@@ -533,23 +593,30 @@ class LabDetectorRuntime:
                         set_config(key, value)
             return results, repaired_items
 
-        checks = [
-            ("dependencies", "Python 依赖环境", self._check_dependencies),
-            ("ollama_runtime", "Ollama 本地模型环境", self._check_ollama_runtime),
-            ("gpu", "GPU 算力环境", self._check_gpu),
-            ("training_runtime", "训练运行时环境", self._check_training_runtime),
-            ("rag", "实验室知识库目录 (RAG)", self._check_rag_assets),
-        ]
-        if include_voice_assets:
-            checks.extend([
-                ("voice_ai_runtime", "增强语音识别运行时（可选）", self._check_voice_ai_runtime),
-                ("sensevoice", "SenseVoice 模型资产（可选）", lambda: self._check_sensevoice_assets(allow_download=False)),
-                ("vosk", "离线语音模型资产", lambda: self._check_vosk_assets(allow_download=False)),
-            ])
-        if include_microphone:
-            checks.append(("microphone", "PC 麦克风与语音链路", self._check_microphone))
+        def build_checks(*, disable_auto_install: bool) -> List[tuple[str, str, Callable[[], Dict[str, Any]]]]:
+            checks: List[tuple[str, str, Callable[[], Dict[str, Any]]]] = [
+                ("dependencies", "Python 依赖环境", self._check_dependencies),
+                ("ollama_runtime", "Ollama 本地模型环境", self._check_ollama_runtime),
+                (
+                    "orchestrator_assets",
+                    "固定管家层组件",
+                    lambda: self._check_orchestrator_assets(auto_repair=not disable_auto_install),
+                ),
+                ("gpu", "GPU 算力环境", self._check_gpu),
+                ("training_runtime", "训练工作台环境", self._check_training_runtime),
+                ("rag", "实验室知识库目录 (RAG)", self._check_rag_assets),
+            ]
+            if include_voice_assets:
+                checks.extend([
+                    ("voice_ai_runtime", "增强语音识别组件（可选）", self._check_voice_ai_runtime),
+                    ("sensevoice", "SenseVoice 模型资产（可选）", lambda: self._check_sensevoice_assets(allow_download=False)),
+                    ("vosk", "离线语音模型资产", lambda: self._check_vosk_assets(allow_download=not disable_auto_install)),
+                ])
+            if include_microphone:
+                checks.append(("microphone", "PC 麦克风与语音链路", self._check_microphone))
+            return checks
 
-        total_checks = len(checks)
+        total_checks = len(build_checks(disable_auto_install=False))
         results: List[Dict[str, Any]] = []
         self._log_raw_line("")
         self._log_raw_line("=" * 55)
@@ -796,10 +863,18 @@ class LabDetectorRuntime:
         }
 
     @staticmethod
-    def _missing_dependencies(module_map: Dict[str, str]) -> List[str]:
+    def _module_available(module_name: str) -> bool:
+        if importlib.util.find_spec(module_name) is not None:
+            return True
+        if module_name == "pyaudio" and importlib.util.find_spec("pyaudiowpatch") is not None:
+            return True
+        return False
+
+    @classmethod
+    def _missing_dependencies(cls, module_map: Dict[str, str]) -> List[str]:
         missing: List[str] = []
         for module_name, package_name in module_map.items():
-            if importlib.util.find_spec(module_name) is None:
+            if not cls._module_available(module_name):
                 missing.append(package_name)
         return missing
 
@@ -892,6 +967,9 @@ class LabDetectorRuntime:
         installed: List[str] = []
         failed: List[str] = []
         for package_name in uniq_packages:
+            requested_package = package_name
+            if package_name.lower() == "pyaudio" and sys.platform == "win32" and sys.version_info >= (3, 14):
+                package_name = "PyAudioWPatch"
             cmd = [str(target_python), "-m", "pip", "install", "--upgrade", "--no-warn-script-location", package_name]
             if install_root is not None:
                 cmd.extend(["--target", str(install_root)])
@@ -899,11 +977,14 @@ class LabDetectorRuntime:
             output = self._decode_subprocess_output(proc.stdout)
             tail_lines = [line for line in output.splitlines() if line.strip()][-12:]
             if proc.returncode == 0:
-                installed.append(package_name)
-                logs.append(f"[INFO] 安装成功: {package_name}")
+                installed.append(requested_package)
+                if requested_package != package_name:
+                    logs.append(f"[INFO] 安装成功: {requested_package}（通过 {package_name}）")
+                else:
+                    logs.append(f"[INFO] 安装成功: {requested_package}")
             else:
-                failed.append(package_name)
-                logs.append(f"[ERROR] 安装失败: {package_name}")
+                failed.append(requested_package)
+                logs.append(f"[ERROR] 安装失败: {requested_package}")
             logs.extend([f"[INFO] {line}" for line in tail_lines])
 
         return {
@@ -989,8 +1070,8 @@ class LabDetectorRuntime:
 
         return {
             "status": "pass",
-            "summary": "增强语音识别运行时已就绪",
-            "detail": "FunASR / SenseVoice 运行时依赖可用。",
+            "summary": "增强语音识别能力已就绪",
+            "detail": "FunASR / SenseVoice 识别依赖可用。",
             "raw_output": "\n".join(logs),
         }
 
@@ -1073,7 +1154,7 @@ class LabDetectorRuntime:
 
         python_info = describe_training_python()
         if not python_info.get("available"):
-            raise RuntimeError(str(python_info.get("reason") or "未找到训练运行时 Python。"))
+            raise RuntimeError(str(python_info.get("reason") or "未找到训练工作台 Python。"))
 
         auto_install_training = bool(get_config("self_check.pc_auto_install_training", True))
         if auto_install_training:
@@ -1141,7 +1222,7 @@ class LabDetectorRuntime:
         index_url = str(get_config("gpu_runtime.pytorch_cuda_index_url", "https://download.pytorch.org/whl/cu124")).strip()
 
         if details.get("can_auto_install_cuda_torch") and auto_install and auto_install_on_nvidia:
-            logs.append("[INFO] 检测到 NVIDIA GPU，但当前 PyTorch 仍为 CPU 运行时，开始自动补齐 CUDA 版 PyTorch。")
+            logs.append("[INFO] 检测到 NVIDIA GPU，但当前 PyTorch 仍为 CPU 版本，开始自动补齐 CUDA 版 PyTorch。")
             install_report = install_cuda_enabled_pytorch(index_url, cuda_packages)
             logs.append(f"[INFO] 安装命令: {install_report.get('command', '')}")
             for line in list(install_report.get("logs") or []):
@@ -1157,7 +1238,7 @@ class LabDetectorRuntime:
         if details.get("torch_cuda_available"):
             status = "pass"
             summary = "检测到可用 GPU"
-            detail = details.get("nvidia_gpu_name") or "CUDA 运行时可用"
+            detail = details.get("nvidia_gpu_name") or "CUDA 支持组件可用"
         elif details.get("needs_cuda_torch"):
             status = "warn"
             summary = "检测到 NVIDIA GPU，但仍在使用 CPU 版 PyTorch"
@@ -1173,7 +1254,7 @@ class LabDetectorRuntime:
         else:
             status = "warn"
             summary = "未检测到可用 CUDA，将继续使用 CPU"
-            detail = "当前环境未发现可用 GPU / CUDA 运行时。"
+            detail = "当前环境未发现可用 GPU / CUDA 支持环境。"
 
         return {
             "status": status,
@@ -1231,7 +1312,7 @@ class LabDetectorRuntime:
 
         thread = threading.Thread(target=worker, daemon=True, name="VoskAssetCheck")
         thread.start()
-        thread.join(20)
+        thread.join(120)
 
         output = buffer.getvalue().strip()
         if thread.is_alive():
@@ -2063,4 +2144,4 @@ class LabDetectorRuntime:
                 pass
         exported = self.export_logs()
         if exported:
-            self._log_info(f"可视化运行时日志已导出: {exported}")
+            self._log_info(f"可视化系统日志已导出: {exported}")

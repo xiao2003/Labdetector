@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable
 
 from pc.core.orchestrator_runtime import materialize_model_bundle, materialize_runtime_bundle
+from pc.core.runtime_assets import vosk_model_dir
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -169,6 +170,33 @@ def _ensure_clean_runtime_placeholders(stage_dir: Path) -> None:
         _ensure_dir(directory)
 
 
+def _copy_bundled_vosk_assets(stage_dir: Path) -> dict[str, object]:
+    source_dir = vosk_model_dir()
+    target_dir = stage_dir / "APP" / "runtime_data" / "speech_assets" / source_dir.name
+    if not source_dir.exists() or not (source_dir / "am" / "final.mdl").exists():
+        raise FileNotFoundError(f"Vosk 离线语音模型缺失，无法内置到交付物: {source_dir}")
+    if target_dir.exists():
+        shutil.rmtree(target_dir)
+    copied_files = 0
+    copied_bytes = 0
+    for item in source_dir.rglob("*"):
+        if item.is_dir():
+            continue
+        if item.name.endswith('.zip'):
+            continue
+        relative = item.relative_to(source_dir)
+        destination = target_dir / relative
+        _copy_file(item, destination)
+        copied_files += 1
+        copied_bytes += item.stat().st_size
+    return {
+        "source_dir": str(source_dir),
+        "target_dir": str(target_dir),
+        "copied_files": copied_files,
+        "copied_bytes": copied_bytes,
+    }
+
+
 def _materialize_orchestrator_runtime(stage_dir: Path) -> Dict[str, Any]:
     runtime_target = stage_dir / "APP" / "pc" / "runtime" / "llm_orchestrator"
     materialized = materialize_runtime_bundle(runtime_target)
@@ -276,6 +304,7 @@ def build_release_package(release_root: Path, version: str, label: str) -> dict[
     _copy_runtime_dirs(stage_dir)
     copy_stats = _copy_app_tree(stage_dir)
     _ensure_clean_runtime_placeholders(stage_dir)
+    bundled_vosk = _copy_bundled_vosk_assets(stage_dir)
     orchestrator_assets = _materialize_orchestrator_runtime(stage_dir)
     orchestrator_model = _materialize_orchestrator_model(stage_dir)
     asset_manifest = json.loads(Path(orchestrator_model["manifest_path"]).read_text(encoding="utf-8"))
@@ -300,6 +329,9 @@ def build_release_package(release_root: Path, version: str, label: str) -> dict[
             "staged_model_path": orchestrator_model["model_path"],
             "staged_model_size": orchestrator_model["model_size"],
             "staged_model_sha256": orchestrator_model["model_sha256"],
+        },
+        "bundled_speech_assets": {
+            "vosk": bundled_vosk,
         },
     }
     manifest_path = _write_manifest(stage_dir, manifest)

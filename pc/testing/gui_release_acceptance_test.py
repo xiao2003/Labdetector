@@ -16,6 +16,16 @@ from pc.training.model_linker import model_linker
 from pc.training.train_manager import training_manager
 
 
+def _fast_orchestrator_self_check(_self, *, auto_repair: bool = True) -> Dict[str, Any]:
+    """GUI 验收只验证界面与闭环，不在这里执行真实大模型补齐。"""
+    return {
+        "status": "pass",
+        "title": "固定管家层运行时",
+        "summary": "固定管家层已就绪",
+        "repairable": bool(auto_repair),
+    }
+
+
 def _count_nonempty_lines(path: Path) -> int:
     if not path.exists():
         return 0
@@ -158,6 +168,20 @@ def _server_plan(node_count: int) -> List[VirtualAudioVoicePiServer]:
     return servers
 
 
+def _select_notebook_tab(notebook: Any, tab_text: str) -> None:
+    """按标题切换 Notebook 页签，避免测试依赖固定索引。"""
+    if notebook is None:
+        return
+    try:
+        total = int(notebook.index("end"))
+    except Exception:
+        return
+    for index in range(total):
+        if str(notebook.tab(index, "text")) == tab_text:
+            notebook.select(index)
+            return
+
+
 def _fake_training_worker(worker_kind: str, workspace_dir: Path, payload: Dict[str, Any]) -> Dict[str, Any]:
     output_root = workspace_dir / "outputs"
     output_root.mkdir(parents=True, exist_ok=True)
@@ -286,7 +310,7 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
             if str(row.get("deployment_id") or "")
         }
 
-        with dialog_recorder, patch.object(expert_manager, "_build_knowledge_context", lambda *args, **kwargs: {}), patch.object(
+        with dialog_recorder, patch("pc.webui.runtime.LabDetectorRuntime._check_orchestrator_assets", _fast_orchestrator_self_check), patch.object(expert_manager, "_build_knowledge_context", lambda *args, **kwargs: {}), patch.object(
             expert_manager,
             "_run_llm_interpreter",
             lambda _expert, _frame, _context, raw_response: raw_response,
@@ -328,7 +352,6 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
             app.runtime._ensure_training_dependencies_ready = lambda: None
             add_step("bootstrap_ready", planner_backend=app.current_state.get("orchestrator", {}).get("planner_backend", ""), orchestrator_status=app.current_state.get("orchestrator", {}).get("status", ""))
 
-            app._show_manual_window()
             app._show_cloud_backend_window()
             app._show_knowledge_base_window()
             app._show_expert_window()
@@ -351,21 +374,16 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
             )
             report["windows"] = _collect_window_state(app)
             add_step("windows_opened", **report["windows"])
-            app._show_about_window()
-            _wait_for(
-                pump,
-                lambda: app.about_window is not None and app.about_window.winfo_exists(),
-                timeout=10,
-                message="关于系统窗口未打开",
-            )
-            if app.copyright_window is not None and app.copyright_window.winfo_exists():
-                raise AssertionError("关于系统仍会额外弹出版权窗口")
+            if report["windows"].get("manual_window") or report["windows"].get("about_window") or report["windows"].get("copyright_window"):
+                raise AssertionError("主界面仍存在额外弹窗")
             if str(app.priority_event_detail_var.get()).strip():
                 raise AssertionError("默认高优事项仍保留了额外详情文本")
             if app.priority_event_detail_label is not None:
                 raise AssertionError("高优事项详情标签未被移除")
             if app.log_detail_panel is not None:
                 raise AssertionError("事件详情栏未移除")
+            if app.node_logs_title is None or str(app.node_logs_title.cget("text")) != "监控状态":
+                raise AssertionError("节点监控面板标题未更新为“监控状态”")
 
             app._run_self_check()
             _wait_for(
@@ -374,17 +392,8 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
                 timeout=30,
                 message="主界面自检结果未刷新",
             )
-            _wait_for(
-                pump,
-                lambda: any(
-                    str(row.get("category") or "") == "任务进度"
-                    and "本机任务" in str(row.get("summary") or "")
-                    and "[" in str(row.get("summary") or "")
-                    for row in list(app.log_rows)
-                ),
-                timeout=10,
-                message="本机任务进度日志未写入主界面",
-            )
+            if any(str(row.get("category") or "") == "任务进度" for row in list(app.log_rows)):
+                raise AssertionError("本机自检进度仍显示在主日志中")
             add_step("self_check_completed", items=len(app.current_state.get("self_check", [])))
 
             app.backend_combo.set(app.backend_reverse["ollama"])
@@ -511,6 +520,10 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
                 message="高优事件头部卡片未更新",
             )
 
+            _select_notebook_tab(app.main_notebook, "训练中心")
+            pump()
+            _select_notebook_tab(app.training_notebook, "YOLO 工作台")
+            pump()
             workspace_name = f"gui_release_acceptance_{time.strftime('%Y%m%d_%H%M%S')}"
             _set_entry(app.training_workspace_entry, workspace_name)
             _set_entry(app.training_base_model_entry, "gemma3:4b")
@@ -524,6 +537,17 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
                     message="训练工作区未生成",
                 )
             latest_workspace = str((app.training_overview or {}).get("latest_workspace") or "")
+            app.training_annotation_workspace_dir = latest_workspace
+            app.training_annotation_workspace_pending = False
+            app._refresh_training_annotation_panel()
+            _wait_for(
+                pump,
+                lambda: app.training_annotation_canvas is not None
+                and int(app.training_annotation_canvas.winfo_width() or 0) >= 100
+                and int(app.training_annotation_canvas.winfo_height() or 0) >= 100,
+                timeout=20,
+                message="训练标注画布未完成布局",
+            )
 
             training_assets_root = Path(__file__).resolve().parents[1] / "training_assets"
             llm_records_path = training_assets_root / "llm" / "records.jsonl"
@@ -549,7 +573,7 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
             app._on_training_annotation_select()
             _wait_for(
                 pump,
-                lambda: bool(app.training_annotation_current_item),
+                lambda: bool(app.training_annotation_current_item) and all(int(value) > 0 for value in app.training_annotation_image_size),
                 timeout=10,
                 message="标注图片未载入",
             )
@@ -560,13 +584,51 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
             app._on_training_annotation_release(type("Evt", (), {"x": 300, "y": 260})())
             app._save_training_annotations()
             workspace_dir = str((app.training_overview or {}).get("latest_workspace") or latest_workspace or "")
-            label_path = Path(workspace_dir) / "pi_detector" / "labels" / "train" / f"{Path(first_image).stem}.txt"
+
+            def _workspace_candidates() -> list[Path]:
+                candidates: list[Path] = []
+                if workspace_dir:
+                    candidates.append(Path(workspace_dir))
+                latest_runtime_workspace = str((app.training_overview or {}).get("latest_workspace") or "").strip()
+                if latest_runtime_workspace:
+                    candidates.append(Path(latest_runtime_workspace))
+                candidates.extend((Path(__file__).resolve().parents[1] / "training_runs").glob(f"*{workspace_name}"))
+                deduped: list[Path] = []
+                seen: set[str] = set()
+                for path in candidates:
+                    key = str(path)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    deduped.append(path)
+                return deduped
+
+            def _resolve_training_workspace_dir() -> Path:
+                existing = [path for path in _workspace_candidates() if path.exists()]
+                if not existing:
+                    return Path(workspace_dir) if workspace_dir else Path(latest_workspace)
+                return sorted(existing, key=lambda path: path.stat().st_mtime)[-1]
+
+            def _saved_label_path() -> Path | None:
+                for base in sorted(
+                    (path for path in _workspace_candidates() if path.exists()),
+                    key=lambda path: path.stat().st_mtime,
+                    reverse=True,
+                ):
+                    candidate = base / "pi_detector" / "labels" / "train" / f"{Path(first_image).stem}.txt"
+                    if candidate.exists() and candidate.read_text(encoding="utf-8").strip():
+                        return candidate
+                return None
+
+            label_path = _saved_label_path()
             _wait_for(
                 pump,
-                lambda: label_path.exists() and bool(label_path.read_text(encoding="utf-8").strip()),
+                lambda: _saved_label_path() is not None,
                 timeout=15,
                 message="标注结果未写入标签文件",
             )
+            workspace_dir = str(_resolve_training_workspace_dir())
+            label_path = _saved_label_path() or (_resolve_training_workspace_dir() / "pi_detector" / "labels" / "train" / f"{Path(first_image).stem}.txt")
             pi_dataset_root = training_assets_root / "pi_detector" / "datasets"
             initial_pi_datasets = _count_child_dirs(pi_dataset_root)
             with patch.object(app, "_pick_paths_for_import", return_value=[str(Path(workspace_dir) / "pi_detector")]):
@@ -578,8 +640,15 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
                 message="Pi 数据集导入未完成",
             )
 
+            app.training_annotation_workspace_dir = workspace_dir
+            app.training_annotation_workspace_pending = False
+            app.training_overview = dict(app.training_overview or {})
+            app.training_overview["latest_workspace"] = workspace_dir
+            app._render_training_overview()
+            pump()
             app._start_llm_training_from_form()
             app._start_pi_training_from_form()
+            app._refresh_training_overview()
 
             def _new_training_jobs() -> list[dict[str, Any]]:
                 jobs = list((app.training_overview or {}).get("jobs", []) or [])
@@ -589,30 +658,36 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
                     if str(job.get("job_id") or "") and str(job.get("job_id") or "") not in initial_job_ids
                 ]
 
-            llm_output_file = Path(workspace_dir) / "outputs" / "llm_adapter" / "adapter_model.bin"
-            pi_output_file = Path(workspace_dir) / "outputs" / "pi_detector" / "run" / "weights" / "best.pt"
-
-            def _new_training_deployments_ready() -> bool:
+            def _new_training_deployments_ready(target_workspace: str) -> bool:
                 llm_rows = [
                     row
                     for row in model_linker.list_llm_deployments()
                     if str(row.get("deployment_id") or "") not in initial_llm_deployment_ids
-                    and str(row.get("workspace_dir") or "") == workspace_dir
+                    and str(row.get("workspace_dir") or "") == target_workspace
                 ]
                 pi_rows = [
                     row
                     for row in model_linker.list_pi_detector_deployments()
                     if str(row.get("deployment_id") or "") not in initial_pi_deployment_ids
-                    and str(row.get("workspace_dir") or "") == workspace_dir
+                    and str(row.get("workspace_dir") or "") == target_workspace
                 ]
                 return bool(llm_rows) and bool(pi_rows)
 
+            def _training_outputs_ready() -> bool:
+                resolved_workspace = _resolve_training_workspace_dir()
+                llm_output_file = resolved_workspace / "outputs" / "llm_adapter" / "adapter_model.bin"
+                pi_output_file = resolved_workspace / "outputs" / "pi_detector" / "run" / "weights" / "best.pt"
+                return llm_output_file.exists() and pi_output_file.exists() and _new_training_deployments_ready(str(resolved_workspace))
+
             _wait_for(
                 pump,
-                lambda: llm_output_file.exists() and pi_output_file.exists() and _new_training_deployments_ready(),
+                _training_outputs_ready,
                 timeout=150,
                 message="训练产物或部署结果未生成",
             )
+            workspace_dir = str(_resolve_training_workspace_dir())
+            llm_output_file = Path(workspace_dir) / "outputs" / "llm_adapter" / "adapter_model.bin"
+            pi_output_file = Path(workspace_dir) / "outputs" / "pi_detector" / "run" / "weights" / "best.pt"
             failed_jobs = [
                 job
                 for job in _new_training_jobs()
@@ -684,15 +759,12 @@ def run_gui_release_acceptance_test(report_file: str, *, node_count: int) -> Dic
             )
             _wait_for(
                 pump,
-                lambda: any(
-                    str(row.get("category") or "") == "任务进度"
-                    and "节点 " in str(row.get("summary") or "")
-                    and "[" in str(row.get("summary") or "")
-                    for row in list(app.log_rows)
-                ),
+                lambda: any(child.winfo_class() in {"TFrame", "Frame"} for child in list(app.node_log_panel.winfo_children())[1:]),
                 timeout=90,
-                message="节点任务进度日志未回传到主界面",
+                message="节点监控状态未刷新到主界面",
             )
+            if any(str(row.get("category") or "") == "任务进度" for row in list(app.log_rows)):
+                raise AssertionError("节点自检进度仍显示在主日志中")
             _wait_for(
                 pump,
                 lambda: all(len(server.received_tts) >= 2 and len(server.received_expert_results) >= 1 and len(server.acks) >= 1 for server in servers),

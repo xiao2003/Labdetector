@@ -36,6 +36,29 @@ function Copy-SourceTree {
   }
 }
 
+function Copy-BundledVoskAssets {
+  param(
+    [Parameter(Mandatory = $true)][string]$ProjectRootDir,
+    [Parameter(Mandatory = $true)][string]$BundleRootDir
+  )
+
+  $source = Join-Path $ProjectRootDir 'runtime_data\speech_assetsosk-model-small-cn-0.22'
+  if (!(Test-Path (Join-Path $source 'aminal.mdl'))) {
+    throw "Bundled Vosk assets not found: $source"
+  }
+  $target = Join-Path $BundleRootDir 'APPuntime_data\speech_assetsosk-model-small-cn-0.22'
+  if (Test-Path $target) {
+    Remove-Item -Recurse -Force $target
+  }
+  New-Item -ItemType Directory -Force -Path $target | Out-Null
+  Get-ChildItem -LiteralPath $source -Recurse -File | Where-Object { $_.Name -notlike '*.zip' } | ForEach-Object {
+    $relative = $_.FullName.Substring($source.Length).TrimStart('\')
+    $destination = Join-Path $target $relative
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+    Copy-Item -Path $_.FullName -Destination $destination -Force
+  }
+}
+
 try {
   Start-Transcript -Path $LogFile -Force | Out-Null
   $TranscriptStarted = $true
@@ -144,20 +167,21 @@ try {
 
   Copy-SourceTree -SourceDir $PcRoot -DestinationDir (Join-Path $BundleRoot 'pc')
   Copy-SourceTree -SourceDir $PiRoot -DestinationDir (Join-Path $BundleRoot 'pi')
+  Copy-BundledVoskAssets -ProjectRootDir $ProjectRoot -BundleRootDir $BundleRoot
 
   $quickStartLines = @(
     'NeuroLab Hub Quick Start',
     '========================',
     '1. 运行根目录中的 NeuroLab Hub.exe 进入主界面。',
     '2. 首次启动时，入口会检查 Python 和核心 GUI 依赖。',
-    '3. 进入软件后执行系统自检，自检会自动下载语音模型和缺失依赖。',
+    '3. 进入软件后执行系统自检；Vosk 离线语音模型与固定管家层模型已内置，其余缺失依赖会自动补齐。',
     '4. 若使用 Ollama，本地模型会在首次选择时自动拉取。',
     '5. 如需 Pi 节点，请将 pi 目录复制到 Raspberry Pi 后执行 pi/start_pi_node.sh。',
     '',
     '说明：',
-    '- 交付包不再内置本地语音模型。',
+    '- 交付包已内置 Vosk 离线语音模型与固定管家层小模型。',
     '- 交付包不再内置完整 Python 运行时。',
-    '- 语音模型和必要依赖统一在首次启动 / 自检阶段补齐。'
+    '- 执行层 Ollama / Qwen 等外部后端模型不随包分发，按需在本机后端环境获取。'
   )
   Set-Content -Path (Join-Path $BundleRoot 'README_QUICKSTART.txt') -Value $quickStartLines -Encoding UTF8
 
