@@ -441,4 +441,5 @@ Release 正文应明确说明：
 
 - 项目总览与使用手册：[`docs/NeuroLab_Hub_项目总览与使用手册.md`](./NeuroLab_Hub_项目总览与使用手册.md)
 - 版权与软著材料：[`docs/NeuroLab_Hub_版权与软著材料.md`](./NeuroLab_Hub_版权与软著材料.md)
+- 极简包首次启动自愈演示手册：[`docs/NeuroLab_Hub_极简包首次启动自愈演示手册.md`](./NeuroLab_Hub_极简包首次启动自愈演示手册.md)
 - 文档归档索引：[`docs/archive/README.md`](./archive/README.md)
